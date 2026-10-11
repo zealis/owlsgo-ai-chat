@@ -2026,6 +2026,15 @@ input[type=range] {
 .ow-admin-layout { display: flex; display: -webkit-flex; min-height: 100vh; }
 .ow-admin-side {
     width: 220px;
+    /* v1.3.66：侧栏钉在一屏之内、自己滚 —— 页面滚动不该把菜单带出视野。
+       原来它是普通 flex 列，被 27 项菜单撑得比屏幕高，文档一滚侧栏就跟着走，
+       想点下面几项还得先滚回顶部。sticky + 固定 100vh + overflow-y:auto
+       把「侧栏滚动」和「内容滚动」拆成两个独立滚动区。
+       ⚠️ align-self:flex-start 不能省：flex 默认 stretch 会把侧栏高度拉成整行高，
+       sticky 在自己的盒子里没有可停的余量，等于不生效。 */
+    position: -webkit-sticky; position: sticky; top: 0;
+    height: 100vh; overflow-y: auto;
+    align-self: flex-start; -webkit-align-self: flex-start;
     /* v1.2.55：与前台两侧栏（.ow-sidebar / .ow-online）同一底色 --ow-bg-chat(#F5F5F5)。
        原来是 var(--ow-bg) 纯白 —— 前后台侧栏一白一灰，切过去像换了个站。
        内容区保持白卡片（「内容岛」浮在灰底上），靠 1px 右边框分界，与前台同款处理。 */
@@ -2212,21 +2221,19 @@ input[type=range] {
         gap: 10px; position: fixed; top: 0; left: 0; right: 0; height: 52px;
         padding: 0 12px; background: var(--ow-bg); border-bottom: 1px solid var(--ow-border); z-index: 95;
     }
-    .ow-admin-layout { padding-top: 52px; min-height: 100vh; position: relative; -webkit-position: relative; }
-    /* v1.3.65：窄屏侧栏由「钉在视口上的固定抽屉」改成「跟着页面滚的滑动栏」。
-       原来 position:fixed + overflow-y:auto —— 菜单有 27 项、比屏幕还高时，
-       抽屉本体纹丝不动，只能在它内部滚一小块，手指划页面没反应、划抽屉又和页面滚动抢；
-       底部那几项（含「返回前台」）很难够到。
-       改 absolute 挂在 .ow-admin-layout 上（所以父级要 position:relative）：
-       抽屉随页面一起滚，一次滑动就能从顶划到底，开关动画与遮罩都不变。 */
+    .ow-admin-layout { padding-top: 52px; min-height: 100vh; }
+    /* 窄屏抽屉：钉在视口上、自己滚（top 让开 52px 顶栏）。
+       ⚠️ 不要改成 position:absolute 跟着页面滚 —— 那样划一下页面侧栏就滑出视野，
+       底部几项更难够到。独立滚动才是这里要的（与桌面端同一取向，见上面的 sticky）。 */
     .ow-admin-side {
-        position: absolute; left: -260px; top: 52px; width: 250px;
-        /* 用 vh 而不是 %：100% 是**整个页面**的高度，长页面（如用户管理几百行）会把
-           「返回前台」一路顶到页面最底部，够都够不着。视口高度兜底一屏，
-           菜单本身更长时自然按内容长高（min-height 是地板不是天花板）。 */
-        min-height: calc(100vh - 52px);
+        /* height:auto 必须显式写：桌面端给侧栏定了 height:100vh（见上面的 sticky），
+           而 fixed 元素同时有 top/bottom/height 时浏览器**丢掉 bottom** —— 抽屉会从
+           52px 处一直铺到 52px+100vh，底部 52px（含「返回前台」）掉到屏幕外且滚不出来。
+           这里回到「top + bottom 拉出高度」的原写法。 */
+        height: auto;
+        position: fixed; left: -260px; top: 52px; bottom: 0; width: 250px;
         border-right: 1px solid var(--ow-border); transition: left .2s; -webkit-transition: left .2s;
-        z-index: 90;
+        z-index: 90; overflow-y: auto;
     }
     .ow-admin-side.open { left: 0; }
     .ow-admin-menu li { padding: 10px 12px; font-size: 13.5px; }
