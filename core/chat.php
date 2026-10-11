@@ -43,7 +43,7 @@ class Chat
              JOIN users u ON u.id = CASE WHEN f.user_id = ? THEN f.friend_id ELSE f.user_id END
              WHERE f.user_id = ? OR f.friend_id = ?
              GROUP BY u.id, u.nickname, u.avatar, u.avatar_type, u.avatar_style, u.avatar_seed, u.role, u.title
-             ORDER BY u.nickname COLLATE NOCASE ASC',
+             ORDER BY ' . DB::ci('u.nickname') . ' ASC',
             [$me, $me, $me]);
         $out = [];
         foreach ($rows as $r) {
@@ -59,31 +59,6 @@ class Chat
         return $out;
     }
 
-    /**
-     * 添加联系人（幂等）。返回 [ok, msg]。
-     * 校验：只能加**注册用户**、不能加自己、目标必须存在且 status=1（未被封禁）。
-     */
-    public static function addFriend(array $actor, int $friendId): array
-    {
-        if (($actor['kind'] ?? '') !== 'user') return [false, '请先登录'];
-        $me = (int)$actor['id'];
-        if ($friendId <= 0) return [false, '参数错误'];
-        if ($friendId === $me) return [false, '不能把自己加为联系人'];
-        // 用数字 user_id 查身份（与全站口径一致：禁止用昵称/邮箱反查）
-        $u = DB::one('SELECT id, nickname, status FROM users WHERE id=?', [$friendId]);
-        if (!$u) return [false, '该用户不存在'];
-        if ((int)$u['status'] !== 1) return [false, '该用户已被封禁，无法添加'];
-        // v1.2.42：加好友闸门（等级信任插件按等级限制 —— 见设计文档「第 2 次解锁：10 级起可加好友」）
-        $allowFriend = true; $friendReason = '';
-        Plugin::fire('friend.guard', [&$allowFriend, &$friendReason, $actor, $friendId]);
-        if (!$allowFriend) return [false, $friendReason !== '' ? $friendReason : '当前等级暂不能添加好友'];
-        $has = DB::val('SELECT id FROM friends WHERE user_id=? AND friend_id=?', [$me, $friendId]);
-        if ((int)$has > 0) return [false, '已经是联系人了'];   // 幂等：不重复插
-        DB::run('INSERT INTO friends (user_id, friend_id, created_at) VALUES (?,?,?)',
-            [$me, $friendId, time()]);
-        return [true, '已添加「' . (string)$u['nickname'] . '」为联系人'];
-    }
-
     /** 删除联系人（幂等）。返回 [ok, msg]。 */
     public static function removeFriend(array $actor, int $friendId): array
     {
@@ -96,6 +71,152 @@ class Chat
         DB::run('DELETE FROM friends WHERE (user_id=? AND friend_id=?) OR (user_id=? AND friend_id=?)',
             [$me, $friendId, $friendId, $me]);
         return [true, '已删除联系人'];
+    }
+
+    /* ---------- 好友请求（v1.3.71）：先申请，对方通过后才成为联系人 ---------- */
+
+    /** 两人当前是否已是联系人（任一行即算 —— 与 friends() 的双向可见同一口径） */
+    public static function areFriends(int $a, int $b): bool
+    {
+        if ($a <= 0 || $b <= 0 || $a === $b) return false;
+        return (int)DB::val(
+            'SELECT id FROM friends WHERE (user_id=? AND friend_id=?) OR (user_id=? AND friend_id=?) LIMIT 1',
+            [$a, $b, $b, $a]) > 0;
+    }
+
+    /** 待我处理的好友请求数 —— 联系人栏小红点的计数。语义是「未处理」，通过/拒绝才消 */
+    public static function friendReqPending(int $uid): int
+    {
+        return $uid > 0 ? (int)DB::val('SELECT COUNT(*) FROM friend_req WHERE to_id=? AND status=0', [$uid]) : 0;
+    }
+
+    /** 我今天发出的请求数 —— captcha-verify「每天前 N 个好友请求免人机验证」按这个判 */
+    public static function friendReqToday(int $uid): int
+    {
+        if ($uid <= 0) return 0;
+        return (int)DB::val('SELECT COUNT(*) FROM friend_req WHERE from_id=? AND created_at>=?',
+            [$uid, (int)strtotime(date('Y-m-d 00:00:00'))]);
+    }
+
+    /**
+     * 确立联系人关系：只写「$by → $for」一行。
+     * 联系人查询双向可见（见 friends()），一行就让两个人互相看到对方；
+     * 不写两行是为了让「删除联系人」保持单一动作（removeFriend 两个方向一起清）。
+     */
+    private static function linkFriends(int $by, int $for): void
+    {
+        DB::insertIgnore('friends',
+            ['user_id' => $by, 'friend_id' => $for, 'created_at' => time()],
+            ['user_id', 'friend_id']);
+    }
+
+    /**
+     * 发起好友请求。返回 [ok, msg]。
+     * 验证消息选填（截到 200 字）：它是「申请那一刻写的话」，属于历史事实，
+     * 所以破例存文本快照而不是引用（不像联系人列表那样一律 JOIN users）。
+     */
+    public static function friendRequest(array $actor, int $toId, string $note = ''): array
+    {
+        if (($actor['kind'] ?? '') !== 'user') return [false, '请先登录'];
+        $me = (int)$actor['id'];
+        if ($toId <= 0) return [false, '参数错误'];
+        if ($toId === $me) return [false, '不能加自己为好友'];
+        // 身份一律用数字 user_id 查（与全站口径一致：禁止用昵称/邮箱反查）
+        $u = DB::one('SELECT id, nickname, status FROM users WHERE id=?', [$toId]);
+        if (!$u) return [false, '该用户不存在'];
+        if ((int)$u['status'] !== 1) return [false, '该用户已被封禁，无法添加'];
+        if (self::areFriends($me, $toId)) return [false, '你们已经是联系人了'];
+        // 等级闸门沿用（v1.2.42，等级信任插件按等级限制加好友）：请求也是加好友的入口
+        $allow = true; $reason = '';
+        Plugin::fire('friend.guard', [&$allow, &$reason, $actor, $toId]);
+        if (!$allow) return [false, $reason !== '' ? $reason : '当前等级暂不能添加好友'];
+
+        $note = mb_substr(trim($note), 0, 200);
+
+        // 对向已有待处理请求（他先加我、我又加他）→ 直接互相通过。
+        // 不这么做的话两人会各自挂着一条永远等不到回应的请求。
+        $rev = (int)DB::val('SELECT id FROM friend_req WHERE from_id=? AND to_id=? AND status=0', [$toId, $me]);
+        if ($rev > 0) {
+            self::handleFriendRequest($actor, $rev, true);
+            return [true, '对方也向你发过请求，你们已成为联系人'];
+        }
+
+        $pend = (int)DB::val('SELECT id FROM friend_req WHERE from_id=? AND to_id=? AND status=0', [$me, $toId]);
+        if ($pend > 0) {
+            // 重复点「加好友」不插新行、不重复打扰，只把验证消息更新成最新一条
+            DB::run('UPDATE friend_req SET note=?, created_at=? WHERE id=?', [$note, time(), $pend]);
+            return [true, '请求已在待处理中，等待对方回应'];
+        }
+        DB::insert('friend_req', [
+            'from_id' => $me, 'to_id' => $toId, 'note' => $note,
+            'status' => 0, 'created_at' => time(), 'handled_at' => 0,
+        ]);
+        return [true, '好友请求已发送给「' . (string)$u['nickname'] . '」'];
+    }
+
+    /**
+     * 处理收到的请求：只有收件人能处理，且只能处理一次（status 必须还是 0）。
+     * 通过 → 写联系人 + 通知申请人；拒绝 → 只置状态、不发通知
+     * （通知一条「他被你拒了」没有任何可执行内容，只会变成骚扰）。
+     */
+    public static function handleFriendRequest(array $actor, int $reqId, bool $accept): array
+    {
+        if (($actor['kind'] ?? '') !== 'user') return [false, '请先登录'];
+        $me = (int)$actor['id'];
+        $r = DB::one('SELECT q.id, q.from_id, q.status, u.nickname AS from_nick
+                      FROM friend_req q JOIN users u ON u.id = q.from_id
+                      WHERE q.id=? AND q.to_id=?', [$reqId, $me]);
+        if (!$r) return [false, '请求不存在'];
+        if ((int)$r['status'] !== 0) return [false, '该请求已经处理过了'];
+        $fromId = (int)$r['from_id'];
+        DB::run('UPDATE friend_req SET status=?, handled_at=? WHERE id=?',
+            [$accept ? 1 : 2, time(), $reqId]);
+        if (!$accept) return [true, '已拒绝'];
+        self::linkFriends($me, $fromId);
+        Notice::push($fromId, 'friend_accepted', ['nick' => (string)($actor['nickname'] ?? '')]);
+        return [true, '已添加「' . (string)$r['from_nick'] . '」为联系人'];
+    }
+
+    /**
+     * 好友通知页数据：incoming = 待我处理的，outgoing = 我发出的近期记录（含状态）。
+     * 昵称/头像一律 JOIN users 取实时值（与 friends() 同一口径），note 是快照。
+     */
+    public static function friendRequests(array $actor): array
+    {
+        $out = ['incoming' => [], 'outgoing' => []];
+        if (($actor['kind'] ?? '') !== 'user') return $out;
+        $me = (int)$actor['id'];
+        $sel = 'SELECT q.id, q.status, q.note, q.created_at, q.handled_at,
+                       u.id AS uid, u.nickname, u.avatar, u.avatar_type, u.avatar_style, u.avatar_seed, u.role, u.title';
+        // 两个方向各写整句字面量：列名不拼变量，杜绝任何「标识符来自入参」的可能
+        $out['incoming'] = self::friendReqRows(
+            $sel . ' FROM friend_req q JOIN users u ON u.id = q.from_id
+             WHERE q.to_id=? AND q.status=0 ORDER BY q.id DESC LIMIT 50', [$me]);
+        $out['outgoing'] = self::friendReqRows(
+            $sel . ' FROM friend_req q JOIN users u ON u.id = q.to_id
+             WHERE q.from_id=? ORDER BY q.id DESC LIMIT 50', [$me]);
+        return $out;
+    }
+
+    private static function friendReqRows(string $sql, array $args): array
+    {
+        $out = [];
+        foreach (DB::all($sql, $args) as $r) {
+            $uid = (int)$r['uid'];
+            $out[] = [
+                'id' => (int)$r['id'],
+                'user_id' => $uid,
+                'nickname' => (string)$r['nickname'],
+                'avatar' => Auth::avatarUrlFor($r, (string)$uid),
+                'role' => (string)($r['role'] ?? 'member'),
+                'title' => (string)($r['title'] ?? ''),
+                'note' => (string)($r['note'] ?? ''),
+                'status' => (int)$r['status'],
+                'created_at' => (int)$r['created_at'],
+                'handled_at' => (int)$r['handled_at'],
+            ];
+        }
+        return $out;
     }
 
     // ---------- 房间 ----------
@@ -522,6 +643,14 @@ class Chat
             if ($toGuestId) return [false, '暂不支持与游客私聊'];
             if ($actor['kind'] !== 'user') return [false, '请先登录后再发起私聊'];
             if ($toUserId === (int)$actor['id']) return [false, '不能给自己发私信'];
+            // v1.3.71：私聊必须先成为好友（对方通过你的好友请求）。
+            // 口径取「当前是否好友」而不是「历史上聊过没有」—— 一律拦，删了好友
+            // 连老会话也发不出去，必须重新加。只读历史不拦（见 dmList/dmPoll），
+            // 否则删好友等于抹掉对方看得见的记录。
+            // ⚠️ 判定必须放在服务端：构造请求可以绕过前端所有入口直接打 send。
+            if (!self::areFriends((int)$actor['id'], (int)$toUserId)) {
+                return [false, '你们还不是好友，先发好友请求，对方通过后才能私聊'];
+            }
             $room = ['id' => 0, 'type' => 'dm'];   // 不隶属任何群聊，跳过群校验与群禁言
         } else {
             $room = self::room($roomId);

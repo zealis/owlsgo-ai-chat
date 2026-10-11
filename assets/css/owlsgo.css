@@ -1569,6 +1569,26 @@ input[type=range] {
 .ow-msg-notice .ow-msg-time { display: inline; }
 /* 空态与加载态：消息区里的一条居中小字 */
 .ow-notice-pending { text-align: center; color: var(--ow-text-sub); font-size: 12px; padding: 24px 8px; }
+/* ---------- 好友通知页（v1.3.71）：待处理请求与「我发出的」列表 ---------- */
+.ow-freq { padding: 14px 16px; }
+.ow-freq-hd { margin: 0 0 8px; font-size: 14px; color: var(--ow-text-title); }
+/* 第二组标题紧跟在上一组最后一行之后，要自己挣出间距 */
+.ow-freq-row + .ow-freq-hd { margin-top: 18px; }
+.ow-freq-empty { margin: 0; font-size: 13px; color: var(--ow-text-sub); }
+.ow-freq-row {
+    display: flex; display: -webkit-flex; align-items: center; -webkit-align-items: center;
+    gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--ow-border);
+}
+.ow-freq-row:last-child { border-bottom: 0; }
+.ow-freq-main {
+    flex: 1; -webkit-flex: 1; min-width: 0;
+    display: flex; display: -webkit-flex; flex-direction: column; -webkit-flex-direction: column; gap: 2px;
+}
+.ow-freq-name { font-size: 14px; color: var(--ow-text-title); }
+.ow-freq-note { font-size: 12.5px; color: var(--ow-text); word-break: break-word; }
+.ow-freq-time { font-size: 12px; color: var(--ow-text-sub); }
+.ow-freq-acts { display: flex; display: -webkit-flex; gap: 6px; flex-shrink: 0; -webkit-flex-shrink: 0; }
+.ow-freq-state { font-size: 12px; color: var(--ow-text-sub); flex-shrink: 0; -webkit-flex-shrink: 0; }
 /* v1.2.13：图片 / 文件消息的**无气泡容器**（取代 .ow-msg-content）。
    去掉白色底座后，靠这三点保证观感不塌：
      1. overflow:hidden —— 图片按气泡圆角裁切，不出现方形硬角外露

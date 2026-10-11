@@ -1931,6 +1931,8 @@
             if (!tab) return;
             if (tab === this.view) return;
             this.view = tab;
+            // 离开「联系人」标签时，好友通知页随之作废（顶栏那几样要还回房间）
+            if (tab !== 'friends') this.exitFriendReqs();
             // 离开通知标签要先还原顶栏：标题、群聊信息按钮、延迟显示都属于房间，
             // 而它们是被 paintNoticeChrome 藏起来的，不还原就会一直缺着。
             if (tab !== 'notice') this.exitNotices();
@@ -2077,16 +2079,64 @@
          *     加好友是「加一个联系人」的动作，不是「去跟 TA 聊天」——
          *     自动跳进私聊会让中间的消息区无声地换成另一个人，
          *     正在打字的消息就发到别处去了（用户明确要求避免这个）。 */
+        /**
+         * 加好友：v1.3.71 起不再即时生效 —— 弹窗填一句验证消息（选填）发出请求，
+         * 对方在「好友通知」里通过之后两人才算联系人、才互发得了私信。
+         *
+         *  ⚠️ v1.2.28 的老规矩保留：**只发请求，不切私聊**。自动跳进私聊会让
+         *     中间的消息区无声换成另一个人，正在打字的消息就发到别处去了。
+         *  ⚠️ 人机验证那一栏只在 boot 说需要时才挂组件（服务端同源判定），
+         *     提交失败要 reset —— token 是一次性的，留着下次必被拒。
+         */
         addFriend: function (uid) {
             var self = this;
-            OwApi.post('friend_add', { friend_id: uid }, function (r) {
-                toast(r.msg || (r.ok ? '已添加' : '添加失败'));
-                if (!r.ok) return;
-                // 刷新资料卡让按钮切成「删除好友」（不切换会话）
-                self.userCard(uid);
-                // 正在联系人视图里则同步刷新名单
-                if (self.view === 'friends') self.loadFriends();
-            });
+            uid = uid | 0;
+            if (!uid) return;
+            this.openModal(
+                '<h3>添加好友</h3>'
+                + '<p class="ow-modal-desc">发送好友请求，对方通过后你们才能互发私信。</p>'
+                + '<div class="ow-form-item"><label>验证消息（选填）</label>'
+                + '<input class="ow-input" type="text" id="owFrNote" maxlength="200" autocomplete="off"'
+                + ' placeholder="让对方知道你是谁，例如：我是综合闲聊的小明"></div>'
+                + '<div data-owcv-host="1" id="owFrCv"></div>'
+                + '<div class="ow-modal-actions">'
+                + '<button class="ow-btn ow-btn-ghost" id="owFrCancel">取消</button>'
+                + '<button class="ow-btn ow-btn-primary" id="owFrOk">发 送</button></div>'
+                + '<div class="ow-form-msg" id="owFrMsg"></div>'
+            );
+            var host = $('owFrCv'), msg = $('owFrMsg'), note = $('owFrNote');
+            if (host && this.cfg && this.cfg.captcha_friend === '1') {
+                var tpl = $('owCvFriendTpl');
+                if (tpl && tpl.innerHTML) {
+                    host.innerHTML = tpl.innerHTML;
+                    if (w.OwCv && w.OwCv.mount) w.OwCv.mount(host);
+                }
+            }
+            var submit = function () {
+                var data = { friend_id: uid, note: (note.value || '').replace(/^\s+|\s+$/g, '') };
+                if (w.OwCv && w.OwCv.fields) {
+                    var f = w.OwCv.fields(host) || {}, k;
+                    for (k in f) if (f.hasOwnProperty(k)) data[k] = f[k];
+                }
+                msg.innerHTML = '发送中…';
+                OwApi.post('friend_add', data, function (r) {
+                    if (!r.ok) {
+                        msg.innerHTML = '<span style="color:var(--ow-red)">' + esc(r.msg || '发送失败') + '</span>';
+                        if (w.OwCv && w.OwCv.reset) w.OwCv.reset(host);   // token 用掉了，逼组件重新解一次
+                        return;
+                    }
+                    toast(r.msg || '请求已发送');
+                    self.closeModal();
+                    if (self.view === 'friends') self.loadFriends();
+                });
+            };
+            $('owFrOk').onclick = submit;
+            $('owFrCancel').onclick = function () { self.closeModal(); };
+            note.onkeydown = function (e) {
+                e = e || w.event;
+                if (e.keyCode === 13) { e.preventDefault ? e.preventDefault() : (e.returnValue = false); submit(); }
+            };
+            note.focus();
         },
 
         /** 删除联系人。走 OwApi.secure —— friend_remove 在 $SENSITIVE 内，需一次性票据。 */
@@ -2116,6 +2166,19 @@
             var self = this, box = $('owRoomList');
             if (!box) return;
             var rows = [], i;
+            // v1.3.71：顶部固定一行「新朋友」—— 好友请求的入口。
+            // 用 peer='req:new' 冒充一个 dm 行（ChatList 只认 conv/peer），
+            // 点击在 onClick 里先分流，不会被当成私聊。
+            var pend = this.cfg ? (this.cfg.friend_pending | 0) : 0;
+            if (this.cfg && this.cfg.me && this.cfg.me.id) {
+                rows.push({
+                    conv: 'dm', peer: 'req:new', id: 0, name: '新朋友', avatar: '', role: '',
+                    // 文案不带数字：「3 个待处理请求」这种整句语言包永远匹配不上，
+                    // 具体几条到页面里看（联系人栏那个红点已经负责说「有事待处理」）
+                    last_text: pend > 0 ? '有人想加你为好友' : '没有人向你发送好友请求',
+                    last_at: 0
+                });
+            }
             for (i = 0; i < (list || []).length; i++) {
                 var f = list[i];
                 rows.push({
@@ -2132,11 +2195,119 @@
                 emptyText: '还没有联系人，去「成员管理」或资料卡添加吧',
                 hideTime: true,          // v1.2.28：取消右上角时间
                 onClick: function (el) {
-                    // v1.2.28：peer 现在是 'user:20' 完整格式，openDm 才认（旧代码传纯数字，静默失败）
                     var peer = el.getAttribute('data-dm');
+                    if (peer === 'req:new') return self.openFriendReqs();
+                    // 从好友通知页点回某个联系人：先把本页借走的顶栏还回去，openDm 才会写自己的标题
+                    self.exitFriendReqs();
                     if (peer) self.openDm(peer, el.getAttribute('data-name'));
                 }
             });
+        },
+
+        /* =====================================================================
+         * 新朋友 / 好友通知（v1.3.71）
+         * ---------------------------------------------------------------------
+         * 加好友不再即时生效：发起方填一句验证消息（选填），接收方在「好友通知」页
+         * 通过或拒绝；通过后两人才是联系人，也才互发得了私信（闸门在服务端 send 里）。
+         * 联系人栏那个小红点算的是「未处理」，不是「未读」—— 光看不表态会一直挂着。
+         * =================================================================== */
+
+        /** 打开好友通知页（中间区域换成请求列表，侧栏仍在「联系人」标签下） */
+        openFriendReqs: function () {
+            var self = this;
+            this.exitNotices();
+            this.friendMode = true;
+            // 顶栏与通知页同一处理：标题、群聊信息按钮、延迟显示都属于「某个房间」，
+            // 而这一页没有房间 —— 不清就会一直挂着上一个群的名字（实测截出来的就是这问题）。
+            this._freqTitleBefore = ($('owRoomName') || {}).textContent || '';
+            var p = $('owTogglePanel'); if (p) p.style.display = 'none';
+            var l = $('owLatency'); if (l) l.style.display = 'none';
+            var t = $('owRoomName'); if (t) t.textContent = '好友通知';
+            this.applyInputGate('friend');
+            var box = $('owMessages');
+            if (box) box.innerHTML = '<div class="ow-notice-pending">加载中…</div>';
+            OwApi.post('friend_requests', {}, function (r) {
+                if (!r || !r.ok) {
+                    if (box) box.innerHTML = '<div class="ow-notice-pending">' + esc((r && r.msg) || '加载失败') + '</div>';
+                    return;
+                }
+                self.friendReqs = r;
+                // 列表就是权威计数：待处理几条一目了然，不用服务端再回一个数
+                if (self.cfg) self.cfg.friend_pending = (r.incoming || []).length;
+                self.paintFriendDot();
+                self.renderFriendReqs();
+            });
+        },
+
+        /** 离开好友通知页：还回顶栏那几样与房间绑定的控件 */
+        exitFriendReqs: function () {
+            if (!this.friendMode) return;
+            this.friendMode = false;
+            var p = $('owTogglePanel'); if (p) p.style.display = '';
+            var l = $('owLatency'); if (l) l.style.display = '';
+            var t = $('owRoomName');
+            if (t && this._freqTitleBefore != null) t.textContent = this._freqTitleBefore;
+        },
+
+        /** 好友通知页正文：待我处理的（通过/拒绝）+ 我发出的（看状态） */
+        renderFriendReqs: function () {
+            var box = $('owMessages');
+            if (!box) return;
+            var d = this.friendReqs || {}, inc = d.incoming || [], out = d.outgoing || [];
+            var h = '<div class="ow-freq">', i, r;
+            h += '<h3 class="ow-freq-hd">新的朋友</h3>';
+            if (!inc.length) h += '<p class="ow-freq-empty">暂无待处理的好友请求。</p>';
+            for (i = 0; i < inc.length; i++) {
+                r = inc[i];
+                h += '<div class="ow-freq-row">'
+                   + '<span class="ow-freq-av">' + avatarHtml(r.avatar, r.nickname) + '</span>'
+                   + '<span class="ow-freq-main">'
+                   + '<span class="ow-freq-name">' + esc(r.nickname) + roleTag(r.role, r.title, r.user_id) + '</span>'
+                   + '<span class="ow-freq-note">' + (r.note ? esc(r.note) : '（对方未填写验证消息）') + '</span>'
+                   + '<span class="ow-freq-time">' + esc(ChatList.time(r.created_at)) + '</span>'
+                   + '</span>'
+                   + '<span class="ow-freq-acts">'
+                   + '<button class="ow-btn ow-btn-primary ow-btn-mini" onclick="OwChat.friendHandle(' + (r.id | 0) + ',1)">通过</button>'
+                   + '<button class="ow-btn ow-btn-ghost ow-btn-mini" onclick="OwChat.friendHandle(' + (r.id | 0) + ',0)">拒绝</button>'
+                   + '</span></div>';
+            }
+            if (out.length) {
+                h += '<h3 class="ow-freq-hd">我发出的请求</h3>';
+                for (i = 0; i < out.length; i++) {
+                    r = out[i];
+                    h += '<div class="ow-freq-row is-out">'
+                       + '<span class="ow-freq-av">' + avatarHtml(r.avatar, r.nickname) + '</span>'
+                       + '<span class="ow-freq-main">'
+                       + '<span class="ow-freq-name">' + esc(r.nickname) + '</span>'
+                       + '<span class="ow-freq-note">' + (r.note ? esc(r.note) : '（未填写验证消息）') + '</span>'
+                       + '<span class="ow-freq-time">' + esc(ChatList.time(r.created_at)) + '</span>'
+                       + '</span>'
+                       + '<span class="ow-freq-state">' + (r.status === 1 ? '已通过' : (r.status === 2 ? '已拒绝' : '待处理')) + '</span>'
+                       + '</div>';
+                }
+            }
+            box.innerHTML = h + '</div>';
+        },
+
+        /** 通过 / 拒绝一条好友请求 */
+        friendHandle: function (id, accept) {
+            var self = this;
+            OwApi.post('friend_handle', { id: id, accept: accept ? '1' : '0' }, function (r) {
+                toast(r.msg || (r.ok ? '已处理' : '处理失败'));
+                if (!r.ok) return;
+                if (typeof r.pending === 'number' && self.cfg) self.cfg.friend_pending = r.pending;
+                self.paintFriendDot();
+                // 通过之后对方就是联系人了：名单与本页都要跟着换
+                if (self.view === 'friends') self.loadFriends();
+                if (self.friendMode) self.openFriendReqs();
+            });
+        },
+
+        /** 联系人栏小红点（服务端首屏已渲染初值，这里只管之后的增删） */
+        paintFriendDot: function () {
+            var dot = $('owFriendDot');
+            if (!dot) return;
+            dot.style.display = ((this.cfg && this.cfg.friend_pending | 0) > 0) ? '' : 'none';
         },
 
         /* ---------- 会话列表轻量轮询（v1.1.0） ----------
@@ -3637,9 +3808,13 @@
                 var acts = '';
                 if (canPm) {
                     if (!u.is_friend) {
-                        acts += '<button class="ow-btn ow-btn-ghost" onclick="OwChat.addFriend(' + (u.id) + ')">加好友</button>';
+                        // v1.3.71：私聊必须先成为好友（服务端 send 里也拦）。
+                        // 非好友时**不给「发私信」按钮**：点进去也只会在发送那一刻被打回，
+                        // 白打字的体验比少一个按钮差得多 —— 直接把入口换成「加好友」。
+                        acts += '<button class="ow-btn ow-btn-primary" onclick="OwChat.addFriend(' + (u.id) + ')">加好友</button>';
+                    } else {
+                        acts += '<button class="ow-btn ow-btn-primary" onclick="OwChat.closeModal();OwChat.openDm(' + jsAttr('user:' + (u.id)) + ',' + jsAttr(u.nickname) + ')">发私信</button>';
                     }
-                    acts += '<button class="ow-btn ow-btn-primary" onclick="OwChat.closeModal();OwChat.openDm(' + jsAttr('user:' + (u.id)) + ',' + jsAttr(u.nickname) + ')">发私信</button>';
                 } else {
                     acts += '<button class="ow-btn ow-btn-primary" onclick="OwChat.closeModal();OwChat.openSettings()">编辑资料</button>';
                 }

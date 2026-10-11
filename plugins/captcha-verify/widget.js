@@ -42,8 +42,8 @@
         }
     };
 
-    var boxes = [].slice.call(d.querySelectorAll('.ow-cv'));
-    if (!boxes.length) return;
+    /** 组件盒子初始化序号（给 VAPTCHA 的临时 id 用，跨 mount 也要唯一） */
+    var owCvSeq = 0;
 
     /** 同一个 URL 只加载一次（页面上有多个表单时不会重复注入 script） */
     var loaded = {};
@@ -71,15 +71,29 @@
         if (p) p.textContent = text || '';
     }
 
-    /** 给表单一个 id，供 VAPTCHA 的 renderTokenInput(selector) 使用 */
+    /**
+     * token 字段该写进哪个容器：优先最近的 <form>；
+     * 弹窗这类没有 form 的场合退回标了 data-owcv-host 的容器（加好友弹窗就是 div）。
+     * 只认 form 的话，弹窗里的 VAPTCHA / 极验会把 token 写到页面别处或干脆丢掉。
+     */
+    function hostOf(box) {
+        if (!box || !box.closest) return null;
+        return box.closest('form') || box.closest('[data-owcv-host]');
+    }
+
+    /** 给宿主容器一个 id，供 VAPTCHA 的 renderTokenInput(selector) 使用 */
     function formSelector(box, n) {
-        var f = box.closest ? box.closest('form') : null;
+        var f = hostOf(box);
         if (!f) return null;
         if (!f.id) f.id = 'owCvForm-' + n;
         return '#' + f.id;
     }
 
-    boxes.forEach(function (box, n) {
+    /** 初始化一个组件盒子。幂等：同一个盒子只渲染一次（mount 可以被反复调用） */
+    function initBox(box) {
+        if (!box || box._owcvDone) return;
+        box._owcvDone = 1;
+        var n = ++owCvSeq;
         var provider = box.getAttribute('data-owcv-provider') || '';
         var holder = box.querySelector('.ow-cv-box');
         if (!holder) return;
@@ -122,7 +136,7 @@
         if (provider === 'geetest') {
             var gid = box.getAttribute('data-owcv-gid') || '';
             if (!gid) { tip(box, '未配置极验 captcha_id'); return; }
-            var form = box.closest ? box.closest('form') : null;
+            var form = hostOf(box);
             loadScript('https://static.geetest.com/v4/gt4.js', function (ok) {
                 if (!ok || typeof w.initGeetest4 !== 'function') { tip(box, '极验脚本加载失败'); return; }
                 w.initGeetest4({ captchaId: gid, product: 'float' }, function (captcha) {
@@ -147,5 +161,27 @@
                 });
             });
         }
-    });
+    }
+
+    /** 收集 root 内真正要渲染的盒子：模板容器（data-owcv-tpl）里的那些不算 */
+    function scan(root) {
+        var all = (root || d).querySelectorAll('.ow-cv'), out = [], i;
+        for (i = 0; i < all.length; i++) {
+            if (all[i].closest && all[i].closest('[data-owcv-tpl]')) continue;
+            out.push(all[i]);
+        }
+        return out;
+    }
+
+    /**
+     * 挂载弹窗里后来注入的组件（首屏扫描只看得见当时就在 DOM 里的盒子）。
+     * 幂等，可以每次打开弹窗都调一遍。
+     */
+    w.OwCv.mount = function (root) {
+        var bs = scan(root || d), i;
+        for (i = 0; i < bs.length; i++) initBox(bs[i]);
+        return bs.length;
+    };
+
+    scan(d).forEach(initBox);
 })(window, document);

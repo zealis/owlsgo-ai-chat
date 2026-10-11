@@ -15,10 +15,11 @@
  *     「问谁要结果」，他起一个恒返回成功的端点就完事了。这里只接受官方域名，
  *     不在白名单内的一律改用配置里的默认端点。
  *
- * 对核心的三个钩子（下一步把注册 / 找回密码 / 邮箱发送也接上时，同样只用这三个）：
+ * 对核心的四个钩子（下一步把注册 / 找回密码 / 邮箱发送也接上时，同样只用这四个）：
  *   - `captcha.takeover`  返回 '1' 表示本插件接管人机验证，核心不再出 SVG 图形码
  *   - `captcha.form`      产出要嵌进表单的组件 HTML（参数 ['scene' => 'login']）
  *   - `captcha.enforce`   服务端校验，引用回传 [$ok, $msg, $ctx]
+ *   - `captcha.needed`    回答「这个场景此刻要不要出组件」（v1.3.71，好友请求有免验证额度）
  */
 declare(strict_types=1);
 
@@ -63,6 +64,8 @@ function owCVConf(): array
         'cap_script_url' => 'https://cdn.jsdelivr.net/npm/cap-widget',
         'vaptcha_vid' => '', 'vaptcha_key' => '',
         'geetest_captcha_id' => '', 'geetest_captcha_key' => '',
+        // 好友请求免人机验证额度：每天前 N 个不验证；0 = 加好友永远不做人机验证
+        'friend_free' => '0',
     ];
     try {
         foreach (DB::all('SELECT k, v FROM plugin_captcha_verify_config') as $r) {
@@ -97,6 +100,22 @@ function owCVActive(): bool
 {
     $c = owCVConf();
     return (string)($c['enabled'] ?? '0') === '1' && owCVReady((string)$c['provider'], $c);
+}
+
+/**
+ * 这次好友请求是否可以免人机验证（后台「每天前 N 个」额度）。
+ *
+ * N=0 的语义是「加好友根本不做人机验证」，不是「一个都不免」——
+ * 与开关类设置保持一致：填 0 就是关掉这件事。
+ * ⚠️ 拿不到身份时一律不免：宁可多要一次验证，也不能因为认不出是谁就放行。
+ */
+function owCVFriendFree(?array $actor): bool
+{
+    $n = (int)(owCVConf()['friend_free'] ?? 0);
+    if ($n === 0) return true;
+    if (($actor['kind'] ?? '') !== 'user') return false;
+    $uid = (int)($actor['id'] ?? 0);
+    return $uid > 0 && Chat::friendReqToday($uid) < $n;
 }
 
 /**
@@ -318,7 +337,25 @@ Plugin::on('captcha.takeover', function (): string { return owCVActive() ? '1' :
 
 Plugin::on('captcha.enforce', function (&$ok, &$msg, array $ctx = []): void {
     if (!owCVActive()) return;                       // 未启用：完全不参与判定，核心走自己的 SVG 码
+    // 好友请求有免验证额度（每天前 N 个），额度内直接放行，不查 token
+    if (($ctx['scene'] ?? '') === 'friend_add' && owCVFriendFree($ctx['actor'] ?? null)) {
+        $ok = true; $msg = '';
+        return;
+    }
     [$ok, $msg] = owCVVerify(is_array($ctx['post'] ?? null) ? $ctx['post'] : []);
+});
+
+/**
+ * 「这一栏到底要不要渲染给人机验证组件」—— 前端按它决定加好友弹窗里出不出组件。
+ *
+ * 必须与上面的 captcha.enforce 同一套判定：两处各写一份迟早分叉，
+ * 分叉的后果是「界面摆着组件、服务端根本不查」或者反过来「服务端要 token、
+ * 界面却没地方给」，后者会把用户彻底锁死在提交失败上（v1.3.64 邮件码踩过）。
+ */
+Plugin::on('captcha.needed', function (array $ctx = []): string {
+    if (!owCVActive()) return '';
+    if (($ctx['scene'] ?? '') === 'friend_add') return owCVFriendFree($ctx['actor'] ?? null) ? '' : '1';
+    return '1';
 });
 
 /* ---------- 后台配置页 ---------- */
@@ -362,6 +399,12 @@ Plugin::adminPage('captcha-verify', '人机验证', function () {
         }
         $h .= '</div>';
     }
+    // 好友请求的免验证额度与服务商无关，所以放在基础区，不进任何一组密钥里
+    $h .= '<div class="ow-form-row"><div class="ow-form-item" style="min-width:210px"><label>每天免验证的好友请求数</label>'
+        . '<input class="ow-input" type="number" min="0" max="100" step="1" data-owcv-field="friend_free"'
+        . ' id="owCvFriendFree" value="' . (int)($c['friend_free'] ?? 0) . '">'
+        . '<p style="font-size:12px;color:var(--ow-text-sub)">0 = 加好友不做人机验证；填 5 = 每人每天前 5 次加好友不验证，'
+        . '从第 6 次起必须先过人机验证。按「当天已发出的请求数」计，跨天自动重置。</p></div></div>';
     $h .= '<button class="ow-btn ow-btn-primary" onclick="OwCV.save()">保存设置</button>'
         . '<button class="ow-btn ow-btn-ghost" onclick="OwCV.test()" style="margin-left:8px">测试校验连通性</button>'
         . '<p style="font-size:12px;color:var(--ow-text-sub);margin-top:8px">「测试」只验证配置完整性与能否连上服务商接口，'
@@ -376,6 +419,9 @@ Plugin::route('plugin_captcha_verify_save', function (array $ctx) {
     $provider = (string)($post['provider'] ?? 'turnstile');
     if (!isset(owCVProviders()[$provider])) Api::json(['ok' => false, 'msg' => '未知的验证服务商']);
     $kv = ['enabled' => ($post['enabled'] ?? '0') === '1' ? '1' : '0', 'provider' => $provider];
+    // 免验证额度是全局项，钳到 0..100：负数会变成「所有人永远要验证」的意外，
+    // 过大的数则等于关掉这道防线，都不该由一个输入框随口决定
+    $kv['friend_free'] = (string)max(0, min(100, (int)($post['friend_free'] ?? 0)));
     foreach (owCVProviders()[$provider]['fields'] as $fk => $fl) {
         $kv[$fk] = mb_substr(trim((string)($post[$fk] ?? '')), 0, 300);
     }

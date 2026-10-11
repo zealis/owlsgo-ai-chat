@@ -71,6 +71,19 @@ class DB
     }
 
     /**
+     * 「按字面大小写不敏感排序」的方言写法。
+     *
+     * SQLite 默认按字节序排（'Z' < 'a'），要大小写无关必须显式 COLLATE NOCASE；
+     * MySQL 的 utf8mb4_*_ci 与 PostgreSQL 的默认 collation 本来就是大小写无关，
+     * 再拼一句 COLLATE NOCASE 反而炸 —— MySQL 直接 1273 Unknown collation。
+     * @param string $expr 排序表达式（如 'u.nickname'）
+     */
+    public static function ci(string $expr): string
+    {
+        return self::$driver === 'sqlite' ? "$expr COLLATE NOCASE" : $expr;
+    }
+
+    /**
      * 幂等建索引。
      *
      * ⚠️ MySQL 全系（含 8.0）都**不支持** `CREATE INDEX IF NOT EXISTS` —— 不是报错就是
@@ -324,6 +337,19 @@ class DB
             "CREATE TABLE IF NOT EXISTS friends (
                 id $id, user_id $int NOT NULL, friend_id $int NOT NULL,
                 created_at $ts NOT NULL)",
+            // 好友请求（v1.3.71）：加好友不再即时生效 —— 先申请（可附验证消息），
+            // 对方「通过」之后才成为联系人、才能互发私信。
+            //  - status：0 待处理 / 1 已通过 / 2 已拒绝。收件人处理时才写 handled_at。
+            //  - note 是申请那一刻写的话，属于历史事实，破例存文本快照（不随签名变化）。
+            //  - 为什么不往 friends 上加 status 列：friends 一行代表「关系已成立」，
+            //    混进待处理/被拒的行后，每个联系人查询都要多一句 WHERE status=1，
+            //    而请求列表要的恰恰是 status=0/2 —— 两类查询互相拖累。
+            //  - 通过时只写**一行**（处理人 → 申请人）：联系人查询自 v1.3.10 起
+            //    双向可见（见 Chat::friends），一行就够让两边都看到对方。
+            "CREATE TABLE IF NOT EXISTS friend_req (
+                id $id, from_id $int NOT NULL, to_id $int NOT NULL,
+                note $text, status $int NOT NULL DEFAULT 0,
+                created_at $ts NOT NULL, handled_at $int NOT NULL DEFAULT 0)",
             // 会话置顶（v1.2.28）：**按用户**生效，不是全局状态。
             // 私聊置顶只影响自己的列表顺序（peer_key 形如 'dm:user:20'）；
             // key 统一带前缀，为以后群聊置顶（'room:5'）留位，不用改表。
@@ -428,6 +454,11 @@ class DB
             ['idx_conv_reads_key',   'conversation_reads', 'user_id, peer_key', true],
             // 通知永远是「按用户取最近 N 条」和「按用户数未读」，没有跨用户查询
             ['idx_notices_user',     'notices',         'user_id, id',          false],
+            // 好友请求两个方向都要查：收件箱（待我处理）与发件箱（我发出的状态）。
+            // 重复待处理请求由代码先查后插（Chat::friendRequest），不建唯一索引 ——
+            // 同一对人可以「拒了再加」，历史行要留。
+            ['idx_friend_req_to',    'friend_req',      'to_id, status, id',    false],
+            ['idx_friend_req_from',  'friend_req',      'from_id, status, id',  false],
         ] as $ix) {
             self::createIndex($ix[0], $ix[1], $ix[2], $ix[3]);
         }

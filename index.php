@@ -525,9 +525,23 @@ if ($action !== '') {
         case 'friends':
             Api::json(['ok' => true, 'data' => Chat::friends($actor)]);
 
-        case 'friend_add': {   // 加联系人：幂等（重复加返回明确错误，不插重行）
-            $r = Chat::addFriend($actor, (int)$p('friend_id'));
+        case 'friend_add': {   // 发起好友请求（v1.3.71：不再即时生效，要对方通过）
+            // 人机验证按「每天前 N 个免验证」额度放行，判定在 captcha-verify 插件里
+            // （N 由后台那个输入框设定，0 = 加好友永远不做人机验证）。
+            ow_captcha_gate('friend_add', $actor);
+            $r = Chat::friendRequest($actor, (int)$p('friend_id'), (string)$p('note', ''));
             Api::json(['ok' => $r[0], 'msg' => $r[1]]);
+        }
+
+        // 好友通知页：待我处理的 + 我发出的（含状态）
+        case 'friend_requests':
+            Api::json(['ok' => true] + Chat::friendRequests($actor));
+
+        // 通过 / 拒绝收到的请求。与 friend_add 同口径不走票据：
+        // 处理自己的请求不是破坏性操作，且拒绝也只影响这条请求。
+        case 'friend_handle': {
+            $r = Chat::handleFriendRequest($actor, (int)$p('id'), (string)$p('accept') === '1');
+            Api::json(['ok' => $r[0], 'msg' => $r[1], 'pending' => Chat::friendReqPending((int)($actor['id'] ?? 0))]);
         }
 
         case 'friend_remove':  // 删联系人：已在 $SENSITIVE，需一次性票据
@@ -1250,12 +1264,25 @@ function ageFieldHtml(): string
  *
  * @param string $scene 与表单里渲染的组件场景一致（register / reset / login）
  */
-function ow_captcha_gate(string $scene): void
+function ow_captcha_gate(string $scene, array $actor = []): void
 {
     if (Plugin::collect('captcha.takeover') !== '1') return;
     $ok = true; $msg = '';
-    Plugin::fire('captcha.enforce', [&$ok, &$msg, ['scene' => $scene, 'post' => $_POST]]);
+    Plugin::fire('captcha.enforce', [&$ok, &$msg, ['scene' => $scene, 'post' => $_POST, 'actor' => $actor]]);
     if (!$ok) Api::json(['ok' => false, 'msg' => $msg !== '' ? $msg : '请先完成人机验证']);
+}
+
+/**
+ * 这个场景此刻要不要给用户出人机组件（前端据此决定那一栏渲不渲染）。
+ *
+ * 判定权在插件（captcha.needed），核心只转述 —— 必须与服务端的闸门同源，
+ * 否则会出现「界面摆个组件、服务端根本不查」或「服务端要 token、界面没处给」。
+ * v1.3.64 的邮件验证码就踩过这类两边口径不一致的坑。
+ */
+function ow_captcha_needed(string $scene, array $actor = []): bool
+{
+    if (Plugin::collect('captcha.takeover') !== '1') return false;
+    return Plugin::collect('captcha.needed', [['scene' => $scene, 'actor' => $actor]]) === '1';
 }
 
 /** 邮箱后缀白名单 + 长度提示（注册 / 找回密码页用，未限制时返回空串） */
@@ -1509,9 +1536,14 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
     // 给一个永远点不出内容的标签比不给更容易让人困惑。
     // 红点数字服务端就渲染出来（首屏即正确，不等 JS 再拉一次），点开通知流后由前端清零。
     $noticeUnread = ($actor['kind'] ?? '') === 'user' ? Notice::unread((int)($actor['id'] ?? 0)) : 0;
+    // v1.3.71：联系人栏的同一个小红点 —— 有待处理好友请求时亮起来（与通知同一轮子 .ow-dot）。
+    $friendPending = ($actor['kind'] ?? '') === 'user' ? Chat::friendReqPending((int)($actor['id'] ?? 0)) : 0;
     echo '<nav class="ow-rail" id="owRail">'
        . '<button class="ow-rail-btn is-active" data-tab="chat" type="button" title="消息" aria-label="消息">' . ow_icon('chat', 20) . '<span class="ow-rail-lb">消息</span></button>'
-       . '<button class="ow-rail-btn" data-tab="friends" type="button" title="联系人" aria-label="联系人">' . ow_icon('users', 20) . '<span class="ow-rail-lb">联系人</span></button>'
+       . '<button class="ow-rail-btn" data-tab="friends" type="button" title="联系人"'
+         . ' aria-label="联系人' . ($friendPending > 0 ? '（' . $friendPending . ' 个待处理好友请求）' : '') . '">'
+         . ow_icon('users', 20) . '<span class="ow-rail-lb">联系人</span>'
+         . '<span class="ow-dot" id="owFriendDot" aria-hidden="true"' . ($friendPending > 0 ? '' : ' style="display:none"') . '></span></button>'
        . (($actor['kind'] ?? '') === 'user'
            ? '<button class="ow-rail-btn" data-tab="notice" type="button" title="系统通知"'
              . ' aria-label="系统通知' . ($noticeUnread > 0 ? '（' . $noticeUnread . ' 条未读）' : '') . '">'
@@ -1659,6 +1691,11 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
         // v1.3.52：系统通知的固定头像（小可爱第 36 号）。服务端算一次，
         // 侧栏那一行与通知流共用 —— 两处各自拼 URL 迟早不一致。
         'notice_avatar' => ($actor['kind'] ?? '') === 'user' ? Notice::avatarUrl() : '',
+        // v1.3.71：待处理好友请求数 —— 联系人栏红点首屏就要正确，与通知红点同一套路。
+        // 语义是「未处理」而不是「未读」：只有通过/拒绝才消，光看不处理会一直挂着。
+        'friend_pending' => ($actor['kind'] ?? '') === 'user' ? Chat::friendReqPending((int)($actor['id'] ?? 0)) : 0,
+        // 加好友此刻要不要出人机组件（「每天前 N 个免验证」的额度判定在 captcha-verify 里）
+        'captcha_friend' => (($actor['kind'] ?? '') === 'user' && ow_captcha_needed('friend_add', $actor)) ? '1' : '0',
         // v1.3.1：游客未点选任何群时下发 0，前端据此禁用输入区（进入后才解锁）
         'room' => $entered ? (int)$first['id'] : 0,
         'site_url' => ow_site_url(),
@@ -1686,6 +1723,15 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
             return $out;
         })(),
     ];
+    // 加好友弹窗要用的人机验证组件模板（服务端已算好「此刻是否需要」，不需要就不输出）。
+    // 为什么放页面里而不是塞进 boot 的 JSON：这段是 HTML，塞进 <script> 里的字符串
+    // 就得指望 json_encode 转义 </script>（当前没开 JSON_HEX_TAG），拼 HTML 进 JSON 是给自己埋雷。
+    // data-owcv-tpl 让 widget.js 首屏扫描跳过它（模板不该被渲染一次），
+    // 弹窗里克隆的是 innerHTML，不带这个标记，mount() 才会真去初始化。
+    if (($boot['captcha_friend'] ?? '0') === '1') {
+        echo '<div id="owCvFriendTpl" data-owcv-tpl="1" style="display:none">'
+           . Plugin::collect('captcha.form', [['scene' => 'friend_add']]) . '</div>';
+    }
     // 插件资源必须在 OwChat.init 之后引入：插件脚本依赖 OwChat.cfg 判断场景
     // ⚠️ 打标记：插件（如 twofa）会用 page.footer 再补一份合并资源给「登录页」用，
     //    不标记的话聊天页会**加载两遍**合并包 —— 插件 JS 跑两次，
