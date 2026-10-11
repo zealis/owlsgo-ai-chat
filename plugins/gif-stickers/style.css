@@ -59,6 +59,11 @@
     opacity: 0; transition: opacity .12s; -webkit-transition: opacity .12s;
 }
 .ow-gif-item:hover .ow-gif-fav { opacity: 1; }
+/* 已收藏的那颗要**常亮**：悬停才显形是给「还没点」的星用的，
+   点过之后它得自己说话，否则同一张图会被反复收藏。 */
+.ow-gif-fav[data-faved="1"] { opacity: 1; color: #ffd166; }
+/* 取图期间禁用：给个「在忙」的样子，别让人以为点了没反应再点一次 */
+.ow-gif-fav[disabled] { opacity: .55; cursor: default; }
 
 /* 广告位：第三方 HTML 关在 sandbox iframe 里，独占一行（顺序仍由源返回决定，我们不挪位） */
 .ow-gif-ad { width: 100%; }

@@ -2,12 +2,15 @@
  * gif-stickers · 聊天页表情面板（v1.3.75）
  *
  * 职责：往核心锚点 #owToolFirst 注入图标，点开一个「上方搜索、下方结果」的面板，
- * 选中结果 → 发一条图片消息；每条结果可收藏成贴纸（复用核心 OwChat.collect）。
+ * 选中结果 → 发一条图片消息；点★ → 让本站把这张图取回来落成自己的贴纸。
  *
  * 两个源的调用方式不同，这是**内容源条款决定的**，不是实现偏好：
  *   - klipy：由浏览器直接请求 api.klipy.com。他们的《Integration Requirements》
  *     明文要求请求由终端用户客户端发起、媒体直接从返回 URL 加载、不得经服务器代理或缓存。
  *   - apihz：走本站路由 plugin_gif_stickers_search，密钥只留在服务端。
+ * 收藏是唯一的例外（v1.3.80）：核心贴纸表只存本站 uploads/ 地址，外站图必须先取回来，
+ * 于是这一路两个源都走本站路由 plugin_gif_stickers_collect。与 KLIPY「不得转存」的要求相冲，
+ * 取舍写在 main.php 头部与后台页的 ⓘ 里。
  *
  * 兼容老浏览器：只用 var / function，不用箭头函数、let/const、fetch、模板串。
  * 依赖核心暴露的 OwApi / esc / toast / OwChat。
@@ -333,6 +336,26 @@
     function appendSlow(g, h) { var t = g.innerHTML; g.innerHTML = t + h; }
 
     /**
+     * 收藏为贴纸（v1.3.80）：**不**直接调核心的 OwChat.collect(远端URL)。
+     * 核心贴纸表只认本站 uploads/ 下的地址（v1.0.100 起，不让成员的浏览器去加载外站图），
+     * 把 KLIPY 的链接递过去必回「仅支持收藏本站上传的图片」。
+     * 现在交给本站路由 plugin_gif_stickers_collect：由服务器把图取回来落盘，再入库。
+     * 取图要一两秒，期间禁用这颗星 —— 连点既白吃限流额度，又会写出重复收藏。
+     */
+    function collect(url, btn) {
+        if (btn.disabled) return;
+        btn.disabled = true;
+        OwApi.post('plugin_gif_stickers_collect', { url: url }, function (r) {
+            btn.disabled = false;
+            toast((r && r.msg) || (r && r.ok ? '已收藏' : '收藏失败'));
+            if (r && r.ok) {
+                btn.title = '已收藏为贴纸';
+                btn.setAttribute('data-faved', '1');   // 用属性不用 class：命中判定靠 className 等号，别把它改坏
+            }
+        });
+    }
+
+    /**
      * 广告位：KLIPY 要求把返回的 HTML 原样渲染。
      * 直接 innerHTML 等于把第三方 HTML 塞进本站 DOM —— 一旦它内含脚本就是 XSS。
      * 所以放进 sandbox iframe：allow-scripts 让广告能正常渲染与计数，
@@ -352,7 +375,7 @@
                 e = e || w.event;
                 var t = e.target || e.srcElement;
                 var url = this.getAttribute('data-url');
-                if (t && t.className === 'ow-gif-fav') { w.OwChat.collect(url); return; }   // 只收藏，不发送
+                if (t && t.className === 'ow-gif-fav') { collect(url, t); return; }   // 只收藏，不发送
                 if (!url) return;
                 w.OwChat.send({ type: 'image', content: url });
                 close();
