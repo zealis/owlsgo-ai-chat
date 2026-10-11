@@ -1613,6 +1613,9 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
        // 已被移出成员 / 服务端拒绝发言等异常态的兜底入口。
        . '<div class="ow-join-gate" id="owJoinGate" style="display:none"></div>'
        . '<div class="ow-toolbar">'
+       // 工具栏首位锚点（与 #owAttachTools 同一约定）：核心只留位置、不判断哪个插件在用。
+       // 表情包插件启用时把它的图标注到这里，停用则这里始终是空的 —— 核心零分支。
+       . '<span id="owToolFirst"></span>'
        // 工具栏图标统一 16px（比消息区图标小一号，避免抢视觉重心）
        . '<button class="ow-icon-btn" id="owBtnEmoji" title="表情">' . ow_icon('smile', 16) . '</button>'
        // v1.2.41：图片/文件两个按钮**移入附件上传插件**，这里只留一个空锚点。

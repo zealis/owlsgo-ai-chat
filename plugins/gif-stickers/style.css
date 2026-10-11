@@ -1,0 +1,73 @@
+/**
+ * gif-stickers · 样式（v1.3.75）
+ * 面板几何与核心 .ow-emoji-panel 同一套（绝对定位在输入区上方、左对齐 12px），
+ * 只是更宽更高一点 —— GIF 缩略图比 emoji 需要面积，太小看不清内容。
+ * 底色一律用令牌，不写死颜色：深色模式下这些面板要跟着翻。
+ */
+.ow-gif-panel {
+    position: absolute;
+    bottom: 110px;
+    left: 12px;
+    width: 360px;
+    max-height: 420px;
+    background: var(--ow-bg);
+    border: 1px solid var(--ow-border);
+    border-radius: 8px;
+    overflow: hidden;
+    z-index: 30;
+    display: flex; display: -webkit-flex; flex-direction: column; -webkit-flex-direction: column;
+}
+/* 搜索在最上方（用户明确要求），按钮与输入框同高、底对齐 */
+.ow-gif-search {
+    display: flex; display: -webkit-flex; gap: 6px; align-items: center; -webkit-align-items: center;
+    padding: 8px; border-bottom: 1px solid var(--ow-border);
+    background: var(--ow-bg-sub); flex-shrink: 0; -webkit-flex-shrink: 0;
+}
+.ow-gif-search .ow-input { flex: 1; -webkit-flex: 1; padding: 6px 10px; font-size: 13px; }
+.ow-gif-search .ow-btn { padding: 6px 12px; font-size: 13px; }
+
+.ow-gif-grid {
+    flex: 1; -webkit-flex: 1;
+    display: flex; display: -webkit-flex; flex-wrap: wrap; -webkit-flex-wrap: wrap;
+    gap: 6px; align-content: flex-start; -webkit-align-content: flex-start;
+    padding: 8px; overflow-y: auto;
+}
+.ow-gif-item {
+    position: relative;
+    width: 104px; height: 104px;
+    border: 1px solid var(--ow-border); border-radius: 6px; overflow: hidden;
+    background: var(--ow-bg-sub); cursor: pointer;
+}
+.ow-gif-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ow-gif-item:hover { border-color: var(--ow-primary); }
+/* 收藏按钮只在悬停时出现：常驻会把缩略图挤得像个工具栏 */
+.ow-gif-fav {
+    position: absolute; right: 4px; top: 4px;
+    width: 22px; height: 22px; line-height: 20px; padding: 0;
+    text-align: center; border: none; border-radius: 4px;
+    background: rgba(0, 0, 0, .45); color: #fff; font-size: 13px; cursor: pointer;
+    opacity: 0; transition: opacity .12s; -webkit-transition: opacity .12s;
+}
+.ow-gif-item:hover .ow-gif-fav { opacity: 1; }
+
+/* 广告位：第三方 HTML 关在 sandbox iframe 里，独占一行（顺序仍由源返回决定，我们不挪位） */
+.ow-gif-ad { width: 100%; }
+.ow-gif-ad-frame {
+    display: block; width: 100%; height: 120px;
+    border: 1px solid var(--ow-border); border-radius: 6px;
+    background: var(--ow-bg-sub);
+}
+
+.ow-gif-foot {
+    display: flex; display: -webkit-flex; align-items: center; -webkit-align-items: center; gap: 8px;
+    padding: 6px 8px; border-top: 1px solid var(--ow-border);
+    background: var(--ow-bg-sub); font-size: 11px; color: var(--ow-text-sub);
+    flex-shrink: 0; -webkit-flex-shrink: 0;
+}
+.ow-gif-foot a { color: var(--ow-text-sub); }
+.ow-gif-msg { width: 100%; margin: 0; padding: 18px 8px; text-align: center; font-size: 12px; color: var(--ow-text-sub); }
+
+@media (max-width: 720px) {
+    .ow-gif-panel { width: 92%; left: 4%; bottom: 120px; max-height: 60vh; }
+    .ow-gif-item { width: 31%; height: 92px; }
+}
