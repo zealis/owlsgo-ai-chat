@@ -362,6 +362,7 @@
         '邮箱格式不正确': 'That email address is not valid',
         '该邮箱未注册': 'That email is not registered',
         '该邮箱已注册': 'That email is already registered',
+        '该昵称包含系统保留字样，请更换': 'This nickname contains a reserved word — please pick another',
         '请填写图形验证码': 'Enter the captcha',
         '验证码错误，请输入验证器 App 中的 6 位数字': 'Wrong code — enter the 6 digits from your authenticator app',
         '验证已超时，请重新登录': 'Verification timed out, please sign in again',

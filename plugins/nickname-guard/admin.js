@@ -8,7 +8,7 @@
     var $ = function (id) { return d.getElementById(id); };
 
     w.OwNG = {
-        /* 保存保留昵称列表 */
+        /* 保存保留词列表 */
         save: function () {
             OwApi.post('plugin_nickname_guard_save', {
                 list: $('owNGList').value
