@@ -2212,11 +2212,21 @@ input[type=range] {
         gap: 10px; position: fixed; top: 0; left: 0; right: 0; height: 52px;
         padding: 0 12px; background: var(--ow-bg); border-bottom: 1px solid var(--ow-border); z-index: 95;
     }
-    .ow-admin-layout { padding-top: 52px; min-height: 100vh; }
+    .ow-admin-layout { padding-top: 52px; min-height: 100vh; position: relative; -webkit-position: relative; }
+    /* v1.3.65：窄屏侧栏由「钉在视口上的固定抽屉」改成「跟着页面滚的滑动栏」。
+       原来 position:fixed + overflow-y:auto —— 菜单有 27 项、比屏幕还高时，
+       抽屉本体纹丝不动，只能在它内部滚一小块，手指划页面没反应、划抽屉又和页面滚动抢；
+       底部那几项（含「返回前台」）很难够到。
+       改 absolute 挂在 .ow-admin-layout 上（所以父级要 position:relative）：
+       抽屉随页面一起滚，一次滑动就能从顶划到底，开关动画与遮罩都不变。 */
     .ow-admin-side {
-        position: fixed; left: -260px; top: 52px; bottom: 0; width: 250px;
+        position: absolute; left: -260px; top: 52px; width: 250px;
+        /* 用 vh 而不是 %：100% 是**整个页面**的高度，长页面（如用户管理几百行）会把
+           「返回前台」一路顶到页面最底部，够都够不着。视口高度兜底一屏，
+           菜单本身更长时自然按内容长高（min-height 是地板不是天花板）。 */
+        min-height: calc(100vh - 52px);
         border-right: 1px solid var(--ow-border); transition: left .2s; -webkit-transition: left .2s;
-        z-index: 90; overflow-y: auto;
+        z-index: 90;
     }
     .ow-admin-side.open { left: 0; }
     .ow-admin-menu li { padding: 10px 12px; font-size: 13.5px; }
