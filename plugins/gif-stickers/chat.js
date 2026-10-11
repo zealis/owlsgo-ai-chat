@@ -205,12 +205,25 @@
         return null;
     }
 
-    /** 从一条结果里挑一个能直接当 <img src> 用的 http(s) 地址（往下最多两层） */
+    /**
+     * 从一条结果里挑一个能直接当 <img src> 用的 http(s) 地址。
+     * ⚠️ 深度必须放到 4：文档结构是 item → file → gif → url，
+     *   三层容器再读字符串。原先限到 2，走到 file.gif 时已经用尽层数，
+     *   下一次递归直接返回空 —— 表现就是「返回 8 条，但都取不到图片地址」。
+     * 键序也刻意把 file/media/preview 放在裸 url 之前：先钻进媒体容器再兜底，
+     * 避免把 item.url（那是网页地址，不是图片）当成缩略图发出去。
+     */
     function pickUrl(o, depth) {
-        if (!o || depth > 2) return '';
+        if (!o || depth > 4) return '';
         if (typeof o === 'string') return /^https?:\/\//i.test(o) ? o : '';
         if (typeof o !== 'object') return '';
-        var keys = ['url', 'gif', 'webp', 'tinygif', 'mp4', 'hd', 'media', 'file', 'preview'], i, u;
+        var keys = ['file', 'media', 'preview', 'gif', 'webp', 'tinygif', 'mp4', 'hd', 'url'], i, u;
+        // 数组要先钻进去：Tenor 口径是 media: [ { gif: { url } } ]，
+        // 只按对象键名找的话，数组里的东西一条都取不出来。
+        if (Object.prototype.toString.call(o) === '[object Array]') {
+            for (i = 0; i < o.length; i++) { u = pickUrl(o[i], depth + 1); if (u) return u; }
+            return '';
+        }
         for (i = 0; i < keys.length; i++) {
             if (!o[keys[i]]) continue;
             u = pickUrl(o[keys[i]], depth + 1);
