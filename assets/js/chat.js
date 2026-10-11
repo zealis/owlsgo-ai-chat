@@ -2195,7 +2195,10 @@
             // v1.2.20：联系人数量徽标一并移除（与消息标签同理，计数非必要信息）
             ChatList.render(rows, {
                 container: 'owRoomList',
-                activeKey: this.dm ? ('dm:' + this.dm.peer) : '',
+                // 正在看好友通知页时，高亮要留在「新朋友」那一行 ——
+                // 它不是会话，this.dm 永远是空，照原样算 activeKey 会一行都不亮。
+                activeKey: this.friendMode ? 'dm:req:new'
+                    : (this.dm ? ('dm:' + this.dm.peer) : ''),
                 emptyText: '还没有联系人，去「成员管理」或资料卡添加吧',
                 hideTime: true,          // v1.2.28：取消右上角时间
                 onClick: function (el) {
@@ -2221,6 +2224,9 @@
             var self = this;
             this.exitNotices();
             this.friendMode = true;
+            // 点完要把侧栏那一行点亮：openDm 是靠 ChatList.activate 做这件事的，
+            // 本页不是会话、走不到那条路径，得自己补一次（否则进了页面没有选中态）。
+            ChatList.activate('owRoomList', 'dm:req:new');
             // 顶栏与通知页同一处理：标题、群聊信息按钮、延迟显示都属于「某个房间」，
             // 而这一页没有房间 —— 不清就会一直挂着上一个群的名字（实测截出来的就是这问题）。
             this._freqTitleBefore = ($('owRoomName') || {}).textContent || '';
