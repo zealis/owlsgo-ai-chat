@@ -25,12 +25,15 @@
     var cfg = null, cfgDone = false;
     var q = '', page = 1, hasMore = false, loading = false, opened = false;
 
-    /** 工具栏图标：与核心 ow_icon() 同一份 path data 风格（24 viewBox、16px、描边） */
+    /**
+     * 工具栏图标（用户指定的 GIF 字形，path 原样保留）。
+     * 只改了两处呈现：尺寸跟核心工具栏统一成 16px；描边从写死的 #000000 换成
+     * currentColor —— 深色模式下纯黑描边会跟黑底融在一起，图标直接消失。
+     */
     function icon() {
         return '<svg class="ow-ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
-            + ' stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-            + '<rect x="3" y="5" width="18" height="14" rx="2.5"/>'
-            + '<path d="M7.5 5v14M16.5 5v14"/><path d="M3 9.5h4.5M3 14.5h4.5M16.5 9.5H21M16.5 14.5H21"/>'
+            + ' stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+            + '<path d="M12.75 8.25v7.5m6-7.5h-3V12m0 0v3.75m0-3.75H18M9.75 9.348c-1.03-1.464-2.698-1.464-3.728 0c-1.03 1.465-1.03 3.84 0 5.304s2.699 1.464 3.728 0V12h-1.5M4.5 19.5h15a2.25 2.25 0 0 0 2.25-2.25V6.75A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25v10.5A2.25 2.25 0 0 0 4.5 19.5"/>'
             + '</svg>';
     }
 
@@ -46,7 +49,8 @@
         p.innerHTML =
             '<div class="ow-gif-search">'
             + '<input class="ow-input" type="text" id="owGifQ" autocomplete="off" maxlength="60">'
-            + '<button class="ow-btn ow-btn-primary" id="owGifGo" type="button">搜索</button></div>'
+            + '<button class="ow-btn ow-btn-primary" id="owGifGo" type="button">搜索</button>'
+            + '<button class="ow-gif-close" id="owGifClose" type="button" aria-label="关闭" title="关闭">✕</button></div>'
             + '<div class="ow-gif-grid" id="owGifGrid"></div>'
             + '<div class="ow-gif-foot"><button class="ow-btn ow-btn-ghost" id="owGifMore" type="button" style="display:none">加载更多</button>'
             + '<span id="owGifPowered" style="display:none"></span></div>';
@@ -54,6 +58,7 @@
         var anchor = $('owEmojiPanel');
         (anchor && anchor.parentNode ? anchor.parentNode : d.body).appendChild(p);
         $('owGifGo').onclick = function () { search(); };
+        $('owGifClose').onclick = function () { close(); };
         $('owGifQ').onkeydown = function (e) {
             e = e || w.event;
             if (e.keyCode === 13) { e.preventDefault ? e.preventDefault() : (e.returnValue = false); search(); }
@@ -159,7 +164,16 @@
             var parsed = parseKlipy(j);
             hasMore = !!parsed.next;
             render(parsed.items, page > 1);
-            if (!parsed.items.length && page === 1) grid('<p class="ow-gif-msg">没有结果，换个关键词试试</p>');
+            if (!parsed.items.length && page === 1) {
+                if (x.status === 200) {
+                    // 「HTTP 200 但一条都没有」光看界面没法判断是源没货还是我们没解析对，
+                    // 所以把真实结构留在控制台：管理员按 F12 就能看到顶层有哪些键
+                    if (w.console && w.console.warn) w.console.warn('[gif-stickers] KLIPY 返回 200 但解析不出结果，原始响应：', j);
+                    grid('<p class="ow-gif-msg">KLIPY 返回了 200 但没有可解析的结果（结构已记在浏览器控制台，供核对）</p>');
+                } else {
+                    grid('<p class="ow-gif-msg">没有结果，换个关键词试试</p>');
+                }
+            }
             foot();
         };
         x.onerror = function () { loading = false; grid('<p class="ow-gif-msg">连不上 KLIPY：可能被网络策略或广告拦截挡住</p>'); };
@@ -168,29 +182,70 @@
     }
 
     /**
-     * KLIPY 响应：{ result, data: { data: [ { file: { gif: { url, width, height } } } ] } }
-     * 广告按文档说明是「某条结果里带一个 HTML 字符串的 content 字段」，
-     * 所以这里**按原顺序**遍历：遇到带 content 的项就当成一个广告位，不挪位、不删项。
+     * 在响应里找第一个「像结果集」的数组。
+     * 为什么要找：文档写的是 { result, data: { data: [...] } }，但他们另有一节
+     * 明确说接口与 Tenor 兼容，而 Tenor 是 { results: [...] } / { data: [...] }。
+     * 实测过一次 HTTP 200 却解析出 0 条 —— 就是被这一层包裹差异吃掉的。
+     */
+    function findList(o, depth) {
+        if (!o || typeof o !== 'object' || depth > 3) return null;
+        if (Object.prototype.toString.call(o) === '[object Array]') return o.length ? o : null;
+        var keys = ['data', 'results', 'gifs', 'stickers', 'items'], i, r;
+        for (i = 0; i < keys.length; i++) {
+            if (!o[keys[i]]) continue;
+            r = findList(o[keys[i]], depth + 1);
+            if (r) return r;
+        }
+        return null;
+    }
+
+    /** 从一条结果里挑一个能直接当 <img src> 用的 http(s) 地址（往下最多两层） */
+    function pickUrl(o, depth) {
+        if (!o || depth > 2) return '';
+        if (typeof o === 'string') return /^https?:\/\//i.test(o) ? o : '';
+        if (typeof o !== 'object') return '';
+        var keys = ['url', 'gif', 'webp', 'tinygif', 'mp4', 'hd', 'media', 'file', 'preview'], i, u;
+        for (i = 0; i < keys.length; i++) {
+            if (!o[keys[i]]) continue;
+            u = pickUrl(o[keys[i]], depth + 1);
+            if (u) return u;
+        }
+        return '';
+    }
+
+    /** 还有没有下一页：同样按几种包裹层试，取不到就当没有 */
+    function hasNext(o, depth) {
+        if (!o || typeof o !== 'object' || depth > 2) return false;
+        if (o.has_next === true) return true;
+        if (o.next_page && o.next_page !== '' && o.next_page !== '0') return true;
+        var keys = ['data', 'result', 'results', 'pagination'], i;
+        for (i = 0; i < keys.length; i++) { if (hasNext(o[keys[i]], depth + 1)) return true; }
+        return false;
+    }
+
+    /**
+     * KLIPY 响应 → 面板条目。广告按文档说明是「某条结果里带一个 HTML 字符串的 content」，
+     * 所以**按原顺序**遍历：遇到带 content 的项就当成一个广告位，不挪位、不删项
+     * （他们的条款不允许我们改动结果顺序或组成）。
      */
     function parseKlipy(j) {
-        var box = (j && j.data) ? j.data : j;
-        var arr = box && box.data && box.data.length !== undefined ? box.data : (box && box.results ? box.results : []);
-        var items = [], i, it;
-        if (Object.prototype.toString.call(arr) !== '[object Array]') arr = [];
+        var arr = findList(j, 0) || [], items = [], i, it, url;
         for (i = 0; i < arr.length; i++) {
             it = arr[i] || {};
-            if (typeof it.content === 'string' && it.content.indexOf('<') === 0) { items.push({ kind: 'ad', html: it.content }); continue; }
-            var m = (it.file && (it.file.gif || it.file.webp || it.file.hd)) || it.media || null;
-            var url = m ? (m.url || m.gif || '') : '';
-            if (!/^https?:\/\//i.test(String(url))) continue;
+            if (typeof it === 'string') {
+                if (/^https?:\/\//i.test(it)) items.push({ kind: 'gif', url: it, thumb: it, w: 0, h: 0, title: '' });
+                continue;
+            }
+            if (typeof it.content === 'string' && it.content.charAt(0) === '<') { items.push({ kind: 'ad', html: it.content }); continue; }
+            url = pickUrl(it, 0);
+            if (!url) continue;
             items.push({
                 kind: 'gif', url: url,
-                thumb: (it.preview && it.preview.url) || url,
-                w: m && m.width ? (m.width | 0) : 0, h: m && m.height ? (m.height | 0) : 0,
-                title: it.title || ''
+                thumb: pickUrl(it.preview || {}, 0) || url,
+                w: 0, h: 0, title: it.title || ''
             });
         }
-        return { items: items, next: !!(box && (box.has_next || (box.next_page && box.next_page !== ''))) };
+        return { items: items, next: hasNext(j, 0) };
     }
 
     /** 给后台「测试当前源」用的计数：面板与自测共用一份解析口径，免得两处对形状的理解漂移 */

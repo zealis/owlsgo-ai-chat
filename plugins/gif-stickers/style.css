@@ -1,7 +1,10 @@
 /**
- * gif-stickers · 样式（v1.3.75）
- * 面板几何与核心 .ow-emoji-panel 同一套（绝对定位在输入区上方、左对齐 12px），
- * 只是更宽更高一点 —— GIF 缩略图比 emoji 需要面积，太小看不清内容。
+ * gif-stickers · 样式（v1.3.76）
+ * 布局参考 ChatNet 的表情包面板：搜索行在最上（含 ✕），下面是**按百分比铺的缩略图格**，
+ * 悬停用一圈主色描边表示可点。差别只有两处：
+ *   - 缩略图用百分比列宽而不是固定 104px —— 面板宽度会随窗口变，固定宽度在窄面板里
+ *     会挤出一列留白；ChatNet 用的是 bootstrap 的 col-xs-6 / col-md-2，这里用等价的分栏。
+ *   - 悬停描边用 box-shadow 而不是加粗 border —— 改 border 宽度会让缩略图抖一下（重排）。
  * 底色一律用令牌，不写死颜色：深色模式下这些面板要跟着翻。
  */
 .ow-gif-panel {
@@ -9,7 +12,7 @@
     bottom: 110px;
     left: 12px;
     width: 360px;
-    max-height: 420px;
+    max-height: 380px;
     background: var(--ow-bg);
     border: 1px solid var(--ow-border);
     border-radius: 8px;
@@ -17,7 +20,7 @@
     z-index: 30;
     display: flex; display: -webkit-flex; flex-direction: column; -webkit-flex-direction: column;
 }
-/* 搜索在最上方（用户明确要求），按钮与输入框同高、底对齐 */
+/* 搜索在最上方（用户明确要求），✕ 放同一行右侧，不额外占一条标题栏 */
 .ow-gif-search {
     display: flex; display: -webkit-flex; gap: 6px; align-items: center; -webkit-align-items: center;
     padding: 8px; border-bottom: 1px solid var(--ow-border);
@@ -25,6 +28,12 @@
 }
 .ow-gif-search .ow-input { flex: 1; -webkit-flex: 1; padding: 6px 10px; font-size: 13px; }
 .ow-gif-search .ow-btn { padding: 6px 12px; font-size: 13px; }
+.ow-gif-close {
+    width: 26px; height: 26px; line-height: 24px; padding: 0; flex-shrink: 0; -webkit-flex-shrink: 0;
+    border: 1px solid var(--ow-border-control); border-radius: 6px;
+    background: var(--ow-bg); color: var(--ow-text-sub); font-size: 13px; cursor: pointer;
+}
+.ow-gif-close:hover { background: var(--ow-bg-chat-hover); color: var(--ow-text); }
 
 .ow-gif-grid {
     flex: 1; -webkit-flex: 1;
@@ -32,14 +41,15 @@
     gap: 6px; align-content: flex-start; -webkit-align-content: flex-start;
     padding: 8px; overflow-y: auto;
 }
+/* 一行三张（减去两个 6px 间隙）；窄屏降到一行两张 */
 .ow-gif-item {
     position: relative;
-    width: 104px; height: 104px;
+    width: calc((100% - 12px) / 3); height: 96px;
     border: 1px solid var(--ow-border); border-radius: 6px; overflow: hidden;
     background: var(--ow-bg-sub); cursor: pointer;
 }
-.ow-gif-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.ow-gif-item:hover { border-color: var(--ow-primary); }
+.ow-gif-item img { width: 100%; height: 100%; object-fit: cover; display:block; }
+.ow-gif-item:hover { border-color: var(--ow-primary); box-shadow: inset 0 0 0 1px var(--ow-primary); }
 /* 收藏按钮只在悬停时出现：常驻会把缩略图挤得像个工具栏 */
 .ow-gif-fav {
     position: absolute; right: 4px; top: 4px;
@@ -64,10 +74,11 @@
     background: var(--ow-bg-sub); font-size: 11px; color: var(--ow-text-sub);
     flex-shrink: 0; -webkit-flex-shrink: 0;
 }
+.ow-gif-foot .ow-btn { padding: 4px 12px; font-size: 12px; }
 .ow-gif-foot a { color: var(--ow-text-sub); }
 .ow-gif-msg { width: 100%; margin: 0; padding: 18px 8px; text-align: center; font-size: 12px; color: var(--ow-text-sub); }
 
 @media (max-width: 720px) {
     .ow-gif-panel { width: 92%; left: 4%; bottom: 120px; max-height: 60vh; }
-    .ow-gif-item { width: 31%; height: 92px; }
+    .ow-gif-item { width: calc((100% - 6px) / 2); height: 88px; }
 }

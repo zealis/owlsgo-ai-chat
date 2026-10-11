@@ -114,6 +114,7 @@
         '加载更多': 'Load more',
         '点击发送': 'Click to send',
         '没有结果，换个关键词试试': 'No results — try another keyword',
+        'KLIPY 返回了 200 但没有可解析的结果（结构已记在浏览器控制台，供核对）': 'KLIPY replied 200 but nothing could be parsed — the raw shape is logged in the browser console',
         '表情包源尚未配置，请到后台「插件 → 表情包」填写': 'The GIF source isn’t configured yet — set it up under Plugins → GIFs in the admin console',
         '连不上 KLIPY：可能被网络策略或广告拦截挡住': 'Can’t reach KLIPY — a network policy or an ad blocker may be in the way',
         'KLIPY 请求超时': 'The KLIPY request timed out',

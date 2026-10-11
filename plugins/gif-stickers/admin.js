@@ -73,6 +73,31 @@
         }
     };
 
-    var sel = $('owGsProvider');
-    if (sel) sel.onchange = function () { OwGS.show(); };
+    /**
+     * 后台页 HTML 是 SPA 异步注入的（admin_plugin_page 返回后才进 DOM），
+     * 脚本执行时 #owGsProvider 根本不存在 —— 直接绑定的话切源不会联动，
+     * 表现就是「选了 API 盒子，下面还是 KLIPY 那一堆框」。
+     * 与 captcha-verify / email-verify 同一做法：监听 #owAdminMain 变化后再绑一次。
+     */
+    function watchInit() {
+        var main = $('owAdminMain');
+        if (!main) return;
+        var tryInit = function () {
+            var el = $('owGsProvider');
+            if (el && el.getAttribute('data-owgs-inited') !== '1') {
+                el.setAttribute('data-owgs-inited', '1');
+                OwGS.show();
+                el.onchange = OwGS.show;
+            }
+        };
+        if (typeof MutationObserver !== 'undefined') {
+            new MutationObserver(tryInit).observe(main, { childList: true, subtree: true });
+        } else {
+            setInterval(tryInit, 300);
+        }
+        tryInit();
+    }
+
+    if (d.readyState === 'loading') d.addEventListener('DOMContentLoaded', watchInit);
+    else watchInit();
 })(window, document);

@@ -34,8 +34,9 @@ function owGSConf(): array
     if ($cache !== null) return $cache;
     $cache = [
         'provider' => 'klipy',
-        // KLIPY：客户端直连
-        'klipy_app_key' => '', 'klipy_content_filter' => 'low', 'klipy_locale' => 'us',
+        // KLIPY：客户端直连。内容过滤默认取最严一档：站点是开源分发的，
+        // 默认值会被各种环境的访客直接吃到，宽松那档必须由管理员显式选。
+        'klipy_app_key' => '', 'klipy_content_filter' => 'high', 'klipy_locale' => 'us',
         'klipy_per_page' => '24', 'klipy_ads' => '1', 'klipy_powered' => '0',
         // API 盒子：服务端代理
         'apihz_line' => 'cn', 'apihz_id' => '', 'apihz_key' => '', 'apihz_limit' => '20',
@@ -151,7 +152,13 @@ Plugin::route('plugin_gif_stickers_conf', function (array $ctx) {
 Plugin::adminPage('gif-stickers', '表情包', function () {
     $c = owGSConf();
     $prov = (string)$c['provider'];
-    $filters = ['off' => 'off（不过滤）', 'low' => 'low（默认）', 'medium' => 'medium', 'high' => 'high（最严）'];
+    // 每一档都写清「拦到什么程度」：只写 medium 没人知道它和 low 差在哪
+    $filters = [
+        'off' => 'off（不过滤：含成人内容）',
+        'low' => 'low（只拦最露骨的）',
+        'medium' => 'medium（进一步收紧，仍可能有暗示性内容）',
+        'high' => 'high（最严：只出全年龄合适的内容）',
+    ];
     $h = '<h2>表情包</h2>'
         . '<p class="ow-admin-desc">在输入框工具栏首位加一个表情入口：上方搜索、下方 GIF 结果，点一下即发送，也能收藏成贴纸。两个源二选一，不能混排。</p>'
         . '<div class="ow-card">'
@@ -238,7 +245,7 @@ Plugin::route('plugin_gif_stickers_save', function (array $ctx) {
         'provider' => $provider,
         'klipy_app_key' => mb_substr(trim((string)($post['klipy_app_key'] ?? '')), 0, 200),
         'klipy_content_filter' => in_array((string)($post['klipy_content_filter'] ?? ''), ['off', 'low', 'medium', 'high'], true)
-            ? (string)$post['klipy_content_filter'] : 'low',
+            ? (string)$post['klipy_content_filter'] : 'high',
         // 国家码只留两位字母，其余字符一律丢掉：这个值会被拼进第三方请求
         'klipy_locale' => mb_strtolower(preg_replace('/[^A-Za-z]/', '', (string)($post['klipy_locale'] ?? ''))),
         'klipy_per_page' => (string)max(8, min(50, (int)($post['klipy_per_page'] ?? 24))),
