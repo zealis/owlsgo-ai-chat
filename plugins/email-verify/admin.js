@@ -1,6 +1,6 @@
 /**
  * email-verify · 后台配置页交互（v1.0.0）
- * 全局对象 OwEv；依赖后台主脚本暴露的 OwApi / toast / esc。
+ * 全局对象 OwEv；依赖后台主脚本暴露的 OwApi / toast / esc / OwAdmin（通用分页与批量轮子）。
  * 兼容老浏览器：只用 var / function，不用箭头函数、let/const、fetch。
  */
 (function (w, d) {
@@ -125,8 +125,99 @@
         clearLog: function () {
             OwApi.secure('plugin_email_verify_log_clear', {}, function (r) {
                 toast(r.msg);
-                // 重新渲染本页才能拿到空列表（后台子页面的键是 plugin:<slug>）
-                if (r.ok && w.OwAdmin && OwAdmin.page) OwAdmin.page('plugin:email-verify');
+                if (r.ok) OwEv.logs(1);   // 只重取列表那一块，不必把整个后台页重画一遍
+            });
+        },
+
+        /* ---------- 发送记录：分页 / 筛选 / 批量删（v1.3.81） ----------
+           复用后台已有的通用轮子，不另造一套：
+             OwAdmin.uiPager     数字页码 + 省略号 + 跳页输入（执行日志、群聊审核都在用）
+             OwAdmin.uiBatchBar  批量动作收进一个下拉 + 执行按钮 + 「已选 N 条」
+             OwAdmin.batchSync   勾选变化时同步按钮启停与计数
+           交互与安全日志一致，管理员在任何一页学的操作到另一页都通用。 */
+        logs: function (page) {
+            var rows = $('owEvLogRows');
+            if (!rows || !w.OwAdmin) return;
+            OwEv.logPage = Math.max(1, parseInt(page, 10) || 1);
+            rows.innerHTML = '<tr><td colspan="6" class="ow-ev-note">正在读取…</td></tr>';
+            OwApi.post('plugin_email_verify_logs', {
+                page: OwEv.logPage, size: val('owEvLogSize', '20'),
+                q: val('owEvLogQ'), kind: val('owEvLogKind'), status: val('owEvLogStatus')
+            }, function (r) {
+                if (!r || !r.ok) {
+                    rows.innerHTML = '<tr><td colspan="6" class="ow-ev-note">'
+                        + esc((r && r.msg) || '记录读取失败') + '</td></tr>';
+                    return;
+                }
+                OwEv.logTotal = r.total || 0;
+                OwEv.logPage = r.page || 1;
+                OwEv.renderLogs(r.data || []);
+                OwAdmin.uiPager('owEvLogPager', OwEv.logPage, OwEv.logTotal, r.size || 20, function (pg) { OwEv.logs(pg); });
+                OwAdmin.uiBatchBar({
+                    id: 'owEvLogBatch', chkCls: 'owEvLogChk',
+                    actions: [{ key: 'del', label: '删除选中记录', danger: true }],
+                    statBase: '共 ' + OwEv.logTotal + ' 条',
+                    onExec: OwEv.logExec
+                });
+            });
+        },
+
+        renderLogs: function (list) {
+            var rows = $('owEvLogRows'), all = $('owEvLogAll'), i, x, h = '';
+            if (all) all.checked = false;
+            if (!list.length) {
+                // 空表分两种：整站没发过信，还是这一筛筛没了 —— 后者的出路是改筛选，不是等邮件
+                rows.innerHTML = '<tr><td colspan="6" class="ow-ev-note">'
+                    + (OwEv.logTotal ? '没有符合筛选条件的记录。' : '还没有发送记录。') + '</td></tr>';
+                return;
+            }
+            for (i = 0; i < list.length; i++) {
+                x = list[i];
+                h += '<tr><td><input type="checkbox" class="owEvLogChk" value="' + parseInt(x.id, 10) + '" onchange="OwEv.logSync()"></td>'
+                    + '<td style="white-space:nowrap">' + esc(OwEv.logTs(x.created_at)) + '</td>'
+                    + '<td>' + esc(x.kind_cn || '—') + '</td>'
+                    + '<td>' + esc(x.recipient || '—')
+                    + '<div style="color:var(--ow-text-sub);font-size:11px">' + esc(x.subject || '') + '</div></td>'
+                    + '<td class="ow-ev-' + esc(x.status) + '">' + esc(x.status_cn || x.status) + '</td>'
+                    + '<td style="max-width:360px">' + (esc(x.error || '') || '—') + '</td></tr>';
+            }
+            rows.innerHTML = h;
+            OwEv.logSync();
+        },
+
+        /** 时间按**看的人**的时钟显示（与安全日志同一口径）：服务器时区对排查没意义 */
+        logTs: function (ts) {
+            var t = new Date(parseInt(ts, 10) * 1000);
+            function p(n) { return (n < 10 ? '0' : '') + n; }
+            return p(t.getMonth() + 1) + '-' + p(t.getDate()) + ' ' + p(t.getHours()) + ':' + p(t.getMinutes());
+        },
+
+        logToggleAll: function (cb) {
+            var boxes = document.getElementsByClassName('owEvLogChk'), i;
+            for (i = 0; i < boxes.length; i++) boxes[i].checked = cb.checked;
+            OwEv.logSync();
+        },
+
+        logSync: function () {
+            if (w.OwAdmin) OwAdmin.batchSync('owEvLogChk', 'owEvLogBatch', '共 ' + (OwEv.logTotal || 0) + ' 条');
+        },
+
+        logKeydown: function (e) {
+            e = e || w.event;
+            if (e.keyCode === 13) {
+                e.preventDefault ? e.preventDefault() : (e.returnValue = false);
+                OwEv.logs(1);
+            }
+        },
+
+        /** 批量动作：删除不可恢复，先过确认框，再走一次性票据（服务端已标 sensitive） */
+        logExec: function (key, ids) {
+            if (key !== 'del') return;
+            OwAdmin.confirm('删除选中的 ' + ids.length + ' 条发送记录？删除后无法恢复。', function () {
+                OwApi.secure('plugin_email_verify_log_del', { ids: ids.join(',') }, function (r) {
+                    toast(r.msg);
+                    if (r.ok) OwEv.logs(OwEv.logPage || 1);
+                });
             });
         }
     };
@@ -141,6 +232,7 @@
                 en.setAttribute('data-owev-inited', '1');
                 OwEv.showTrans();
                 OwEv.loadTpl();
+                OwEv.logs(1);          // 发送记录是异步取的：页面一注进来就把第一页拉回来
                 var t = $('owEvKind');
                 if (t) t.onchange = OwEv.loadTpl;
             }

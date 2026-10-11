@@ -2,15 +2,15 @@
  * gif-stickers · 聊天页表情面板（v1.3.75）
  *
  * 职责：往核心锚点 #owToolFirst 注入图标，点开一个「上方搜索、下方结果」的面板，
- * 选中结果 → 发一条图片消息；点★ → 让本站把这张图取回来落成自己的贴纸。
+ * 选中结果 → 发一条图片消息；点★ → 把同一条外链收进自己的贴纸表。
  *
  * 两个源的调用方式不同，这是**内容源条款决定的**，不是实现偏好：
  *   - klipy：由浏览器直接请求 api.klipy.com。他们的《Integration Requirements》
  *     明文要求请求由终端用户客户端发起、媒体直接从返回 URL 加载、不得经服务器代理或缓存。
  *   - apihz：走本站路由 plugin_gif_stickers_search，密钥只留在服务端。
- * 收藏是唯一的例外（v1.3.80）：核心贴纸表只存本站 uploads/ 地址，外站图必须先取回来，
- * 于是这一路两个源都走本站路由 plugin_gif_stickers_collect。与 KLIPY「不得转存」的要求相冲，
- * 取舍写在 main.php 头部与后台页的 ⓘ 里。
+ * 收藏也是**只存地址、不下载到本站**（v1.3.81 站方定）：把 KLIPY 的图取回来落盘正是他们
+ * 条款禁止的「存储 / 镜像 / 转存」。代价直接说给用户听 —— 图源撤图、换地址或链接过期，
+ * 这张贴纸就打不开了（★ 的 title 与收藏成功的提示里都写着）。
  *
  * 兼容老浏览器：只用 var / function，不用箭头函数、let/const、fetch、模板串。
  * 依赖核心暴露的 OwApi / esc / toast / OwChat。
@@ -325,7 +325,7 @@
             if (items[i].kind === 'ad') { h += adHtml(items[i].html); continue; }
             h += '<span class="ow-gif-item" data-url="' + esc(items[i].url) + '" title="' + esc(items[i].title || '点击发送') + '">'
                 + '<img loading="lazy" src="' + esc(items[i].thumb) + '" alt="">'
-                + '<button class="ow-gif-fav" type="button" title="收藏为贴纸">★</button></span>';
+                + '<button class="ow-gif-fav" type="button" title="收藏为贴纸（存图源链接，可能随时失效）">★</button></span>';
         }
         if (append) g.insertAdjacentHTML ? g.insertAdjacentHTML('beforeend', h) : appendSlow(g, h);
         else g.innerHTML = h;
@@ -336,22 +336,22 @@
     function appendSlow(g, h) { var t = g.innerHTML; g.innerHTML = t + h; }
 
     /**
-     * 收藏为贴纸（v1.3.80）：**不**直接调核心的 OwChat.collect(远端URL)。
-     * 核心贴纸表只认本站 uploads/ 下的地址（v1.0.100 起，不让成员的浏览器去加载外站图），
-     * 把 KLIPY 的链接递过去必回「仅支持收藏本站上传的图片」。
-     * 现在交给本站路由 plugin_gif_stickers_collect：由服务器把图取回来落盘，再入库。
-     * 取图要一两秒，期间禁用这颗星 —— 连点既白吃限流额度，又会写出重复收藏。
+     * 收藏为贴纸：走核心的 sticker_add，外链由本插件的 sticker.allow 钩子放行（v1.3.81）。
+     * 只存地址、不下载到本站 —— 这是照 KLIPY 的条款用他们的图（他们禁止存储 / 镜像 / 转存）。
+     * 代价必须让用户在点的那一下就看到，所以提示由插件自己发，不用核心那句「已收藏」。
+     * 请求期间禁用这颗星：连点会写出重复收藏，也白吃一遍收藏配额。
      */
     function collect(url, btn) {
         if (btn.disabled) return;
         btn.disabled = true;
-        OwApi.post('plugin_gif_stickers_collect', { url: url }, function (r) {
+        OwApi.post('sticker_add', { url: url }, function (r) {
             btn.disabled = false;
-            toast((r && r.msg) || (r && r.ok ? '已收藏' : '收藏失败'));
             if (r && r.ok) {
-                btn.title = '已收藏为贴纸';
+                toast('已收藏（存的是图源链接，图源撤图后就打不开了）');
                 btn.setAttribute('data-faved', '1');   // 用属性不用 class：命中判定靠 className 等号，别把它改坏
+                return;
             }
+            toast((r && r.msg) || '收藏失败');
         });
     }
 

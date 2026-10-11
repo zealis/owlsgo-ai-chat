@@ -281,7 +281,19 @@ class Upload
         $rel = ltrim($url);
         if ($base !== '' && stripos($rel, $base . '/') === 0) $rel = ltrim(substr($rel, strlen($base) + 1));
         if (!preg_match('#^uploads/(avatar|sticker|image)/[A-Za-z0-9_\-]+(/[A-Za-z0-9_\-]+)?\.(jpg|jpeg|png|gif|webp|bmp)$#i', $rel)) {
-            return [false, '仅支持收藏本站上传的图片'];
+            // v1.0.100 起这条限制只对本站上传的文件开口子一次：明确集成了图源的插件
+            // （sticker.allow 钩子）。核心自己不认识任何外站域名，没装表情包插件的站点
+            // 行为与之前完全一致。
+            // 为什么放行外链而不是「下载到本站」：KLIPY 的《Integration Requirements》
+            // 要求媒体留在他们的地址上、不得存储/镜像/转存 —— 转存才是违约，
+            // 存地址是照它的条款用。代价由用户承担，插件端必须把「链接随时会失效」说清楚。
+            $allow = '';
+            if (class_exists('Plugin')) Plugin::fire('sticker.allow', [&$allow, $url, $actor]);
+            if ($allow !== '1') return [false, '仅支持收藏本站上传的图片'];
+            // 插件放行后，核心仍守住最低限度的形状：这是会在别人浏览器里发起请求的地址
+            if (mb_strlen($url) > 500 || !preg_match('#^https://[^\s"\'<>\\\\]+$#i', $url)) {
+                return [false, '收藏的图片地址必须是不含空白的 https 链接'];
+            }
         }
         $owner = $actor['kind'] . $actor['id'];
         // v1.3.30：收藏上限开放给插件（sticker.quota 钩子）—— 等级信任插件按等级

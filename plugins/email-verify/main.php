@@ -448,7 +448,7 @@ Plugin::on('mail.unsent', function (array $info = []): void {
 function owEVStats(): array
 {
     $day = strtotime('today');
-    $out = ['pending' => 0, 'sent' => 0, 'failed' => 0, 'recent' => [], 'last_error' => '', 'total' => 0];
+    $out = ['pending' => 0, 'sent' => 0, 'failed' => 0, 'last_error' => '', 'total' => 0];
     try {
         foreach (DB::all('SELECT status, COUNT(*) n FROM plugin_email_verify_log WHERE created_at>=? GROUP BY status', [$day]) as $r) {
             $k = (string)$r['status'];
@@ -457,10 +457,6 @@ function owEVStats(): array
             elseif ($k === 'pending') $out['pending'] = (int)$r['n'];
         }
         $out['total'] = (int)(DB::val('SELECT COUNT(*) FROM plugin_email_verify_log') ?: 0);
-        $out['recent'] = DB::all(
-            'SELECT kind, recipient, subject, status, error, created_at FROM plugin_email_verify_log
-             ORDER BY id DESC LIMIT 20'
-        );
         $e = DB::one("SELECT error FROM plugin_email_verify_log WHERE status='failed' ORDER BY id DESC LIMIT 1");
         $out['last_error'] = (string)($e['error'] ?? '');
     } catch (Throwable $e) { /* 表还没写好时统计全 0 */ }
@@ -599,23 +595,39 @@ Plugin::adminPage('email-verify', '邮箱验证', function () {
     // ---------- 统计明细 ----------
     $h .= '<div class="ow-card"><h3>发送记录</h3>'
         . '<p class="ow-ev-note">待发送 = 验证码已生成但没有任何通道接手（多为插件未开启或通道未配好）。记录保留 30 天。</p>';
-    if (!$st['recent']) {
-        $h .= '<p class="ow-ev-note">还没有发送记录。</p>';
-    } else {
-        $h .= '<div class="ow-table-wrap"><table class="ow-table"><thead><tr><th>时间</th><th>场景</th><th>收件邮箱</th><th>状态</th><th>说明</th></tr></thead><tbody>';
-        foreach ($st['recent'] as $r) {
-            $kind = (string)$r['kind'];
-            $h .= '<tr><td>' . date('m-d H:i', (int)$r['created_at']) . '</td>'
-                . '<td>' . $esc($kinds[$kind] ?? $kind) . '</td>'
-                . '<td>' . $esc((string)$r['recipient']) . '</td>'
-                . '<td class="ow-ev-' . $esc((string)$r['status']) . '">' . $esc(['sent' => '已发', 'failed' => '失败', 'pending' => '待发送'][$r['status']] ?? (string)$r['status']) . '</td>'
-                . '<td>' . $esc(mb_substr((string)$r['error'], 0, 80)) . '</td></tr>';
-        }
-        $h .= '</tbody></table></div>'
-            // 条数不写进按钮文案：语言包按整句精确匹配，拼了数字就永远匹配不上
-            . '<button class="ow-btn ow-btn-ghost" onclick="OwEv.clearLog()">清空记录</button>';
+    /* 列表改由 OwEv.logs() 异步取（v1.3.81）：原先服务端整页渲染前 20 条，既不能翻页、
+       也不能按场景/状态筛，出问题时最想看的「上周那封失败的信」根本翻不到。
+       现在接核心那套通用列表轮子：OwAdmin.uiPager 分页 + uiBatchBar 批量删 + 关键词搜索，
+       与安全日志、群聊审核同一套交互，不再各页各造一个。 */
+    $h .= '<div class="ow-form-row" style="align-items:flex-end;margin-bottom:6px">'
+        . '<div class="ow-form-item" style="min-width:210px"><label>关键词</label>'
+        . '<input class="ow-input" type="search" id="owEvLogQ" maxlength="80" placeholder="收件邮箱 / 主题"'
+        . ' onkeydown="OwEv.logKeydown(event)"></div>'
+        . '<div class="ow-form-item" style="min-width:150px"><label>场景</label>'
+        . '<select class="ow-input" id="owEvLogKind" onchange="OwEv.logs(1)"><option value="">全部场景</option>';
+    foreach ($kinds as $k => $label) {
+        $h .= '<option value="' . $esc($k) . '">' . $esc($label) . '</option>';
     }
-    $h .= '</div>';
+    $h .= '</select></div>'
+        . '<div class="ow-form-item" style="min-width:130px"><label>状态</label>'
+        . '<select class="ow-input" id="owEvLogStatus" onchange="OwEv.logs(1)">'
+        . '<option value="">全部状态</option><option value="sent">已发</option>'
+        . '<option value="failed">失败</option><option value="pending">待发送</option></select></div>'
+        . '<div class="ow-form-item" style="min-width:110px"><label>每页</label>'
+        . '<select class="ow-input" id="owEvLogSize" onchange="OwEv.logs(1)">'
+        . '<option value="20">20 条</option><option value="50">50 条</option><option value="100">100 条</option></select></div>'
+        . '<div class="ow-form-item" style="min-width:0">'
+        . '<button class="ow-btn ow-btn-primary" onclick="OwEv.logs(1)">查询</button></div>'
+        . '</div>'
+        . '<div class="ow-table-wrap"><table class="ow-table"><thead><tr>'
+        . '<th style="width:32px"><input type="checkbox" id="owEvLogAll" onchange="OwEv.logToggleAll(this)"></th>'
+        . '<th>时间</th><th>场景</th><th>收件邮箱</th><th>状态</th><th>说明</th></tr></thead>'
+        . '<tbody id="owEvLogRows"><tr><td colspan="6" class="ow-ev-note">正在读取…</td></tr></tbody></table></div>'
+        . '<div id="owEvLogPager" style="margin-top:8px"></div>'
+        . '<div id="owEvLogBatch" style="margin-top:8px"></div>'
+        // 条数不写进按钮文案：语言包按整句精确匹配，拼了数字就永远匹配不上
+        . '<button class="ow-btn ow-btn-ghost" onclick="OwEv.clearLog()" style="margin-top:6px">清空记录</button>'
+        . '</div>';
     return $h;
 });
 
@@ -746,6 +758,74 @@ Plugin::route('plugin_email_verify_test', function (array $ctx) {
     Api::json(['ok' => $r['ok'], 'msg' => $r['ok'] ? ('测试邮件已发到 ' . $email) : ('发送失败：' . $r['error'])]);
 });
 Plugin::sensitive('plugin_email_verify_test');
+
+/**
+ * 发送记录分页查询（后台通用列表轮子的数据源，v1.3.81）。
+ *
+ * 一次只回一页：这张表按 30 天滚动，全量吐给前端只会让首屏又长又卡。
+ * 场景 / 状态 / 关键词三个筛选都在 SQL 里做，`total` 回的是**筛选后**的条数 ——
+ * 分页条上的「共 N 条」必须跟着筛选走，否则筛完还剩 3 条却显示 480 条，没人敢信。
+ */
+Plugin::route('plugin_email_verify_logs', function (array $ctx) {
+    if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);
+    $post = $ctx['post'];
+    // LIMIT/OFFSET 走整数拼接：本项目 MySQL 关掉了模拟预处理，`LIMIT ?` 绑字符串会直接报错
+    $size = max(5, min(100, (int)($post['size'] ?? 20)));
+    $page = max(1, (int)($post['page'] ?? 1));
+    $kinds = owEVKinds();
+    $kind = (string)($post['kind'] ?? '');
+    if ($kind !== '' && !isset($kinds[$kind])) $kind = '';
+    $status = (string)($post['status'] ?? '');
+    if (!in_array($status, ['sent', 'failed', 'pending'], true)) $status = '';
+    $q = mb_substr(trim((string)($post['q'] ?? '')), 0, 80);
+    $w = []; $args = [];
+    if ($kind !== '') { $w[] = 'kind=?'; $args[] = $kind; }
+    if ($status !== '') { $w[] = 'status=?'; $args[] = $status; }
+    if ($q !== '') {
+        // 邮箱与主题一起搜：管理员记不住是哪个地址，只记得「那封没发出去」
+        $w[] = '(recipient LIKE ? OR subject LIKE ?)';
+        $args[] = '%' . $q . '%'; $args[] = '%' . $q . '%';
+    }
+    $where = $w ? ('WHERE ' . implode(' AND ', $w)) : '';
+    $total = (int)(DB::val("SELECT COUNT(*) FROM plugin_email_verify_log $where", $args) ?: 0);
+    $pages = max(1, (int)ceil($total / $size));
+    if ($page > $pages) $page = $pages;      // 删完最后一页再刷新：页码越界不该吐空表
+    $rows = DB::all("SELECT id, kind, recipient, subject, status, error, created_at
+                     FROM plugin_email_verify_log $where ORDER BY id DESC
+                     LIMIT $size OFFSET " . (($page - 1) * $size), $args);
+    $statusCn = ['sent' => '已发', 'failed' => '失败', 'pending' => '待发送'];
+    $out = [];
+    foreach ($rows as $r) {
+        $k = (string)$r['kind'];
+        $s = (string)$r['status'];
+        $out[] = [
+            'id' => (int)$r['id'],
+            'kind_cn' => $kinds[$k] ?? $k,
+            'recipient' => (string)$r['recipient'],
+            'subject' => (string)$r['subject'],
+            'status' => $s,
+            'status_cn' => $statusCn[$s] ?? $s,
+            'error' => mb_substr((string)$r['error'], 0, 120),
+            'created_at' => (int)$r['created_at'],
+        ];
+    }
+    Api::json(['ok' => true, 'data' => $out, 'total' => $total, 'page' => $page, 'size' => $size, 'pages' => $pages]);
+});
+
+/** 批量删除选中的记录：不可恢复，与「清空记录」同档，走一次性票据 */
+Plugin::route('plugin_email_verify_log_del', function (array $ctx) {
+    if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);
+    $ids = [];
+    foreach (explode(',', (string)($ctx['post']['ids'] ?? '')) as $s) {
+        $n = (int)trim($s);
+        if ($n > 0) $ids[] = $n;
+    }
+    $ids = array_slice(array_unique($ids), 0, 200);       // 一次最多 200 条：与「每页 100」留一倍余量
+    if (!$ids) Api::json(['ok' => false, 'msg' => '没有选中任何记录']);
+    DB::run('DELETE FROM plugin_email_verify_log WHERE id IN (' . implode(',', array_fill(0, count($ids), '?')) . ')', $ids);
+    Api::json(['ok' => true, 'msg' => '已删除 ' . count($ids) . ' 条记录']);
+});
+Plugin::sensitive('plugin_email_verify_log_del');
 
 Plugin::route('plugin_email_verify_log_clear', function (array $ctx) {
     if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);

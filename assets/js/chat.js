@@ -227,6 +227,23 @@
             var bw = box.getBoundingClientRect().width;   // max-content 实宽
             // 气泡比可用区宽就先收窄（否则再对齐也会溢出）
             if (bw > availW) { box.style.maxWidth = availW + 'px'; bw = availW; }
+
+            /* 垂直方向一起判（v1.3.81）：气泡默认开在 ⓘ 上方（CSS `bottom:20px`），
+               于是**页面顶部**的字段说明必然向上出界 —— 实测「表情包」的 KLIPY 那条：
+               ⓘ 在 y=192、气泡高 200，顶边算出来是 -14px，第一行直接被视口裁掉。
+               只在「上面放不下、下面更宽」时翻到下方；两边都放不下就保持原样，
+               不做两头都够不到的猜测（翻来翻去反而让人找不到锚点）。 */
+            var bb = b.getBoundingClientRect();
+            var bh = box.getBoundingClientRect().height;
+            var vh = w.innerHeight || (d.documentElement ? d.documentElement.clientHeight : 0) || 0;
+            var upRoom = bb.top - 8;
+            var downRoom = vh - bb.bottom - 8;
+            if (bh > upRoom && downRoom > upRoom) {
+                if (box.className.indexOf('ow-tip-below') < 0) box.className += ' ow-tip-below';
+            } else if (box.className.indexOf('ow-tip-below') >= 0) {
+                box.className = box.className.replace(' ow-tip-below', '');
+            }
+
             var bLeft = b.getBoundingClientRect().left;  // ⓘ 左缘（气泡锚点）
             // 期望：默认左缘对齐 ⓘ，超出左边界就右移，超出右边界再回退
             var left = bLeft;

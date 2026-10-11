@@ -2346,6 +2346,16 @@ input[type=range] {
    min() 在老内核不生效时忽略整条，退回 owlsgo.css 上方的 max-width:260px，不会更糟。 */
 .ow-tip-box { max-width: min(260px, calc(100vw - 32px)); }
 
+/* v1.3.81：ⓘ 上方放不下时（后台页顶部那些字段说明），由 OwTip.fixEdge 加上这个类
+   把气泡改到下方展开 —— 之前它只会横向纠偏，纵向一律向上，实测「表情包 → KLIPY」
+   那条 200px 高的说明气泡顶边算到 -14px，第一行被视口裁掉。
+   箭头跟着翻到气泡上缘，仍用 --ow-tip-arrow 指回 ⓘ。 */
+.ow-tip-box.ow-tip-below { bottom: auto; top: 20px; }
+.ow-tip-box.ow-tip-below::after {
+    bottom: auto; top: -5px;
+    border-top: none; border-bottom: 5px solid #2C2C2E;
+}
+
 /* ---------- 头像设置弹窗（v1.3.11） ----------
    点击头像不再直接开文件选择，而是先弹这个框：
    当前头像预览 + 「上传头像（插件启用时才有）」/「浏览插图」+ 群聊额外有「恢复默认」。 */
