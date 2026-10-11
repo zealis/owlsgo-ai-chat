@@ -434,7 +434,9 @@ function owATStoreFile(array $f, ?array $actor = null): array
 
    所以删除前必须数一下「除本条外还有几条消息在用这个文件」，
    为 0 才真正unlink，否则只删消息记录（这是「引用计数」，
-   不需要新建表 —— messages 里本来就有 path，直接查即可）。 */
+   不需要新建表 —— messages 里本来就有 path，直接查即可）。
+   v1.3.82：计数范围从「消息」扩到「消息 + 收藏贴纸」—— 贴纸表只存 URL、没有自己的文件，
+   漏算它就会出现「消息删干净了、别人贴纸跟着破图」这条不可恢复的误删。 */
 function owAM_refCount(string $pathOrUrl, int $excludeMsgId = 0): int
 {
     // ⚠️ 这里**必须匹配「哈希主体」而不是完整 path**，有两个坑：
@@ -472,6 +474,12 @@ function owAM_refCount(string $pathOrUrl, int $excludeMsgId = 0): int
         "SELECT COUNT(*) FROM messages WHERE id<>? AND type='image' AND content LIKE ?",
         [$excludeMsgId, $needle]
     );
+    // v1.3.82：还有一类引用者不在 messages 里 —— **收藏成贴纸的图**。
+    // stickers 只存一个 URL，没有自己的文件，所以「这条图片消息没人用了」并不等于
+    // 「这个文件没人用了」：只要有人收藏过，unlink 掉就是把他人的贴纸撕了，
+    // 而且是永久撕 —— 破图没有任何恢复路径（原文件已经不在磁盘上）。
+    // needle 直接复用：stickers.url 可能是绝对地址也可能是相对路径，`%/stem.%` 两种都命中。
+    $n += (int)DB::val('SELECT COUNT(*) FROM stickers WHERE url LIKE ?', [$needle]);
     return $n;
 }
 

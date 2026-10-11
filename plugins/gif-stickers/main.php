@@ -206,7 +206,7 @@ Plugin::adminPage('gif-stickers', '表情包', function () {
         . '<div class="ow-form-item" style="min-width:200px"><label>表情包源</label>'
         . '<select class="ow-input" id="owGsProvider">'
         . '<option value="klipy"' . ($prov === 'klipy' ? ' selected' : '') . '>KLIPY（客户端直连）</option>'
-        . '<option value="apihz"' . ($prov === 'apihz' ? ' selected' : '') . '>API 盒子 表情包（本站代理）</option>'
+        . '<option value="apihz"' . ($prov === 'apihz' ? ' selected' : '') . '>API 盒子 表情包（国内可达，本站代理）</option>'
         . '</select>'
         . '<p style="font-size:12px;color:var(--ow-text-sub)">KLIPY 的条款要求请求必须由浏览器直接发起，所以它的 app_key 会出现在访客的请求里；'
         . 'API 盒子用的是长期密钥，只存在本站、由本站代查，不会下发到浏览器。两边内容不混排是 KLIPY 明确要求的。</p></div>'
@@ -238,7 +238,7 @@ Plugin::adminPage('gif-stickers', '表情包', function () {
         . '<input class="ow-input" type="text" maxlength="2" autocomplete="off" data-owgs-field="klipy_locale"'
         . ' value="' . htmlspecialchars((string)$c['klipy_locale'], ENT_QUOTES) . '" placeholder="us">'
         . '<p style="font-size:12px;color:var(--ow-text-sub)">ISO 3166-1 两位国家码（cn / us / uk / jp…），KLIPY 据此排布本地化结果。</p></div>';
-    $h .= '<div class="ow-form-item" style="min-width:150px"><label>KLIPY 广告</label>'
+    $h .= '<div class="ow-form-item" style="min-width:150px"><label>KLIPY 移动端广告</label>'
         . '<select class="ow-input" data-owgs-field="klipy_ads">'
         . '<option value="1"' . ((string)$c['klipy_ads'] === '1' ? ' selected' : '') . '>开启（按其返回位置渲染）</option>'
         . '<option value="0"' . ((string)$c['klipy_ads'] !== '1' ? ' selected' : '') . '>关闭（不请求广告位参数）</option></select>'
