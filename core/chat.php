@@ -84,6 +84,17 @@ class Chat
             [$a, $b, $b, $a]) > 0;
     }
 
+    /** 「新朋友」入口的固定头像 = 生成式头像「小可爱（open-peeps）第 6 号」。
+     *  与系统通知头像（第 36 号）同一套写法：风格与种子写死，不随机 ——
+     *  它是站内一个固定入口，头像每次都得是同一张，否则用户回看时认不出。
+     *  种子取值范围见 Auth::AVATAR_SEED_COUNT（档位号→真实 seed 的映射在 Auth 里）。 */
+    private const FRIEND_AVATAR_SEED = '6';
+
+    public static function friendAvatarUrl(): string
+    {
+        return Auth::avatarGeneratedUrl(Auth::AVATAR_DEFAULT_STYLE, self::FRIEND_AVATAR_SEED);
+    }
+
     /** 待我处理的好友请求数 —— 联系人栏小红点的计数。语义是「未处理」，通过/拒绝才消 */
     public static function friendReqPending(int $uid): int
     {

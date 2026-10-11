@@ -1691,6 +1691,9 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
         // v1.3.52：系统通知的固定头像（小可爱第 36 号）。服务端算一次，
         // 侧栏那一行与通知流共用 —— 两处各自拼 URL 迟早不一致。
         'notice_avatar' => ($actor['kind'] ?? '') === 'user' ? Notice::avatarUrl() : '',
+        // 「新朋友」那一行的固定头像（小可爱第 6 号）。同 notice_avatar：服务端算一次，
+        // 前端只负责摆 —— 两处各自拼 DiceBear 地址迟早不一致（风格、背景色、种子都会漂）。
+        'friend_avatar' => ($actor['kind'] ?? '') === 'user' ? Chat::friendAvatarUrl() : '',
         // v1.3.71：待处理好友请求数 —— 联系人栏红点首屏就要正确，与通知红点同一套路。
         // 语义是「未处理」而不是「未读」：只有通过/拒绝才消，光看不处理会一直挂着。
         'friend_pending' => ($actor['kind'] ?? '') === 'user' ? Chat::friendReqPending((int)($actor['id'] ?? 0)) : 0,

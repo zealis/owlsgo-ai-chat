@@ -2172,7 +2172,11 @@
             var pend = this.cfg ? (this.cfg.friend_pending | 0) : 0;
             if (this.cfg && this.cfg.me && this.cfg.me.id) {
                 rows.push({
-                    conv: 'dm', peer: 'req:new', id: 0, name: '新朋友', avatar: '', role: '',
+                    conv: 'dm', peer: 'req:new', id: 0, name: '新朋友',
+                    // 固定头像：服务端下发的「小可爱第 6 号」（见 Chat::friendAvatarUrl）。
+                    // 不给它一个稳定形象的话，ChatList 会退化成蓝底白字「新」字块 ——
+                    // 与旁边那些真人头像不是一个视觉量级，看着像没加载出来。
+                    avatar: (this.cfg && this.cfg.friend_avatar) || '', role: '',
                     // 文案不带数字：「3 个待处理请求」这种整句语言包永远匹配不上，
                     // 具体几条到页面里看（联系人栏那个红点已经负责说「有事待处理」）
                     last_text: pend > 0 ? '有人想加你为好友' : '没有人向你发送好友请求',
