@@ -358,7 +358,14 @@ class Chat
         // 在场游客：只有公开群可能有游客（不公开群游客进不来，查询结果自然为空）
         $guests = [];
         if ($rid > 0 && (int)($room['is_public'] ?? 1) === 1) {
-            foreach (DB::all('SELECT guest_id, nickname, avatar FROM online
+            // online 一行一个会话 token，同一游客多端登录就有好几行，这里按 guest_id 收拢。
+            // ⚠️ nickname / avatar 必须显式聚合：MySQL 5.7 默认 sql_mode 带
+            //   ONLY_FULL_GROUP_BY，SELECT 里出现未分组、未聚合的列直接报 1055
+            //   （SQLite 容忍，所以这条在迁移前从没暴露 —— 它挂在 poll 与 room_join
+            //   两条路径上，表现就是「点任何群聊都 500」）。
+            //   取 MAX 而不是子查询挑代表行：同一 guest_id 本就是同一个人，
+            //   名字与头像来自他的不同会话无害，换来的是两个方言都能跑的直白 SQL。
+            foreach (DB::all('SELECT guest_id, MAX(nickname) AS nickname, MAX(avatar) AS avatar FROM online
                               WHERE room_id=? AND last_seen>? AND guest_id>0
                               GROUP BY guest_id ORDER BY MIN(last_seen)', [$rid, $since]) as $g) {
                 $guests[] = [
@@ -1645,6 +1652,12 @@ class Chat
         while (time() < $deadline) {
             $rows = DB::all($sql, $args);
             if ($rows) {
+                // ⚠️ 头像映射必须在这里建：这行原先直接引用 $avMap，而本函数从没定义它 ——
+                //   PHP 8 下「未定义变量」是 warning（值 null），传给 pack() 声明为
+                //   array 的第三参就是 TypeError → 整个 dm_poll 500。
+                //   只在「本轮真有新私信」时触发，所以平时看不出来，一来私信就炸。
+                //   与 poll()（见上）和 dmList() 同一口径：批量查，不产生 N+1。
+                $avMap = self::avatarMap($rows);
                 foreach ($rows as $m) {
                     if (!isset($hidden[(int)$m['id']]) && self::visible($m, $actor)) $new[] = self::pack($m, $actor, $avMap);
                     $sinceId = max($sinceId, (int)$m['id']);
