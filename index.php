@@ -1706,10 +1706,14 @@ function renderAdmin(array $actor): void
     // （未安装写库、未启用或未声明页面的插件都不会出现在这里）。一个声明 = 一个子页面。
     $pluginPages = Plugin::adminPages();
     // 已安装但未启用的插件：main.php 不加载（无设置页），仍显示为灰色子项，
-    // 点进去提供一键启用（v1.0.45）
+    // 点进去提供一键启用（v1.0.45）。
+    // v1.3.68：子项文字改用 plugin.json 的 name（插件标题），不再露目录名。
+    // 未启用插件的 main.php 没加载，拿不到 adminPage() 声明的标题，但 plugin.json
+    // 是 listAll() 无条件读的 —— 与它点进去那张占位页的 h2 同源，两处口径一致。
+    // 键=目录名（路由要用），值=显示名。
     $offPlugins = [];
     foreach (Plugin::listAll() as $pl) {
-        if (!$pl['enabled'] && !isset($pluginPages[$pl['id']])) $offPlugins[] = $pl['id'];
+        if (!$pl['enabled'] && !isset($pluginPages[$pl['id']])) $offPlugins[$pl['id']] = $pl['name'];
     }
     $pluginMenu = '<li data-apage="plugins"' . (($pluginPages || $offPlugins) ? ' class="ow-admin-group"' : '') . '>'
         . '<span class="ow-admin-ico">' . ow_icon('puzzle', 16) . '</span>'
@@ -1723,9 +1727,9 @@ function renderAdmin(array $actor): void
         $pluginMenu .= '<li class="ow-admin-sub" data-apage="plugin:' . Sec::e($slug) . '">'
             . '<span class="ow-admin-label">' . Sec::e($pg['title']) . '</span></li>';
     }
-    foreach ($offPlugins as $offName) {
-        $pluginMenu .= '<li class="ow-admin-sub ow-admin-off" data-apage="plugin:' . Sec::e($offName) . '">'
-            . '<span class="ow-admin-label">' . Sec::e($offName) . '（未启用）</span></li>';
+    foreach ($offPlugins as $offId => $offTitle) {
+        $pluginMenu .= '<li class="ow-admin-sub ow-admin-off" data-apage="plugin:' . Sec::e($offId) . '">'
+            . '<span class="ow-admin-label">' . Sec::e($offTitle) . '（未启用）</span></li>';
     }
     // ⚠️ 同 renderChat()：标记「合并资源已输出」，阻止插件在 page.footer 里再补一份
     //    （否则后台页也会把插件 JS 跑两遍）。用 if 包裹避免同请求内重复 define 报警告。

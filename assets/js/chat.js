@@ -6269,15 +6269,15 @@
             }
             if (!group) return;   // 没有任何插件声明后台页面 → 插件管理是普通菜单项
             var willOpen = forceOpen ? true : group.className.indexOf('ow-group-open') < 0;
-            // ⚠️ 正则里的类名必须与上面 if 判断、以及 CSS 里的**完全一致**：
-            //   写错一个字母（曾写成 \bow-group-open，实际是 ow-group-open）会导致
-            //   类名只增不减 → 点标题收起无效、越点越开，且不报任何错。
-            group.className = trimCls((group.className.replace(/\bha-group-open\b/g, ''))
+            // ⚠️ 正则里剔掉的类名必须与下面加上的**同一个**：剔的是旧前缀 `ha-group-open`
+            //   /`ha-sub-open` 时，`ow-group-open`/`ow-sub-open` 只增不减 —— 表现是
+            //   「插件管理」分组一展开就再也收不起来，且不报任何错（v1.3.68 修）。
+            group.className = trimCls((group.className.replace(/\bow-group-open\b/g, ''))
                 + (willOpen ? ' ow-group-open' : ''));
             for (i = 0; i < all.length; i++) {
                 el = all[i];
                 if (el.className.indexOf('ow-admin-sub') < 0) continue;
-                el.className = trimCls((el.className.replace(/\bha-sub-open\b/g, ''))
+                el.className = trimCls((el.className.replace(/\bow-sub-open\b/g, ''))
                     + (willOpen ? ' ow-sub-open' : ''));
             }
             // 记录展开状态：刷新后恢复
