@@ -11,5 +11,14 @@
 /* 组件加载失败 / 验证失败的提示位。空内容时完全不占位，避免多出一段空白 */
 .ow-cv-tip { font-size: 12px; color: var(--ow-red); margin-top: 6px; }
 .ow-cv-tip:empty { display: none; }
-/* Cap 的自定义元素默认 inline，撑不满容器会左贴；与另两家对齐 */
-.ow-cv-box cap-widget { display: block; }
+/* Cap 的自定义元素默认 inline，撑不满容器会左贴；与另两家对齐。
+   ⚠️ 光 display:block 不够：组件内部那层 .captcha 是 `width:var(--cap-widget-width,260px)`
+   —— 写死 260px，**不跟随宿主宽度**，所以它在 343px 的输入框下面会窄一截。
+   把 --cap-widget-width 设成 100% 让它按容器算，才和输入框左右对齐
+   （组件自己声明了 box-sizing:border-box，padding 不会把宽度顶出去）。
+   要固定宽度就改这一个变量，例如 300px。 */
+.ow-cv-box cap-widget {
+    display: block;
+    width: 100%;
+    --cap-widget-width: 100%;
+}
