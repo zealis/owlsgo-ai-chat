@@ -11,6 +11,37 @@
 (function (w, d) {
     'use strict';
 
+    /** 各家 SDK 注入表单的原生字段名（服务端 owCVVerify 读的就是这些） */
+    var CV_FIELDS = ['cf-turnstile-response', 'cap-token', 'vaptcha_token', 'vaptcha_server',
+                     'lot_number', 'captcha_output', 'pass_token', 'gen_time'];
+
+    /**
+     * v1.3.63：发验证码是 AJAX，不像表单提交那样自动带上隐藏字段，
+     * 所以要显式取出来拼进请求；而 token 是**一次性**的，用过一次必须清掉，
+     * 否则下一次点「发验证码」会拿已核销的 token 再赌一次，必然被拒。
+     * 定义在「有没有组件」的提前返回之前：没有组件的页面也要能安全调用。
+     */
+    w.OwCv = {
+        fields: function (form) {
+            var out = {}, i, els = form ? form.querySelectorAll('input[name]') : [];
+            for (i = 0; i < els.length; i++) {
+                if (CV_FIELDS.indexOf(els[i].name) >= 0 && els[i].value) out[els[i].name] = els[i].value;
+            }
+            return out;
+        },
+        reset: function (form) {
+            if (!form) return;
+            var i, els = form.querySelectorAll('input[name]');
+            for (i = 0; i < els.length; i++) {
+                if (CV_FIELDS.indexOf(els[i].name) >= 0) els[i].value = '';
+            }
+            // Turnstile 有官方 reset()；另三家只能靠清字段逼用户重新解一次
+            if (w.turnstile && typeof w.turnstile.reset === 'function') {
+                try { w.turnstile.reset(); } catch (e) { /* 组件还没渲染出来时忽略 */ }
+            }
+        }
+    };
+
     var boxes = [].slice.call(d.querySelectorAll('.ow-cv'));
     if (!boxes.length) return;
 

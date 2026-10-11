@@ -406,6 +406,16 @@ Plugin::route('plugin_captcha_verify_test', function (array $ctx) {
     Api::json(['ok' => $ok, 'msg' => $ok ? '接口返回通过（异常，请检查服务商设置）' : ('链路正常，接口回应：' . $msg)]);
 });
 
+/**
+ * 本插件的 CSS 必须自己注入 <link>。
+ * ⚠️ v1.3.54~v1.3.62 期间只调用了 Plugin::asset('css', …) 登记，却没人发 link ——
+ * 核心不合并插件样式表，于是 style.css 里的规则（容器最小高度、Cap 组件宽度）
+ * **一条都没生效**，表现成"改了 CSS 页面毫无变化"。与 email-verify 同一做法。
+ */
+Plugin::on('page.head', function (): void {
+    echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=captcha-verify&file=style.css&v=' . OWLSGO_VERSION . '">';
+});
+
 Plugin::asset('js', 'captcha-verify/admin.js');
 Plugin::asset('js', 'captcha-verify/widget.js');
 Plugin::asset('css', 'captcha-verify/style.css');

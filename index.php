@@ -409,6 +409,12 @@ if ($action !== '') {
             // 换邮箱 / 注销账号还没有功能入口，将来做时直接用这里的同一套策略
             // （Mailer::sendCode 自带长度、后缀白名单、五路限流）。
             $type = in_array($p('type'), ['reset', 'chpwd'], true) ? $p('type') : 'register';
+            // v1.3.63：发码是最该挡的入口 —— 它既烧发信通道（服务商封的是发件方），
+            // 又会被拿来试探邮箱存在性。闸门排在存在性检查**之前**，
+            // 否则等于让人机验证白过一遍，试探照旧。
+            // chpwd 不拦：那张表单在个人设置弹窗里，没有组件位，硬拦会把改密码锁死
+            //          （它本来就要验当前密码，是另一道门）。
+            if ($type !== 'chpwd') ow_captcha_gate($type);
             $name = '';
             if ($type === 'chpwd') {
                 // 修改密码：收件地址**只取会话用户自己那行**，绝不接受前端传来的邮箱。
@@ -433,6 +439,10 @@ if ($action !== '') {
             Api::json(['ok' => $ok, 'msg' => $msg] + (array)$extra);
 
         case 'register':
+            // v1.3.63：只有「注册不要求邮箱验证码」时，人机验证才是唯一的机器人门，
+            // 这时才在提交这一侧核销 token。要验证码的情况下闸门已经在上游
+            // （send_code）过一次，这里再核销会撞上「一次性 token 用两遍」。
+            if (!Mailer::needRegisterCode()) ow_captcha_gate('register');
             // 组装出生日期（年/月/日 → Y-m-d），未开启年龄限制时为空
             $by = (int)$p('birth_y');
             $bm = (int)$p('birth_m');
@@ -481,6 +491,8 @@ if ($action !== '') {
             ]);
 
         case 'reset':
+            // 这里**不**过人机验证闸门：token 一次性，发码时已经核销过一遍，
+            // 再核销必然失败；而这一侧还必须带邮箱验证码（码只能从已过关的发码口拿到）。
             [$ok, $msg] = Auth::resetPassword($p('email'), $p('code'), (string)($_POST['password'] ?? ''));
             Api::json(['ok' => $ok, 'msg' => $msg]);
 
@@ -1226,6 +1238,26 @@ function ageFieldHtml(): string
         . '<p style="font-size:12px;color:var(--ow-text-sub);margin-top:4px">注册需年满 ' . $min . ' 周岁（按出生日期精确计算）。</p></div>';
 }
 
+/**
+ * 人机验证闸门（v1.3.63）：注册 / 找回密码 / 发验证码 与登录走同一套钩子。
+ *
+ * 只在 captcha-verify 插件**接管**时生效；没接管直接返回，核心行为一字不变
+ * （注册页本来就没有图形码，接管失败时不该凭空多出一道门）。
+ *
+ * ⚠️ 调用位置必须在任何业务校验之前：放在「该邮箱已注册 / 未注册」之后，
+ *    就等于让人机验证白过一遍——攻击者拿无限次请求去试探邮箱存在性，
+ *    闸门要挡的是这种试探，不是替它排队。
+ *
+ * @param string $scene 与表单里渲染的组件场景一致（register / reset / login）
+ */
+function ow_captcha_gate(string $scene): void
+{
+    if (Plugin::collect('captcha.takeover') !== '1') return;
+    $ok = true; $msg = '';
+    Plugin::fire('captcha.enforce', [&$ok, &$msg, ['scene' => $scene, 'post' => $_POST]]);
+    if (!$ok) Api::json(['ok' => false, 'msg' => $msg !== '' ? $msg : '请先完成人机验证']);
+}
+
 /** 邮箱后缀白名单 + 长度提示（注册 / 找回密码页用，未限制时返回空串） */
 function ow_mail_suffix_tip(): string
 {
@@ -1351,6 +1383,11 @@ function renderAuth(string $mode): void
     } elseif ($mode === 'register') {
         // 是否要求邮箱验证由后台设置决定：关闭时不再显示验证码输入框与发码按钮
         $needMail = Mailer::needRegisterCode();
+        // v1.3.63：注册页也要有人机验证组件（插件接管时才非空）。
+        // 场景名要与后端 ow_captcha_gate('register') 对得上 —— 组件的隐藏字段
+        // 由各家 SDK 自己注入到**所在表单**，服务端只认原生字段名，不认场景；
+        // 场景只用于前端区分同一页上的多个组件。
+        $cvHtml = Plugin::collect('captcha.form', [['scene' => 'register']]);
         echo '<form class="ow-auth-form" data-mode="register">'
            . Sec::signField(Sec::anonKey(), 'register')
            . '<div class="ow-form-item"><label>昵称</label><input class="ow-input" name="nickname" required placeholder="2-20 个字符，支持中英文"></div>'
@@ -1367,6 +1404,7 @@ function renderAuth(string $mode): void
            // 年龄限制：开启时要求选择出生日期（年/月/日，兼容不支持 date 类型的老浏览器）
            . ageFieldHtml()
            . '<div class="ow-form-item"><label>密码</label><input class="ow-input" type="password" name="password" required placeholder="至少 6 位"></div>'
+           . $cvHtml
            . '<button class="ow-btn ow-btn-primary ow-btn-block" type="submit">注 册</button><div class="ow-form-msg"></div></form>'
            . '<div class="ow-auth-links"><a href="?page=login">已有账号，去登录</a><a href="?page=chat">返回聊天</a></div>';
     } else {
@@ -1378,6 +1416,12 @@ function renderAuth(string $mode): void
             $form = '<p style="color:var(--ow-text-sub);font-size:13px;line-height:1.7;margin:0 0 14px">'
                 . '站点当前未开启邮箱验证码，无法自助找回密码，请联系管理员在后台处理。</p>';
         } else {
+            // v1.3.63：找回密码页也放组件 —— 但闸门只挂在「发验证码」上，不挂在这里。
+            // 因为 token 是**一次性**的：一次 solve 只能被服务端核销一次，
+            // 若发码用掉它、重置时再核销一遍就必然失败（表现为「验证过了却说我没验证」）。
+            // 而提交这一侧本来就必须带邮箱验证码，那张码又只能从已过关的发码口拿到，
+            // 所以这里再要一遍人机验证既多余、又会把自己锁死。
+            $cvHtml = Plugin::collect('captcha.form', [['scene' => 'reset']]);
             $form = '<form class="ow-auth-form" data-mode="reset">'
                . Sec::signField(Sec::anonKey(), 'reset')
                . '<div class="ow-form-item"><label>注册邮箱</label><div class="ow-captcha-row"><input class="ow-input" type="email" name="email" required>'
@@ -1385,6 +1429,7 @@ function renderAuth(string $mode): void
                . '<p style="font-size:12px;color:var(--ow-text-sub);margin-top:4px">' . ow_mail_suffix_tip() . '</p></div>'
                . '<div class="ow-form-item"><label>邮箱验证码</label><input class="ow-input" name="code" required></div>'
                . '<div class="ow-form-item"><label>新密码</label><input class="ow-input" type="password" name="password" required></div>'
+               . $cvHtml
                . '<button class="ow-btn ow-btn-primary ow-btn-block" type="submit">重置密码</button><div class="ow-form-msg"></div></form>';
         }
         echo $form;

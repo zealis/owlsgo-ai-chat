@@ -979,7 +979,17 @@
                 var email = form.querySelector('[name=email]').value;
                 if (!email) { msg.innerHTML = '<span style="color:var(--ow-red)">请先填写邮箱</span>'; return; }
                 codeBtn.disabled = true;
-                OwApi.post('send_code', { email: email, type: codeBtn.getAttribute('data-sendcode') }, function (r) {
+                // v1.3.63：发验证码是 AJAX，表单里人机验证组件注入的隐藏字段不会自动带上，
+                // 必须显式拼进请求 —— 否则插件接管后服务端永远收不到 token，发码被一路拒掉。
+                var data = { email: email, type: codeBtn.getAttribute('data-sendcode') };
+                if (w.OwCv) {
+                    var cf = OwCv.fields(form), ck;
+                    for (ck in cf) if (cf.hasOwnProperty(ck)) data[ck] = cf[ck];
+                }
+                OwApi.post('send_code', data, function (r) {
+                    // token 一次性：闸门在业务之前就会把它核销掉，所以无论成败都要重置，
+                    // 下一次点「发验证码」得重新解一次（留着旧值只会必然被拒）。
+                    if (w.OwCv) OwCv.reset(form);
                     msg.innerHTML = '<span style="color:' + (r.ok ? 'var(--ow-green)' : 'var(--ow-red)') + '">' + esc(r.msg) + '</span>';
                     if (!r.ok) { codeBtn.disabled = false; return; }
                     // 秒数取服务端返回值：重发间隔在后台可调（mail_rate_limit），
