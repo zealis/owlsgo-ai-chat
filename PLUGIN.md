@@ -291,6 +291,7 @@ OwChat.registerAvatarUploader(function (file, filename, onOk) {
 
 | `mail.send` | 发验证码等邮件要投递时（`Mailer::send`） | `[&$sent, $to, $subject, $body, &$error, $ctx]` —— 核心 v1.0.81 起不再内置 SMTP；插件完成投递后把 `$sent` 置 true，失败时把可展示的原因写进 `$error`（会拼进用户提示，**不要塞原始异常/凭据**）。无人响应时验证码仍入库，但接口返回「站点未启用邮件发送」。`$ctx` 含 `kind`（register/reset/chpwd…）、`code`、`ttl`、`name`、`email`、`site_name`、`format`（text/html） |
 | `mail.render` | `mail.send` **之前**，核心已生成码与默认文案（v1.3.55） | `[&$subject, &$body, &$format, $ctx]` —— 插件按 `$ctx['kind']` 套自己的模板改写主题与正文，并把 `$format` 置 `html`。⚠️ 只对验证码生效：`$ctx['code']` 为空的邮件（别的插件群发通知）不要改写，否则会把别人的正文换成验证码模板 |
+| `mail.available` | `Mailer::deliverable()` 判定「这台站点现在真能发信吗」（v1.3.64） | 返回 `'1'` 表示有可用通道。核心用它决定**要不要要求**邮箱验证码：只看后台开关会出现「要求一个根本发不出来的凭证」—— 没配 SMTP 时用户被永久卡在改不了密码上。⚠️ 降级只适用于还有别的凭证的流程（改密码有当前密码、注册是本人建号）；**找回密码绝不能降级**，那里验证码是唯一凭证，一降级就是「知道邮箱就能改别人密码」的接管漏洞 |
 | `mail.unsent` | 没有任何插件响应 `mail.send`（v1.3.55） | `[$info]` —— 键 `to` / `subject` / `kind`。用于记「待发送」统计：码已入库但没发出去，用户必然收不到 |
 | `room.restored` | 群聊从审核回收站撤销「删除」后 | `[$roomId, $row, $actor]` —— `$row` 为恢复的整行数据 |
 

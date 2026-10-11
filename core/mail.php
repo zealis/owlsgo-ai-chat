@@ -257,9 +257,28 @@ class Mailer
         return $n;
     }
 
-    /** 是否要求邮箱验证码（总开关 + 注册场景的独立开关） */
+    /**
+     * 邮箱验证码在这台站点上**到底可不可得**：总开关开着，且真有插件能投递。
+     *
+     * 为什么不能只看开关：开关是管理员设的意图，通道是运行时的事实。
+     * 只看意图就会出现现场这个故障——没装/没配邮件插件时，改密码页照样要求填验证码，
+     * 而「发验证码」永远失败，用户被永久卡在改不了密码上。
+     * 要求一个**根本发不出来的凭证**不提供任何安全性，只制造死路。
+     *
+     * ⚠️ 这条降级**只适用于还有别的凭证的流程**（改密码有「当前密码」兜底、
+     * 注册是本人自设新账号）。找回密码绝不能降级：那里验证码是唯一凭证，
+     * 一降级就变成「知道邮箱就能改别人密码」的接管漏洞。
+     */
+    public static function deliverable(): bool
+    {
+        if (!self::policy()['code_verify']) return false;
+        if (!class_exists('Plugin', false)) return false;
+        return Plugin::collect('mail.available') === '1';
+    }
+
+    /** 是否要求邮箱验证码（总开关 + 注册场景的独立开关 + 真有通道） */
     public static function needRegisterCode(): bool
     {
-        return DB::setting('reg_email_verify', '1') === '1' && self::policy()['code_verify'];
+        return DB::setting('reg_email_verify', '1') === '1' && self::deliverable();
     }
 }

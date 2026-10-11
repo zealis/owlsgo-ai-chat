@@ -1408,13 +1408,15 @@ function renderAuth(string $mode): void
            . '<button class="ow-btn ow-btn-primary ow-btn-block" type="submit">注 册</button><div class="ow-form-msg"></div></form>'
            . '<div class="ow-auth-links"><a href="?page=login">已有账号，去登录</a><a href="?page=chat">返回聊天</a></div>';
     } else {
-        // 找回密码的唯一凭证就是邮箱验证码：总开关关掉（或邮件通道没配）时，
+        // 找回密码的唯一凭证就是邮箱验证码：开关关掉、或根本没装/没配邮件插件时，
         // 与其留一张「点发验证码只会报错」的死表单，不如直接说明走管理员。
+        // ⚠️ 这一侧**不做降级**（与改密码相反）：改密码还有「当前密码」这道真凭证，
+        //    而这里验证码就是全部 —— 一降级变成「知道邮箱就能改别人密码」的接管漏洞。
         // 只换表单内容、不改页面收尾 —— 收尾那段（i18n/chat/插件包/OwAuth.init）
         // 复制两份迟早跟登录页不同步。
-        if (!Mailer::policy()['code_verify']) {
+        if (!Mailer::deliverable()) {
             $form = '<p style="color:var(--ow-text-sub);font-size:13px;line-height:1.7;margin:0 0 14px">'
-                . '站点当前未开启邮箱验证码，无法自助找回密码，请联系管理员在后台处理。</p>';
+                . '站点当前不可用邮箱验证码（未开启，或未配置能发信的邮件插件），无法自助找回密码。请联系管理员在后台处理。</p>';
         } else {
             // v1.3.63：找回密码页也放组件 —— 但闸门只挂在「发验证码」上，不挂在这里。
             // 因为 token 是**一次性**的：一次 solve 只能被服务端核销一次，
@@ -1661,10 +1663,10 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
         'room' => $entered ? (int)$first['id'] : 0,
         'site_url' => ow_site_url(),
         'settings' => $settings,
-        // v1.3.55：改密码是否要邮箱验证码，前端按它决定要不要渲染验证码那一栏。
-        // 只有「开关开着 **且** 本人有可用邮箱」才要求 —— 与 Auth::changePassword 同口径，
-        // 两边判定不一致就会出现「界面要求、服务端忽略」或反之。
-        'mail_chpwd' => (Mailer::policy()['code_verify']
+        // v1.3.64：改密码是否要邮箱验证码，前端按它决定要不要渲染那一栏。
+        // 判定必须与 Auth::changePassword 完全同源（开关 + 真有可投递的通道 + 本人邮箱可用）：
+        // 两边不一致就会出现「界面要求、服务端忽略」，或者反过来把用户锁死在改不了密码上。
+        'mail_chpwd' => (Mailer::deliverable()
             && filter_var((string)($user['email'] ?? ''), FILTER_VALIDATE_EMAIL)) ? '1' : '0',
         'me' => $user ? [
             'nickname' => $user['nickname'], 'id' => (int)$user['id'],

@@ -457,7 +457,7 @@
         '该邮箱本小时的发送次数已达上限，请稍后再试': 'This mailbox hit its hourly send limit — please try again later',
         '当前 IP 邮件发送已达上限，请稍后再试': 'This IP address hit its hourly email limit — please try again later',
         '当前浏览器本小时的发送次数已达上限，请稍后再试': 'This browser hit its hourly send limit — please try again later',
-        '站点当前未开启邮箱验证码，无法自助找回密码，请联系管理员在后台处理。': 'Self-service password reset needs email codes, which are switched off on this site. Please contact an administrator.',
+        '站点当前不可用邮箱验证码（未开启，或未配置能发信的邮件插件），无法自助找回密码。请联系管理员在后台处理。': 'Self-service password reset needs an emailed code, which this site cannot provide right now (switched off, or no working mail plugin). Please contact an administrator.',
 
         /* ---------- email plugin (email-verify, v1.3.55) ---------- */
         '邮箱验证': 'Email verification',

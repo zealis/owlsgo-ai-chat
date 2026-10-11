@@ -425,6 +425,16 @@ Plugin::on('mail.send', function (&$sent, $to, $subject, $body, &$error, array $
     owEVLog($r['ok'] ? 'sent' : 'failed', $recipient, (string)$subject, (string)($ctx['kind'] ?? ''), $r['error']);
 });
 
+/**
+ * 告诉核心「这台站点现在真能发信吗」。
+ * 核心用它决定要不要**要求**邮箱验证码（Mailer::deliverable）：
+ * 只看后台开关会出现「要求一个根本发不出来的凭证」——用户被永久卡在改不了密码上。
+ * 停用本插件、或开关/参数没配齐，这里就返回空串 → 需要邮箱码的流程自动降级。
+ */
+Plugin::on('mail.available', function (): string {
+    return owEVActive() ? '1' : '';
+});
+
 /** 没有任何通道接手：记一条「待发送」，后台统计卡才解释得清为什么码发了却没到 */
 Plugin::on('mail.unsent', function (array $info = []): void {
     $kind = (string)($info['kind'] ?? '');

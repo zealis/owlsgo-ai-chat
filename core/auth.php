@@ -342,7 +342,9 @@ class Auth
         if (strlen($new) < 6) return [false, '新密码至少 6 位'];
         if ($new === $current) return [false, '新密码不能与当前密码相同'];
         $email = trim((string)($user['email'] ?? ''));
-        $needCode = Mailer::policy()['code_verify'] && filter_var($email, FILTER_VALIDATE_EMAIL);
+        // 只有「真有通道 + 邮箱可用」才要求验证码。没装邮件插件时硬要求，
+        // 等于把改密码这条路彻底堵死（当前密码才是这里的真凭证）。
+        $needCode = Mailer::deliverable() && filter_var($email, FILTER_VALIDATE_EMAIL);
         if ($needCode && !Mailer::verifyCode($email, 'chpwd', $code)) {
             Sec::log('chpwd_code_fail', (string)$user['nickname']);
             return [false, '邮箱验证码错误或已过期'];
