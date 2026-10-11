@@ -6327,6 +6327,14 @@
                         + '<span class="ow-upload-name" id="owPluginZipName">未选择文件</span>'
                         + '<button type="button" class="ow-btn ow-btn-primary" style="margin-left:auto" onclick="OwAdmin.pluginInstall()">上传安装</button>'
                         + '</div>'
+                        // 搜索框：列表已有二十几项，逐个扫眼睛比打字慢得多（v1.3.67）。
+                        // 纯前端过滤 —— 数据本来就一次性下发全量，没有再问服务端的理由。
+                        + '<div class="ow-card"><div class="ow-form-row" style="align-items:center">'
+                        + '<div class="ow-form-item" style="flex:1 1 240px;min-width:240px;max-width:520px"><label>搜索插件</label>'
+                        + '<input class="ow-input" id="owPluginSearch" type="text" autocomplete="off" '
+                        + 'placeholder="插件名 / ID / 描述 / 来源" oninput="OwAdmin.pluginFilter()"></div>'
+                        + '<span id="owPluginHit" style="margin-left:auto;color:var(--ow-text-sub);font-size:12px"></span>'
+                        + '</div></div>'
                         + '<div class="ow-plugin-list">';
                     // v1.2.57：点标题直达该插件的后台页。
                     // 条件：已启用 **且** slug 在服务端下发的 admin_pages 清单里
@@ -6335,7 +6343,12 @@
                     for (var i = 0; i < r.data.length; i++) {
                         var d = r.data[i];
                         var canOpen = d.enabled && slugs.indexOf(d.id) >= 0;
-                        h += '<div class="ow-plugin-card">'
+                        // 命中用的关键词串：渲染时拼好并转小写存进属性，避免每次按键重新拼。
+                        // 只收列表上看得见的那四项，与 placeholder 一字不差 ——
+                        // 搜一个页面里不显示的字段（如 author）只会让人误猜。
+                        var hay = (d.name + ' ' + d.id + ' ' + (d.description || '') + ' '
+                                 + (d.source || '本地')).toLowerCase();
+                        h += '<div class="ow-plugin-card" data-owplug-k="' + esc(hay) + '">'
                            + '<div class="ow-plugin-head">'
                            + (canOpen
                                ? '<b class="ow-plugin-title-link" title="打开「' + esc(d.name) + '」设置页"'
@@ -6356,6 +6369,8 @@
                            + '</div></div>';
                     }
                     if (!r.data.length) h += '<div class="ow-card" style="color:var(--ow-text-sub)">暂无插件</div>';
+                    // 搜空了要给一句话说明，否则满屏空白看着像页面坏了
+                    else h += '<div class="ow-card" id="owPluginNone" style="color:var(--ow-text-sub);display:none">没有匹配的插件，换个关键词试试。</div>';
                     main.innerHTML = h + '</div>';
                     /* 自研上传控件：隐藏原生 file input，选择后回显文件名 */
                     var zip = $('owPluginZip');
@@ -6369,6 +6384,11 @@
                             name.className = 'ow-upload-name';
                         }
                     };
+                    // 上传安装成功后会重渲染本页（OwAdmin.page('plugins')）：把关键词捡回来，
+                    // 免得刚搜的东西被一次刷新抹掉
+                    var si = $('owPluginSearch');
+                    if (si && OwAdmin._plugQ) si.value = OwAdmin._plugQ;
+                    OwAdmin.pluginFilter();
                 });
             },
             rooms: function (main) {
@@ -6978,6 +6998,36 @@
         /* ---------- 其他动作（banAdd/banDel 已随 v1.0.52 剥离为插件 ban-manager；
            wordAdd/wordToggle/wordDel 已随 v1.0.104 剥离为插件 sensitive-words） ---------- */
         /* 系统公告管理（v1.0.102）已随公告剥离为 announcements 插件 */
+        /**
+         * 插件列表搜索（v1.3.67）：纯前端过滤，只切卡片 display，不重新请求。
+         * 空格分词按「每个词都要命中」处理 —— 后台插件名是中文、ID 是英文，
+         * 「email 验证」这类组合查询很常见，整体当子串搜反而一个都搜不到。
+         * 命中串在渲染时就拼好存进 data-owplug-k（见 pages.plugins）。
+         */
+        pluginFilter: function () {
+            var inp = $('owPluginSearch');
+            if (!inp) return;
+            var q = String(inp.value || '').trim();
+            OwAdmin._plugQ = q;
+            var terms = q ? q.toLowerCase().split(/\s+/) : [];
+            var cards = document.querySelectorAll('.ow-plugin-list .ow-plugin-card');
+            var hit = 0;
+            for (var i = 0; i < cards.length; i++) {
+                var hay = cards[i].getAttribute('data-owplug-k') || '';
+                var ok = true;
+                for (var j = 0; j < terms.length; j++) {
+                    if (hay.indexOf(terms[j]) < 0) { ok = false; break; }
+                }
+                cards[i].style.display = ok ? '' : 'none';
+                if (ok) hit++;
+            }
+            var none = $('owPluginNone');
+            if (none) none.style.display = (cards.length && hit === 0) ? '' : 'none';
+            var stat = $('owPluginHit');
+            // 只在过滤时报数，且不写中文：带数字的句子语言包永远匹配不上，
+            // 「3 / 27」这种纯数字反而到哪都不用翻（不搜时列表本来就是全量，报数没意义）
+            if (stat) stat.textContent = terms.length ? (hit + ' / ' + cards.length) : '';
+        },
         /**
          * 插件列表 → 点标题直达插件后台页（v1.2.57）。
          * 走菜单同一套分发（'plugin:<slug>'），不另写一套渲染逻辑；
