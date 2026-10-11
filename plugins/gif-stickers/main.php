@@ -315,13 +315,23 @@ Plugin::route('plugin_gif_stickers_search', function (array $ctx) {
     ]);
 });
 
-/* ---------- 资源登记 ---------- */
+/* ---------- 前端资源 ---------- */
 /**
- * 只登记，不再自己发 <link>：核心的 ?action=assets&type=css 会把**已启用**插件登记的
- * CSS 合并输出（实测本插件的规则就在合并包里），再补一个 link 就是同一份样式下两遍。
- * v1.3.63 那次「style.css 一条规则都没生效」的真因是插件当时处于停用状态 ——
- * 停用插件的资源不进合并包，跟有没有 page.head 无关。
+ * 样式表必须自己发 <link>。核心只在页面里引 owlsgo.css 与合并 **JS**，
+ * 合并 CSS 端点（?action=assets&type=css）没有任何地方引用它 ——
+ * attachment-manager 自己的注释就写着「主程序未引入 …… 插件 CSS 不会自动加载」。
+ *
+ * ⚠️ 上一版我据「实测有两个样式表命中本插件规则」得出「核心会合并插件 CSS，
+ * 只登记就够」，那是**搭了顺风车**：其中一份是 attachment-manager 在 page.head 里
+ * 发的整包 link，一停用附件插件，本插件样式就整片消失
+ * （面板塌成普通块、搜索框撑满整行、广告 iframe 失去约束）。
+ * 现在只发自己那一份，不依赖任何别的插件是否启用。
  */
+Plugin::on('page.head', function (): void {
+    echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=gif-stickers&file=style.css&v=' . OWLSGO_VERSION . '">';
+});
+
+/** 登记资源：既是合并包的成员，也是 ?action=assets 的**可服务白名单**（不登记则取不到） */
 Plugin::asset('js', 'gif-stickers/admin.js');
 Plugin::asset('js', 'gif-stickers/chat.js');
 Plugin::asset('css', 'gif-stickers/style.css');
