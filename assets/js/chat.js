@@ -4311,7 +4311,9 @@
             var self = this;
             var uid = this.dm && this.dm.id;
             if (!uid) { toast('私聊对象不合法'); return; }
-            this.confirm('确定删除好友「' + (this.roomName || '') + '」？\n删除后聊天记录仍会保留。', function () {
+            this.confirm('确定删除好友「' + (this.roomName || '') + '」？\n'
+                + '你这一侧与 TA 的聊天记录会一并清空、不再出现在消息列表；'
+                + '对方仍保留他自己的记录。', function () {
                 self.removeFriend(uid);
             });
         },

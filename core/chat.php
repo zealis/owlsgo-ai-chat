@@ -59,7 +59,16 @@ class Chat
         return $out;
     }
 
-    /** 删除联系人（幂等）。返回 [ok, msg]。 */
+    /**
+     * 删除联系人（幂等）。返回 [ok, msg]。
+     *
+     * v1.3.73：默认连带清空**本机这一侧**与 TA 的聊天记录（会话列表里也不再显示）。
+     * 走 v1.2.28 就有的 clearDmForMe —— 只写 message_hides，服务器上一行消息都不删，
+     * 对方照常看得到他自己的记录。为什么用隐藏而不是 DELETE：站内只有一份库，
+     * 一条私信两人共用一行，删行等于替对方做了决定。
+     * 会话列表 / 私聊历史 / 轮询 / 搜索都已按 hiddenIds 过滤（见 conversations、
+     * dmHistory、poll、search），所以「消息列表不展示」不需要另写一遍判定。
+     */
     public static function removeFriend(array $actor, int $friendId): array
     {
         if (($actor['kind'] ?? '') !== 'user') return [false, '请先登录'];
@@ -70,10 +79,31 @@ class Chat
         // 我这边的列表里仍会留着他（等于删不掉）。
         DB::run('DELETE FROM friends WHERE (user_id=? AND friend_id=?) OR (user_id=? AND friend_id=?)',
             [$me, $friendId, $friendId, $me]);
-        return [true, '已删除联系人'];
+        $peer = self::dmPeerKey($actor, 'user:' . $friendId);   // 与 dm_clear 同一入口校验，非法对像直接跳过
+        $n = 0;
+        if ($peer) {
+            [, , $n] = self::clearDmForMe($actor, $peer);
+        }
+        return [true, $n > 0 ? ('已删除联系人，并清空 ' . $n . ' 条聊天记录') : '已删除联系人'];
     }
 
     /* ---------- 好友请求（v1.3.71）：先申请，对方通过后才成为联系人 ---------- */
+
+    /**
+     * 「我发出的请求」只保留最近这么多条，更早的直接删。
+     * 申请是有时效的动作：翻 20 条之前的记录没有意义，留着只会让页面越来越长。
+     * 只按 from_id（我发出的）裁剪，**不动别人发给我的** —— 收件箱该不该留由收件人决定。
+     */
+    private const REQ_KEEP = 20;
+
+    /** 裁掉我发出的第 REQ_KEEP 条之外的旧请求 */
+    private static function pruneFriendReq(int $me): void
+    {
+        // 不用 DELETE ... ORDER BY id LIMIT n：那是 MySQL 专有写法，SQLite / PG 不认。
+        // 先探出「第 21 条」的 id，再删比它老的 —— 两个方言都是普通 SQL。
+        $cut = DB::val('SELECT id FROM friend_req WHERE from_id=? ORDER BY id DESC LIMIT 1 OFFSET ' . self::REQ_KEEP, [$me]);
+        if ($cut) DB::run('DELETE FROM friend_req WHERE from_id=? AND id<?', [$me, (int)$cut]);
+    }
 
     /** 两人当前是否已是联系人（任一行即算 —— 与 friends() 的双向可见同一口径） */
     public static function areFriends(int $a, int $b): bool
@@ -162,6 +192,7 @@ class Chat
             'from_id' => $me, 'to_id' => $toId, 'note' => $note,
             'status' => 0, 'created_at' => time(), 'handled_at' => 0,
         ]);
+        self::pruneFriendReq($me);   // 发完再裁：新的一条一定落在保留窗口内
         return [true, '好友请求已发送给「' . (string)$u['nickname'] . '」'];
     }
 
@@ -205,7 +236,7 @@ class Chat
              WHERE q.to_id=? AND q.status=0 ORDER BY q.id DESC LIMIT 50', [$me]);
         $out['outgoing'] = self::friendReqRows(
             $sel . ' FROM friend_req q JOIN users u ON u.id = q.to_id
-             WHERE q.from_id=? ORDER BY q.id DESC LIMIT 50', [$me]);
+             WHERE q.from_id=? ORDER BY q.id DESC LIMIT ' . self::REQ_KEEP, [$me]);
         return $out;
     }
 

@@ -1572,8 +1572,10 @@ input[type=range] {
 /* ---------- 好友通知页（v1.3.71）：待处理请求与「我发出的」列表 ---------- */
 .ow-freq { padding: 14px 16px; }
 .ow-freq-hd { margin: 0 0 8px; font-size: 14px; color: var(--ow-text-title); }
-/* 第二组标题紧跟在上一组最后一行之后，要自己挣出间距 */
-.ow-freq-row + .ow-freq-hd { margin-top: 18px; }
+/* 第二组标题必须自己挣出间距：它前面可能是上一组的最后一行，也可能是
+   「暂无待处理的好友请求。」那句空态文字 —— 只写 .ow-freq-row + .ow-freq-hd
+   的话，空态那一档命不中，两个标题之间就只剩 h3 自己的 8px 下边距（实测用户反馈）。 */
+.ow-freq-row + .ow-freq-hd, .ow-freq-empty + .ow-freq-hd { margin-top: 18px; }
 .ow-freq-empty { margin: 0; font-size: 13px; color: var(--ow-text-sub); }
 .ow-freq-row {
     display: flex; display: -webkit-flex; align-items: center; -webkit-align-items: center;

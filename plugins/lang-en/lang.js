@@ -107,6 +107,7 @@
         '该请求已经处理过了': 'That request has already been handled',
         '请求已在待处理中，等待对方回应': 'Your request is still waiting for their answer',
         '对方也向你发过请求，你们已成为联系人': 'They had sent you one too — you are contacts now',
+        '已删除联系人': 'Contact removed',
         '会话': 'Conversation',
         '私聊': 'Direct message',
         '群聊': 'Room',
