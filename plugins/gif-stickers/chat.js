@@ -166,10 +166,16 @@
             render(parsed.items, page > 1);
             if (!parsed.items.length && page === 1) {
                 if (x.status === 200) {
-                    // 「HTTP 200 但一条都没有」光看界面没法判断是源没货还是我们没解析对，
-                    // 所以把真实结构留在控制台：管理员按 F12 就能看到顶层有哪些键
+                    // 「200 但 0 条」有两种完全不同的原因：源真的没给内容（密钥/授权问题），
+                    // 或响应结构与我们理解的不一样。界面必须说清是哪一种，
+                    // 否则管理员只能盲猜「是不是密钥错了」。
+                    var s = inspectKlipy(j);
                     if (w.console && w.console.warn) w.console.warn('[gif-stickers] KLIPY 返回 200 但解析不出结果，原始响应：', j);
-                    grid('<p class="ow-gif-msg">KLIPY 返回了 200 但没有可解析的结果（结构已记在浏览器控制台，供核对）</p>');
+                    grid('<p class="ow-gif-msg">' + (s.found < 0
+                        ? 'KLIPY 返回的内容里找不到结果数组（结构已记在浏览器控制台）'
+                        : ('KLIPY 正常返回，但这条请求给了 ' + s.found + ' 条'
+                            + (s.dropped ? '（' + s.dropped + ' 条取不到图片地址）' : '')
+                            + ' —— 请核对密钥对应的产品与已授权域名')) + '</p>');
                 } else {
                     grid('<p class="ow-gif-msg">没有结果，换个关键词试试</p>');
                 }
@@ -248,8 +254,26 @@
         return { items: items, next: hasNext(j, 0) };
     }
 
-    /** 给后台「测试当前源」用的计数：面板与自测共用一份解析口径，免得两处对形状的理解漂移 */
-    w.OwGif = { count: function (j) { return parseKlipy(j).items.length; } };
+    /** 给界面用的结构摘要：能分清「源没给内容」和「我们没解析对」这两种 0 条 */
+    function inspectKlipy(j) {
+        var top = [], k;
+        for (k in j) if (Object.prototype.hasOwnProperty.call(j, k)) top.push(k + (Object.prototype.toString.call(j[k]) === '[object Array]' ? '[]' : (j[k] && typeof j[k] === 'object' ? '{}' : '')));
+        var list = findList(j, 0);
+        var dropped = 0, i;
+        if (list) { for (i = 0; i < list.length; i++) { if (!pickUrl(list[i] || {}, 0)) dropped++; } }
+        return {
+            top: top.join(','),
+            found: list ? list.length : -1,          // -1 = 压根没找到像结果集的数组
+            dropped: dropped,                          // 找到了但一条地址都取不出
+            items: parseKlipy(j).items
+        };
+    }
+
+    /** 给后台「测试当前源」用的计数与结构摘要：面板与自测共用一份解析口径，避免两处理解漂移 */
+    w.OwGif = {
+        count: function (j) { return parseKlipy(j).items.length; },
+        inspect: function (j) { var s = inspectKlipy(j); return { found: s.found, dropped: s.dropped, top: s.top, n: s.items.length }; }
+    };
 
     /** apihz：本站代理，返回里只有图片地址 */
     function loadApihz() {

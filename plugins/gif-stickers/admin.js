@@ -64,8 +64,17 @@
                 var j = null;
                 try { j = JSON.parse(x.responseText || '{}'); } catch (e) { j = null; }
                 if (!j) { say(false, 'KLIPY 返回了无法解析的内容（HTTP ' + x.status + '）'); return; }
-                var n = w.OwGif ? w.OwGif.count(j) : 0;
-                say(x.status === 200 && n > 0, n > 0 ? ('KLIPY 可用，取到 ' + n + ' 张') : ('KLIPY 未返回内容（HTTP ' + x.status + '），请核对 App Key'));
+                if (x.status !== 200) { say(false, 'KLIPY 返回 HTTP ' + x.status + '，请核对 App Key'); return; }
+                var s = w.OwGif ? w.OwGif.inspect(j) : null;
+                if (!s) { say(false, '解析脚本还没就绪，请刷新后台页面再试'); return; }
+                if (s.n > 0) { say(true, 'KLIPY 可用，取到 ' + s.n + ' 张'); return; }
+                // 三种 0 条要说不同的话：找不出数组 = 结构变了；找到 N 条但取不到地址 =
+                // 媒体字段变了；找到空数组 = 密钥/授权没给内容（这三种修法完全不同）
+                say(false, s.found < 0
+                    ? ('KLIPY 返回 200，但内容里找不到结果数组（顶层：' + s.top + '）')
+                    : (s.dropped
+                        ? ('KLIPY 返回 ' + s.found + ' 条，但都取不到图片地址（顶层：' + s.top + '）')
+                        : ('KLIPY 返回 200 但给了空列表 —— 请核对密钥对应的产品（GIF/Sticker/Clip）与已授权域名')));
             };
             x.onerror = function () { say(false, '浏览器直连 KLIPY 失败：可能被网络策略或广告拦截挡住'); };
             x.ontimeout = function () { say(false, 'KLIPY 请求超时'); };
