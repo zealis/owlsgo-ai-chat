@@ -231,13 +231,17 @@
         var isVideo = media[0].kind === 'video';
         // 标题里不带数量：语言包按**整句**匹配，掺进数字这句就永远翻译不到
         // （数量在待发区里数得出来，不必在这里重复一遍）
+        // 标题与说明包在 .ow-pick-txt 里：不包的话它们是两个并列的 flex 子项，
+        // 说明会把标题挤成两行（实测「以视频方式 / 发送」这样断行）。
         OwChat.openModal('<h3>怎么发送这些文件？</h3>'
             + '<div class="ow-pick">'
             + '<button type="button" class="ow-pick-card" id="owPickMedia">' + icon(isVideo ? 'video' : 'image', 28)
-            + '<b>' + (isVideo ? '以视频方式发送' : '以图片方式发送') + '</b>'
-            + '<span>' + (isVideo ? '直接出现在聊天里可播放，可与文字一起发。' : '直接出现在聊天里，支持图文混排，辅助表达更清晰。') + '</span></button>'
+            + '<span class="ow-pick-txt">'
+            + '<span class="ow-pick-name">' + (isVideo ? '以视频方式发送' : '以图片方式发送') + '</span>'
+            + '<span class="ow-pick-desc">' + (isVideo ? '直接出现在聊天里可播放，可与文字一起发。' : '直接出现在聊天里，支持图文混排，辅助表达更清晰。') + '</span></span></button>'
             + '<button type="button" class="ow-pick-card" id="owPickFile">' + icon('file', 28)
-            + '<b>以文件方式发送</b><span>保留格式与文件名，便于识别和管理（不压缩）。</span></button>'
+            + '<span class="ow-pick-txt"><span class="ow-pick-name">以文件方式发送</span>'
+            + '<span class="ow-pick-desc">保留格式与文件名，便于识别和管理（不压缩）。</span></span></button>'
             + '</div>'
             + '<div class="ow-modal-actions"><button class="ow-btn ow-btn-ghost" id="owPickCancel">取消</button></div>');
         $('owPickMedia').onclick = function () {

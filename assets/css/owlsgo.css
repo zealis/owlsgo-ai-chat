@@ -2103,7 +2103,15 @@ span.ow-panel-entry-ico.ow-avatar { width: 16px; height: 16px; line-height: 16px
    灰底区域上的 hover 一律用 --ow-bg-chat-hover(#EBEBEB)，比底色深一档。 */
 .ow-admin-menu li:hover { background: var(--ow-bg-chat-hover); }
 .ow-admin-menu li.active { background: var(--ow-active-bg); color: var(--ow-primary-dark); font-weight: 600; }
-.ow-admin-ico { font-size: 15px; }
+/* 图标槽：必须自己成为 flex 容器并把 svg 变成块级 —— 否则 16px 的 svg 落在
+   24px 的行盒里按 baseline/middle 对齐，视觉上比文字低 2px（实测 svg 中心 289 vs 文字中心 287）。
+   行盒的字符度量（CJK 没有下伸部）会把这段余量全压在图标上方，改 vertical-align 只能挪、不能对上。 */
+.ow-admin-ico {
+    display: -webkit-flex; display: flex;
+    -webkit-align-items: center; align-items: center;
+    font-size: 15px;
+}
+.ow-admin-ico > svg { display: block; }
 /* 菜单分类：标题占满剩余宽度，使折叠箭头贴右侧 */
 .ow-admin-label { flex: 1; -webkit-flex: 1; min-width: 0; }
 .ow-admin-tog { display: flex; display: -webkit-flex; color: var(--ow-text-sub); transition: transform .15s; -webkit-transition: -webkit-transform .15s; }

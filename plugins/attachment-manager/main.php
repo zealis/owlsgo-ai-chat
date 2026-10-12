@@ -69,6 +69,26 @@ function owATInitOnce(): void
     $done = true;
     $have = [];
     foreach (DB::all('SELECT k FROM plugin_attachment_config') as $r) $have[(string)$r['k']] = true;
+    // v1.3.86：默认白名单加了 webm（「以视频方式发送」要在浏览器里直接播，mp4/webm 是原生支持的两种容器）。
+    // 已经存过配置的站点不会跟着默认值走，所以这里补一次 —— 但**只补没动过这项的站**：
+    // 存的串与旧默认串是同一套扩展名时才升级；管理员自己挑过的列表一律不擅自改（多给一种可上传格式
+    // 属于放宽上传面，必须由他自己在后台做）。
+    if (isset($have['exts'])) {
+        $old = 'jpg,jpeg,png,gif,webp,bmp,zip,rar,7z,pdf,txt,md,doc,docx,xls,xlsx,ppt,pptx,mp3,mp4';
+        $norm = function (string $s): array {
+            $o = [];
+            foreach (preg_split('/[\s,，;；]+/u', $s) ?: [] as $p) {
+                $e = strtolower(ltrim(trim($p), '.'));
+                if ($e !== '') $o[$e] = 1;
+            }
+            ksort($o);
+            return $o;
+        };
+        $stored = (string)DB::val('SELECT v FROM plugin_attachment_config WHERE k=?', ['exts']);
+        if ($stored !== '' && $norm($stored) === $norm($old)) {
+            DB::upsert('plugin_attachment_config', ['k' => 'exts', 'v' => owATDefaultConfig()['exts']], ['k']);
+        }
+    }
     if (isset($have['enabled']) && isset($have['max_mb']) && isset($have['exts'])) return;
     $map = ['enabled' => 'file_upload', 'max_mb' => 'file_max_size', 'exts' => 'file_exts'];
     foreach ($map as $newKey => $oldKey) {
