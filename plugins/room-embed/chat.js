@@ -1,18 +1,24 @@
 /**
- * 群聊嵌入插件（room-embed）前端脚本 v1.0.0
+ * 群聊嵌入插件（room-embed）前端脚本 v1.1.0
  *
  * 职责：
- *   1. 嵌入模式（?embed=1）下做 JS 层的 UI 微调（隐藏音效按钮等）
+ *   1. 嵌入模式（?embed=1）下做 JS 层的 UI 微调（隐藏音效按钮、输入框拖拽手柄）
  *   2. 普通模式下，通过 OwChat.onRoomEdit 在群聊信息面板追加「嵌入代码」入口
  *      —— 仅群主/超级管理员可见，点击弹出 iframe 代码
  *
  * 兼容约束：仅用 var / function，无箭头函数、const、let、fetch。
+ *
+ * v1.1.0（2026-10-12）：
+ *   - 生成的 iframe 代码改响应式：桌面 380×560，窄屏 max-width/max-height 自动收窄，
+ *     dvh 渐进增强（老内核忽略第二条声明回退 vh），手机上不再溢出屏幕；
+ *   - 幂等标记 __haRoomEmbedLoaded → __owRoomEmbedLoaded（与 Owlsgo 品牌命名对齐）；
+ *   - iframe 投影色属「外部站点装饰」（粘贴到没有 --ow-* 变量的第三方页面），就地注释例外。
  */
 (function () {
     var w = window;
     if (!w.OwChat || !w.OwChat.cfg) return;
-    if (w.__haRoomEmbedLoaded) return;
-    w.__haRoomEmbedLoaded = true;
+    if (w.__owRoomEmbedLoaded) return;
+    w.__owRoomEmbedLoaded = true;
 
     var isEmbed = /[?&]embed=1(&|$)/.test(w.location.search);
 
@@ -38,9 +44,13 @@
         showCode: function (roomId, roomName) {
             var base = (w.OwChat.cfg && w.OwChat.cfg.site_url) ? w.OwChat.cfg.site_url : '';
             var src = base + '/?page=chat&room=' + roomId + '&embed=1';
-            var code = '<iframe src="' + src + '" width="380" height="560" frameborder="0" '
-                + 'style="position:fixed;bottom:20px;right:20px;border:none;border-radius:10px;'
-                + 'box-shadow:0 4px 24px rgba(0,0,0,.18);z-index:99999;overflow:hidden"></iframe>';
+            // ⚠️ 例外（PLUGIN.md「图像像素」类）：本串是粘贴到**外部站点**运行的代码，
+            // 外部页面没有 --ow-* 变量体系，投影/圆角按外部站点装饰写死，不随本站主题变化。
+            var code = '<iframe src="' + src + '" width="380" height="560" frameborder="0" title="聊天室" '
+                + 'style="position:fixed;bottom:20px;right:20px;z-index:99999;overflow:hidden;'
+                + 'width:380px;max-width:calc(100vw - 24px);'
+                + 'height:560px;max-height:calc(100vh - 40px);max-height:calc(100dvh - 40px);'
+                + 'border:none;border-radius:10px;box-shadow:0 4px 24px rgba(0,0,0,.18)"></iframe>';
 
             var html = '<h3>嵌入代码</h3>'
                 + '<p style="color:var(--ow-text-sub,#999);font-size:13px;margin:0 0 10px">将以下代码粘贴到网站 HTML 的合适位置，右下角即出现聊天室。</p>'
