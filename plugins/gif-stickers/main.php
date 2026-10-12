@@ -123,30 +123,52 @@ function owGSImageAllowed(string $url): bool
     return owGSHostAllowed((string)($p['host'] ?? ''));
 }
 
-/** 服务端 GET（只用于 apihz）。证书必须验：拿明文密钥去敲别人的接口，中间人能直接收走。 */
+/**
+ * 服务端 GET（只用于 apihz）。证书必须验：拿明文密钥去敲别人的接口，中间人能直接收走。
+ *
+ * ⚠️ 两个坑都踩过，两条都要留着：
+ *  ① Windows 的 PHP **没有系统 CA 库**（phpStudy 的 php.ini 里 curl.cainfo 是空的），
+ *     curl 于是必报「unable to get local issuer certificate」。解法是显式指一个 CA 包，
+ *     复用 Upgrade::caBundle() 的发现结果（captcha-verify 早就是这么做的，本函数当时漏了）。
+ *  ② 就算 CA 包找到了，也别把 curl 当唯一一条路 —— 换台机器可能一个包都找不到，
+ *     而 openssl 流包装器在这台机器上验签是通的（实测：curl FAIL、stream OK）。
+ *     所以 curl 失败要**往下走**流包装器，而不是直接返回错误。
+ * 两条都不许变成「关掉校验」。
+ */
 function owGSGet(string $url, int $timeout = 8): array
 {
+    $curlErr = '';
     if (function_exists('curl_init')) {
         $ch = curl_init($url);
-        if (!$ch) return ['ok' => false, 'body' => '', 'error' => '无法初始化请求'];
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_MAXREDIRS      => 2,
-            CURLOPT_CONNECTTIMEOUT => 4,
-            CURLOPT_TIMEOUT        => $timeout,
-            CURLOPT_SSL_VERIFYPEER => true,
-            CURLOPT_SSL_VERIFYHOST => 2,
-            CURLOPT_USERAGENT      => 'owlsgo-gif-stickers/1.0',
-        ]);
-        if (defined('CURLOPT_PROTOCOLS') && defined('CURLPROTO_HTTPS')) {
-            curl_setopt($ch, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
+        if ($ch) {
+            $opts = [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_MAXREDIRS      => 2,
+                CURLOPT_CONNECTTIMEOUT => 4,
+                CURLOPT_TIMEOUT        => $timeout,
+                CURLOPT_SSL_VERIFYPEER => true,
+                CURLOPT_SSL_VERIFYHOST => 2,
+                CURLOPT_USERAGENT      => 'owlsgo-gif-stickers/1.0',
+            ];
+            if (defined('CURLOPT_PROTOCOLS') && defined('CURLPROTO_HTTPS')) {
+                $opts[CURLOPT_PROTOCOLS] = CURLPROTO_HTTPS;
+            }
+            if (class_exists('Upgrade')) {
+                $ca = Upgrade::caBundle();
+                if (is_string($ca) && $ca !== '') {
+                    $opts[CURLOPT_CAINFO] = $ca;
+                    $opts[CURLOPT_CAPATH] = dirname($ca);
+                }
+            }
+            curl_setopt_array($ch, $opts);
+            $body = curl_exec($ch);
+            $curlErr = $body === false ? curl_error($ch) : '';
+            curl_close($ch);
+            if ($body !== false) return ['ok' => true, 'body' => (string)$body, 'error' => ''];
+        } else {
+            $curlErr = '无法初始化请求';
         }
-        $body = curl_exec($ch);
-        $err = $body === false ? curl_error($ch) : '';
-        curl_close($ch);
-        return $body === false ? ['ok' => false, 'body' => '', 'error' => $err !== '' ? $err : '请求失败']
-            : ['ok' => true, 'body' => (string)$body, 'error' => ''];
     }
     $ctx = stream_context_create(['http' => [
         'method' => 'GET', 'timeout' => $timeout, 'follow_location' => 1,
@@ -154,7 +176,7 @@ function owGSGet(string $url, int $timeout = 8): array
     ], 'ssl' => ['verify_peer' => true, 'verify_peer_name' => true, 'allow_self_signed' => false]]);
     $body = @file_get_contents($url, false, $ctx);
     return $body === false
-        ? ['ok' => false, 'body' => '', 'error' => '请求失败']
+        ? ['ok' => false, 'body' => '', 'error' => $curlErr !== '' ? $curlErr : '请求失败']
         : ['ok' => true, 'body' => $body, 'error' => ''];
 }
 
@@ -337,8 +359,11 @@ Plugin::route('plugin_gif_stickers_search', function (array $ctx) {
         . '&key=' . rawurlencode((string)$c['apihz_key'])
         . '&type=' . ($words !== '' ? '2' : '1')
         . '&limit=' . $limit . '&page=' . $page
-        . ($words !== '' ? '&words=' . rawurlencode($words) : '')
-        . '&uip=' . rawurlencode(Sec::ip());
+        . ($words !== '' ? '&words=' . rawurlencode($words) : '');
+    // ⚠️ 不传 uip（访客 IP）。接口盒子的文档把它写成可选，但**非会员传了就直接被拒**：
+    //    实测免费开发者带 uip 调用回「该开发者非彩钻或炫钻或焱钻会员，禁止传自定义 uip 参数」，
+    //    换成会员线路才允许。传 IP 对我们没有任何功能作用（限流是自己按人算的），
+    //    所以一律不传；将来买了会员线路要加回来，得连这条注释一起改。
     $r = owGSGet($url);
     if (!$r['ok']) { Api::json(['ok' => false, 'msg' => '表情包接口请求失败：' . $r['error']]); }
     $j = json_decode($r['body'], true);
