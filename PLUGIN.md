@@ -280,6 +280,7 @@ OwChat.registerAvatarUploader(function (file, filename, onOk) {
 | `message.quote` | 消息带引用发送时（`Chat::send` 内，引用已规范化为 JSON 后） | `[&$quote, $content, $actor, $roomId]` —— `$quote` 为 `{nick,text}` 的 JSON 字符串；可改写为脱敏后的内容，或置空禁用该条引用 |
 | `msg.before_delete` | 删除消息前（`Chat::deleteMessage` 内，权限判定后、执行前） | `[&$allow, &$reason, $msg, $actor]` —— `$allow` 置 false 即拦截，`$reason` 为展示给用户的理由；可用于保护特定消息/房间 |
 | `msg.after_delete` | 删除消息后 | `[$msgId, $msg, $actor]` —— 通知型，供审计、同步、通知类插件扩展 |
+| `sign.fallback` | 签名门禁验签失败后（`index.php` 签名门禁，v1.3.96） | `[['token'=>…, 'action'=>…]]` —— 返回字符串 `'1'` 表示放行该请求。供「无 cookie 场景的备用凭证」：room-embed 的跨站嵌入令牌即用本钩子（令牌绑定公开群，权力等价于该群访客）。⚠️ 只在验签失败时咨询；多插件同时注册时返回值会**拼接**，处理器必须只返回 `'1'` 或 `''`，拼接结果非 `'1'` 一律拒绝（fail-closed）。令牌类凭证务必：只存哈希、可吊销、绑定作用域 |
 
 前端扩展点（右键菜单按落点分流，v1.0.69 起）：
 

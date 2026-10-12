@@ -351,7 +351,50 @@ if ($action !== '') {
         (string)($_COOKIE['owl_akey'] ?? ''),
     ])));
     if (!Sec::verifySignAny($signKeys, $action)) {
-        Api::json(['ok' => false, 'msg' => '签名验证失败，请刷新页面'], 403);
+        // v1.3.96：嵌入令牌通道（room-embed 插件）——跨站 iframe 无 cookie 时，持有效嵌入令牌的
+        // 请求可过门禁。令牌由插件签发/校验/吊销（钩子 sign.fallback 返回 '1' 放行）。
+        // 格式预检放在咨询插件之前：非 32hex 直接拒，避免垃圾令牌拖库。
+        // ⚠️ 本通道是纯增量：验签通过的请求永远走原路，不受影响。
+        $embedTok = (string)($_POST['embed_token'] ?? '');
+        $tokenOk = $embedTok !== '' && preg_match('/^[a-f0-9]{32}$/', $embedTok) === 1
+            && class_exists('Plugin')
+            && Plugin::collect('sign.fallback', [['token' => $embedTok, 'action' => $action]]) === '1';
+        if (!$tokenOk) {
+            Api::json(['ok' => false, 'msg' => '签名验证失败，请刷新页面'], 403);
+        }
+        // 令牌通道的身份解析：跨站 iframe 里 owl_guest 同样落不了地，Auth::guest() 为 null、
+        // actor 是 'none'，room_join 会直接弹「请先登录」把访客踢去登录页。
+        // 这里按「令牌 + 访客标识」解析出一个稳定游客身份并替换 $actor：
+        //   · 访客标识由嵌入页 JS 随请求附带（父页面 localStorage 铸造，无 cookie 依赖）；
+        //   · 每个 (令牌, 访客) 对应一个 guests 行——昵称各不相同，可单独禁言、分别限流；
+        //   · 缺标识（旧式纯 iframe 代码）时回落 'shared'：全站访客共用一个身份。
+        // 能走到这里说明动作已过插件的白名单（聊天面 + plugin_ 前缀），不会碰管理面。
+        if (($actor['kind'] ?? '') === 'none' && class_exists('Auth')) {
+            $visitor = substr(preg_replace('/[^a-z0-9]/', '', (string)($_POST['embed_visitor'] ?? '')) ?: 'shared', 0, 16);
+            $gTok = md5('embed|' . $embedTok . '|' . $visitor);
+            $g = DB::one('SELECT * FROM guests WHERE token=?', [$gTok]);
+            if (!$g) {
+                $gid = DB::insert('guests', [
+                    'token' => $gTok,
+                    'nickname' => '网页访客' . ($visitor === 'shared' ? '' : '#' . $visitor),
+                    'client_key' => Sec::clientKey(),
+                    'ip' => Sec::ip(),
+                    'avatar_type' => 'generated',
+                    'avatar_style' => Auth::AVATAR_GUEST_STYLE,
+                    'avatar_seed' => (string)random_int(1, Auth::AVATAR_SEED_COUNT),
+                    'created_at' => time(),
+                ]);
+                $g = $gid ? DB::one('SELECT * FROM guests WHERE id=?', [$gid]) : null;
+            }
+            if ($g) {
+                if ((string)($g['client_key'] ?? '') === '') {
+                    $ck = Sec::clientKey();
+                    DB::run('UPDATE guests SET client_key=? WHERE id=?', [$ck, (int)$g['id']]);
+                    $g['client_key'] = $ck;
+                }
+                $actor = Auth::actor(null, $g);
+            }
+        }
     }
 
     // ---------- 敏感操作安全校验（v1.0.91） ----------

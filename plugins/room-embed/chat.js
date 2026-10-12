@@ -1,24 +1,23 @@
 /**
- * 群聊嵌入插件（room-embed）前端脚本 v1.1.1
+ * 群聊嵌入插件（room-embed）前端脚本 v1.2.0
  *
  * 职责：
- *   1. 嵌入模式（?embed=1）下做 JS 层的 UI 微调（隐藏音效按钮、输入框拖拽手柄）
- *   2. 普通模式下，通过 OwChat.onRoomEdit 在群聊信息面板追加「嵌入代码」入口
- *      —— 仅群主/超级管理员可见，点击弹出 iframe 代码
+ *   1. 嵌入模式（?embed=1）：UI 微调（隐藏音效按钮/拖拽手柄）+ 嵌入令牌引导
+ *      + Cookie 不到场的「恢复连接」兜底
+ *   2. 普通模式：通过 OwChat.onRoomEdit 在群聊信息面板追加「嵌入代码」入口
+ *      —— 仅群主/超级管理员可见，点击签发令牌并弹出 iframe 代码
  *
  * 兼容约束：仅用 var / function，无箭头函数、const、let、fetch。
  *
- * v1.1.0（2026-10-12）：
- *   - 生成的 iframe 代码改响应式：桌面 380×560，窄屏 max-width/max-height 自动收窄，
- *     dvh 渐进增强（老内核忽略第二条声明回退 vh），手机上不再溢出屏幕；
- *   - 幂等标记 __haRoomEmbedLoaded → __owRoomEmbedLoaded（与 Owlsgo 品牌命名对齐）；
- *   - iframe 投影色属「外部站点装饰」（粘贴到没有 --ow-* 变量的第三方页面），就地注释例外。
- * v1.1.1（2026-10-12）：
- *   - 新增跨站嵌入的 Cookie 不到场检测与恢复：浏览器拦下 iframe 的 Set-Cookie 时
- *     （SameSite=Lax 不允许在第三方上下文落地），所有 action 会 403「签名验证失败」。
- *     探测失败后在嵌入页顶部给出「恢复连接」按钮：点击申请 Storage Access
- *     （Safari 弹窗征求同意，授权后重载即恢复）；失败或不支持时给出「在主站打开」入口。
- *   - 生成的 iframe 代码加 allow="storage-access"（Storage Access 权限策略，嵌入页需显式允许）。
+ * v1.1.0（2026-10-12）：iframe 代码响应式（max-width/max-height + dvh 渐进增强）；
+ *   幂等标记统一为 __owRoomEmbedLoaded；iframe 投影色属外部站点装饰（就地注释例外）。
+ * v1.1.1：跨站嵌入的 Cookie 不到场检测与 Storage Access 恢复引导。
+ * v1.2.0（2026-10-12）：嵌入令牌——跨站 iframe 无 cookie 时的完全修复：
+ *   - 嵌入码带 embed_token；核心 init 首波请求由 main.php 在 <head> 注入的 XHR 预打包
+ *     脚本带令牌（本脚本加载太晚，赶不上首波），本脚本再包一层 OwApi 双保险；
+ *   - 令牌不从地址栏抹除（第三方 iframe 的 localStorage 可能被拦，URL 是重载后唯一可靠来源）；
+ *   - 「嵌入代码」点击改为先签发令牌（OwApi.secure，敏感操作）再展示代码；
+ *   - 探测请求同样带令牌：令牌有效则无提示条；失效/缺失才走 v1.1.1 的恢复引导。
  */
 (function () {
     var w = window;
@@ -41,20 +40,61 @@
         } else {
             document.addEventListener('DOMContentLoaded', trimEmbedUI);
         }
-        embedGuard();   // 跨站嵌入的 Cookie 不到场检测与恢复引导
+        embedTokenBoot();   // v1.2.0：令牌引导（跨站无 cookie 时顶替签名门禁）
+        embedGuard();       // 兜底：无令牌/令牌失效时的恢复引导
         return;
     }
 
-    /* ---------- 嵌入模式：跨站 iframe 的 Cookie 不到场检测与恢复 ----------
-       根因（2026-10-12 实测）：跨站嵌入时，浏览器会拒绝存储在第三方 iframe 里下发的
-       Set-Cookie（本站会话 cookie 是 SameSite=Lax，不允许在第三方上下文落地），
-       iframe 内每个请求都是新会话 → 页面里烘的签名 key 永远对不上 → 全站 action 403。
-       主程序侧的正解是把 cookie 改成 SameSite=None;Secure（属核心安全设计，插件不动），
-       插件能做的只有两件事：
-         ① 探测到该场景时给一句人话 + 「恢复连接」按钮 —— 点击申请 Storage Access，
-            Safari 会弹窗征求同意，授权后重载，cookie 即可正常落地；
-         ② 授权失败/浏览器不支持时，给「在主站打开」的出口，不再无声地 403。
-       探测用 OwApi.sign() 现算签名后走裸 XHR（不借用 OwApi.post，避开它的自动刷新逻辑）。 */
+    /* ---------- 嵌入模式：嵌入令牌（v1.2.0） ----------
+       跨站 iframe 被浏览器拦下会话 Cookie 时，页面烘的签名 key 永远对不上（全站 403）。
+       嵌入码内的令牌经 OwApi 随每个请求附带，服务端经 sign.fallback 钩子校验后放行，
+       并按「令牌 + 访客标识」解析出稳定游客身份（无 cookie 依赖，每访客一身份）。
+       令牌/访客标识读取顺序：URL → localStorage 兜底。**不抹地址栏参数**——第三方 iframe 里
+       localStorage 可能被浏览器一并拦掉（setItem 直接抛 SecurityError），URL 是重载后
+       唯一可靠来源；跨站 referrer 默认策略只传 origin，查询串不会外泄给父站点。
+       注意：核心 init 的首批请求早于本脚本加载，那波由 main.php 在 <head> 里注入的
+       XHR 预打包脚本负责带令牌；这里的 OwApi 包装覆盖其后所有调用（双保险，幂等防重）。 */
+    var OW_RE_TOK_KEY = 'ow_embed_token';
+    var EMBED_TOKEN = '';
+    var EMBED_VISITOR = '';
+    function embedTokenBoot() {
+        var m = /[?&]embed_token=([a-f0-9]{32})/.exec(w.location.search);
+        var v = /[?&]embed_visitor=([a-z0-9]{4,16})/.exec(w.location.search);
+        if (m) {
+            EMBED_TOKEN = m[1];
+            try { w.localStorage.setItem(OW_RE_TOK_KEY, EMBED_TOKEN); } catch (e) {}
+        } else {
+            try { EMBED_TOKEN = w.localStorage.getItem(OW_RE_TOK_KEY) || ''; } catch (e) {}
+        }
+        EMBED_VISITOR = v ? v[1] : '';
+        if (EMBED_TOKEN) wrapOwApiToken(EMBED_TOKEN, EMBED_VISITOR);
+    }
+    function wrapOwApiToken(tok, vis) {
+        function inject(data) {
+            data = data || {};
+            if (!data.embed_token) data.embed_token = tok;
+            if (vis && !data.embed_visitor) data.embed_visitor = vis;
+            return data;
+        }
+        // ⚠️ 必须 .call(this, …)：原方法内部用 this.sign()/this.post()，裸调会把 this 丢成
+        // undefined（严格模式下 this.sign 直接 TypeError，history/poll 全部发不出）。
+        var origPost = w.OwApi.post, origUpload = w.OwApi.upload, origSecure = w.OwApi.secure;
+        w.OwApi.post = function (action, data, cb) { return origPost.call(this, action, inject(data), cb); };
+        w.OwApi.upload = function (action, file, extra, cb) {
+            if (typeof extra === 'function') { cb = extra; extra = null; }
+            return origUpload.call(this, action, file, inject(extra), cb);
+        };
+        w.OwApi.secure = function (action, data, cb) { return origSecure.call(this, action, inject(data), cb); };
+    }
+
+    /* ---------- 嵌入模式：Cookie 不到场检测与恢复（v1.1.1，令牌无效时才亮） ----------
+       根因：跨站嵌入时浏览器拒绝存储第三方 iframe 里下发的 Set-Cookie（会话 cookie 是
+       SameSite=Lax，不允许在第三方上下文落地），iframe 内每个请求都是新会话 →
+       签名对不上 → 全站 action 403。有有效令牌时探测直接通过，本提示条不出现。
+       插件能做的：探测失败后给出「恢复连接」按钮（Storage Access，Safari 路径），
+       失败/不支持时给「在主站打开」的出口，不再无声地 403。
+       探测用 OwApi.sign() 现算签名后走裸 XHR（避开 OwApi.post 的自动刷新逻辑），
+       并随身附带嵌入令牌——否则令牌有效也会被误判。 */
     function embedGuard() {
         var FLAG = 'ow_embed_sa_tried';
         function tried() {
@@ -76,7 +116,12 @@
                 try { r = JSON.parse(x.responseText); } catch (e) {}
                 if (r && r.msg && r.msg.indexOf('签名验证失败') >= 0) showBar();
             };
-            x.send('ts=' + s.ts + '&sign=' + s.sign);
+            var body = 'ts=' + s.ts + '&sign=' + s.sign;
+            if (EMBED_TOKEN) {
+                body += '&embed_token=' + EMBED_TOKEN;
+                if (EMBED_VISITOR) body += '&embed_visitor=' + EMBED_VISITOR;
+            }
+            x.send(body);
         }
         function openInSite() {
             var base = (w.OwChat.cfg && w.OwChat.cfg.site_url) ? w.OwChat.cfg.site_url : '';
@@ -128,25 +173,50 @@
 
     /* ---------- 普通模式：群聊信息面板追加「嵌入代码」入口 ---------- */
     w.OwRoomEmbed = {
+        /** 先签发嵌入令牌（敏感操作，一次性票据），成功再展示代码 */
+        ensureToken: function (roomId, roomName) {
+            OwApi.secure('plugin_room_embed_token', { room_id: roomId }, function (r) {
+                if (!r.ok) { toast(r.msg || '签发嵌入令牌失败'); return; }
+                w.OwRoomEmbed.showCode(roomId, roomName, r.token, r.expires_at);
+            });
+        },
+
         /** 生成并展示嵌入代码 */
-        showCode: function (roomId, roomName) {
+        showCode: function (roomId, roomName, token, expiresAt) {
             var base = (w.OwChat.cfg && w.OwChat.cfg.site_url) ? w.OwChat.cfg.site_url : '';
-            var src = base + '/?page=chat&room=' + roomId + '&embed=1';
+            var src = base + '/?page=chat&room=' + roomId + '&embed=1'
+                + (token ? '&embed_token=' + token + '&embed_visitor=' : '');
             // ⚠️ 例外（PLUGIN.md「图像像素」类）：本串是粘贴到**外部站点**运行的代码，
             // 外部页面没有 --ow-* 变量体系，投影/圆角按外部站点装饰写死，不随本站主题变化。
-            var code = '<iframe src="' + src + '" width="380" height="560" frameborder="0" title="聊天室" '
-                + 'allow="storage-access" '
-                + 'style="position:fixed;bottom:20px;right:20px;z-index:99999;overflow:hidden;'
+            // 访客标识在**父页面**（第一方）localStorage 铸造后随 iframe URL 带上——
+            // 第三方 iframe 自己的存储可能被浏览器拦掉，父页面不会；每个访客因此有稳定身份。
+            var style = 'position:fixed;bottom:20px;right:20px;z-index:99999;overflow:hidden;'
                 + 'width:380px;max-width:calc(100vw - 24px);'
                 + 'height:560px;max-height:calc(100vh - 40px);max-height:calc(100dvh - 40px);'
-                + 'border:none;border-radius:10px;box-shadow:0 4px 24px rgba(0,0,0,.18)"></iframe>';
+                + 'border:none;border-radius:10px;box-shadow:0 4px 24px rgba(0,0,0,.18)';
+            var code = '<div id="owlsgo-chat"></div>\n'
+                + '<script>\n'
+                + '(function(){var k="owlsgo_embed_visitor",v="";\n'
+                + 'try{v=window.localStorage.getItem(k)||"";}catch(e){}\n'
+                + 'if(!/^[a-z0-9]{4,16}$/.test(v)){v=Math.random().toString(16).slice(2,10);'
+                + 'try{window.localStorage.setItem(k,v);}catch(e){}}\n'
+                + 'var f=document.createElement("iframe");\n'
+                + 'f.src="' + src + '"+v;\n'
+                + 'f.width="380";f.height="560";f.frameBorder="0";f.title="聊天室";f.allow="storage-access";\n'
+                + 'f.style.cssText="' + style + '";\n'
+                + 'document.getElementById("owlsgo-chat").appendChild(f);})();\n'
+                + '<\/script>';
 
             var html = '<h3>嵌入代码</h3>'
                 + '<p style="color:var(--ow-text-sub,#999);font-size:13px;margin:0 0 10px">将以下代码粘贴到网站 HTML 的合适位置，右下角即出现聊天室。</p>'
                 + '<div class="ow-form-item">'
                 + '<label>群聊：' + escHtml(roomName || ('#' + roomId)) + '</label>'
-                + '<textarea id="owEmbedCode" class="ow-input" rows="6" readonly style="width:100%;resize:vertical;font-family:var(--ow-mono,Consolas,monospace);font-size:12px">' + escHtml(code) + '</textarea>'
+                + '<textarea id="owEmbedCode" class="ow-input" rows="8" readonly style="width:100%;resize:vertical;font-family:var(--ow-mono,Consolas,monospace);font-size:12px">' + escHtml(code) + '</textarea>'
                 + '</div>'
+                + (token
+                    ? '<p style="color:var(--ow-text-sub,#999);font-size:12px;margin:0 0 10px">代码内含嵌入令牌（有效期至 '
+                      + fmtDate(expiresAt) + '）：浏览器拦截第三方 Cookie 的跨站场景下靠它维持连接，每位访客会自动获得独立身份（可单独禁言），权力等同该群访客。请勿公开粘贴完整代码，怀疑泄露可到后台「群聊嵌入」页吊销；再次点击「嵌入代码」会换发新令牌，旧代码立即失效。</p>'
+                    : '')
                 + '<div class="ow-form-row" style="gap:8px">'
                 + '<button class="ow-btn ow-btn-primary" onclick="OwRoomEmbed.copy()">复制代码</button>'
                 + '<button class="ow-btn ow-btn-ghost" onclick="OwChat.closeModal()">关闭</button>'
@@ -176,6 +246,12 @@
         return d.innerHTML;
     }
 
+    function fmtDate(ts) {
+        if (!ts) return '—';
+        var d = new Date(ts * 1000);
+        return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+    }
+
     w.OwChat.onRoomEdit(function (ctx) {
         // 仅群主 / 超级管理员可见嵌入入口
         if (!ctx.isOwner && !ctx.isAdmin) return;
@@ -198,7 +274,7 @@
             + '<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>'
             + '</svg><span class="ow-panel-entry-t">嵌入代码</span>'
             + '<span class="ow-panel-entry-arrow">›</span>';
-        row.onclick = function () { w.OwRoomEmbed.showCode(ctx.roomId, name); };
+        row.onclick = function () { w.OwRoomEmbed.ensureToken(ctx.roomId, name); };
         row.onkeydown = function (e) {
             e = e || w.event;
             if (e.keyCode === 13 || e.keyCode === 32) { e.preventDefault ? e.preventDefault() : (e.returnValue = false); row.onclick(); }
