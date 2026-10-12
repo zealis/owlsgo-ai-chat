@@ -1,6 +1,6 @@
 <?php
 /**
- * 群聊嵌入插件（room-embed）v1.1.0
+ * 群聊嵌入插件（room-embed）v1.1.1
  *
  * 功能：
  *   - 群主/管理员可在「群聊信息」面板获取该群的 iframe 嵌入代码
@@ -24,6 +24,13 @@
       且 ≤720px 窄iframe 里 rail 仍是左侧 52px 图标条。已一并隐藏，嵌入态只留主区。
  *   4. 顶栏在嵌入态压高（57→44px）；生成给外部站点的 iframe 代码改响应式
  *      （max-width/max-height + dvh 渐进增强），手机上不再溢出屏幕。
+ * v1.1.1（2026-10-12）：
+ *   5. 跨站嵌入的浏览器 Cookie 不到场（SameSite=Lax 不允许在第三方 iframe 里落地，
+ *      实测 Chrome 直接拒绝存储 iframe 的 Set-Cookie → 每个请求新会话 → 全站 action 403）。
+ *      主程序侧正解是改 cookie 属性（SameSite=None;Secure，属核心安全设计，不动）；
+ *      插件层新增「恢复连接」引导：探测到 403 签名失败时显示提示条，点击申请
+ *      Storage Access（Safari 弹窗授权后重载即恢复），失败/不支持时给「在主站打开」出口。
+ *      生成的 iframe 代码同步加 allow="storage-access" 权限策略。
  */
 if (!defined('OWLSGO_VERSION')) exit;
 
@@ -63,6 +70,13 @@ Plugin::on('page.head', function (): void {
 /* 嵌入态弹窗（如「是否加入群聊」确认、头像设置）：核心弹窗在 ≤720px 已自适应，这里只兜个上限 */
 .ow-modal{width:92%!important;max-width:360px!important}
 .ow-ctx-menu{font-size:12px!important}
+/* Cookie 不到场时的「恢复连接」提示条（room-embed v1.1.1）：
+   复用核心 .ow-notice ow-notice-warn 警示条（配色走 --ow-warn-* / --ow-yellow 令牌），
+   只补 flex 布局与按钮不拉伸；注入位置在 .ow-inputbar 之前，不挡消息区 */
+.ow-embed-guard{display:flex;display:-webkit-flex;align-items:center;-webkit-align-items:center;
+  gap:8px;flex-wrap:wrap;-webkit-flex-wrap:wrap;margin:0 8px 6px;font-size:12px;line-height:1.6}
+.ow-embed-guard-t{flex:1;-webkit-flex:1;min-width:0}
+.ow-embed-guard-b{flex-shrink:0;-webkit-flex-shrink:0;font-size:12px;padding:5px 12px;text-decoration:none}
 /* 嵌入页背景与外层站点融合 */
 body.ow-chat-body{background:var(--ow-bg,#fff)!important}
 </style>
@@ -90,7 +104,7 @@ Plugin::adminPage('room-embed', '群聊嵌入', function () {
         . '<li>仅<strong>公开群聊</strong>可被嵌入；密码群/角色限定群/不公开群嵌入后访客无法进入</li>'
         . '<li>嵌入页面依赖主站会话，若访客未登录将以游客身份参与（需开启游客浏览/发言）</li>'
         . '<li>嵌入代码为响应式尺寸（桌面 380×560，窄屏自动收窄撑满宽度且不超出屏幕高度），无需按设备分别配置</li>'
-        . '<li>个别浏览器（如 Safari）默认拦截第三方 Cookie，嵌入页中的登录态可能不生效，访客将以游客身份参与</li>'
+        . '<li><strong>跨站嵌入的浏览器限制</strong>：部分浏览器（Safari、严格模式的 Chrome）不允许第三方页面里的 iframe 保存本站会话，表现为聊天界面所有操作提示「签名验证失败」。此时嵌入页会显示「恢复连接」按钮——点击后按浏览器提示授权即可恢复（Safari 有效）；若仍无法恢复，请改用主站访问。彻底支持需主程序调整会话 Cookie 属性，不在本插件能力范围内</li>'
         . '</ul>'
         . '</div>';
 });
