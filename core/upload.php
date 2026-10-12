@@ -257,6 +257,36 @@ class Upload
 
 
     /**
+     * 校验一个「本站上传目录里的媒体地址」是否真的存在（v1.3.86 图文混排用）。
+     *
+     * 与 fileAbs() 同一套防穿越口径，只是允许的目录更宽：混排消息里既有图片（image）
+     * 也可能有视频（file）。**只认本站目录**——消息内容里不能塞外站地址，
+     * 否则等于让每个成员的浏览器去加载任意 URL（追踪像素 / 内容说换就换）。
+     *
+     * @return string|null 通过返回**相对上传目录**的路径（如 `image/1a/1a3f….webp`，即去掉站点地址
+     *                     与 uploads/ 前缀后的那段，与 fileAbs()/purgeExpired 用的同一形态），否则 null
+     */
+    public static function mediaRel(string $url): ?string
+    {
+        $u = trim($url);
+        if ($u === '' || strlen($u) > 500) return null;
+        $base = rtrim(ow_site_url(true), '/');
+        if ($base !== '' && stripos($u, $base . '/') === 0) $u = substr($u, strlen($base) + 1);
+        $u = str_replace('\\', '/', ltrim($u, '/'));
+        // 再剥一层「上传目录的 URL 前缀」（配置里是 uploads；站点挂在子目录时 base 已经吃掉那段）：
+        // 消息里存的是 https://站点/uploads/image/... ，而 $dir 本身就指向那个 uploads 目录，
+        // 不剥这一层的话 realpath(dir . '/uploads/image/...') 必然落空 —— 每条混排消息都会被拒。
+        $pref = trim((string)(self::$cfg['url'] ?? ''), '/');
+        if ($pref !== '' && stripos($u, $pref . '/') === 0) $u = substr($u, strlen($pref) + 1);
+        if (strpos($u, '..') !== false) return null;
+        if (!preg_match('#^(image|sticker|avatar|file)/[A-Za-z0-9_\-./]+\.(jpg|jpeg|png|gif|webp|bmp|mp4|webm|mov|m4v|ogv|mp3|wav)$#i', $u)) return null;
+        $abs = realpath(self::$cfg['dir'] . '/' . $u);
+        $root = realpath(self::$cfg['dir']);
+        if ($abs === false || $root === false || strpos($abs, $root) !== 0) return null;
+        return is_file($abs) ? $u : null;
+    }
+
+    /**
      * 由消息里的相对路径解析出可下载的绝对路径（阻断路径穿越）
      * @return string|null
      */

@@ -661,6 +661,43 @@ class Chat
         Plugin::fire('text.filter', [&$text, $scene, $actor]);
     }
 
+    /**
+     * 图文混排消息（type=rich）的形态校验与拆分（v1.3.86）。
+     *
+     * 前端送来的是 `{"text":"…","media":[{"url":"uploads/image/…","kind":"image"},…]}`。
+     * 为什么要这个类型：用户要的是「一段话配几张图」**在同一条消息里** ——
+     * 拆成多条发出去，引用、删除、撤回、看记录的人都要逐条操作，图文关系也断了。
+     *
+     * 四条硬约束（请求可以绕过前端直接打 send，所以服务端必须自己判）：
+     *  · url 必须是本站 uploads/ 下**真实存在**的文件（`Upload::mediaRel`），外站一律否；
+     *  · 媒体最多 9 个 —— 与输入框待发区的上限同值，两边各拦一次；
+     *  · kind 只允许 image / video，其它一律按文件走（不进混排）；
+     *  · 文字与媒体至少要有一个非空，否则是空消息。
+     *
+     * @return array{0:bool,1:string,2:string,3:array} [是否通过, 失败原因, 文字, 媒体数组]
+     */
+    public static function normalizeRich(string $content): array
+    {
+        $j = json_decode($content, true);
+        if (!is_array($j)) return [false, '混排消息格式不正确', '', []];
+        $text = trim((string)($j['text'] ?? ''));
+        if (mb_strlen($text) > 2000) return [false, '消息过长（最多 2000 字）', '', []];
+        $media = [];
+        $raw = isset($j['media']) && is_array($j['media']) ? $j['media'] : [];
+        if (count($raw) > 9) return [false, '一次最多发送 9 个图片/视频', '', []];
+        foreach ($raw as $m) {
+            if (!is_array($m)) return [false, '混排消息里的媒体项不正确', '', []];
+            $kind = (string)($m['kind'] ?? '');
+            if (!in_array($kind, ['image', 'video'], true)) return [false, '混排消息只支持图片和视频', '', []];
+            $rel = Upload::mediaRel((string)($m['url'] ?? ''));
+            if ($rel === null) return [false, '混排消息里的文件无效或已被删除', '', []];
+            // 存相对路径（uploads/ 下）：换域名 / 换协议时，历史消息不会跟着一起失效
+            $media[] = ['url' => 'uploads/' . $rel, 'kind' => $kind];
+        }
+        if ($text === '' && !$media) return [false, '消息不能为空', '', []];
+        return [true, '', $text, $media];
+    }
+
     // ---------- 发送消息 ----------
     public static function send(array $actor, int $roomId, string $type, string $content, array $opt = []): array
     {
@@ -748,10 +785,18 @@ class Chat
         // 「发到谁」由上面 $isDm 分支的 room_id/to_* 决定，两者互不干扰。
         if ($type === 'text' && preg_match('/(^|\s)@[^\s@]+/u', $content)) {
             $type = 'mention';
-        } elseif (!in_array($type, ['text', 'image', 'file', 'system'], true)) {
+        } elseif (!in_array($type, ['text', 'image', 'file', 'system', 'rich'], true)) {
             $type = 'text';
         }
-        if ($type === 'file') {
+        if ($type === 'rich') {
+            // 图文混排（v1.3.86）：一条消息里文字 + 最多 9 个本站图片/视频。
+            // ⚠️ 敏感词只过滤**文字那一段**：整串 JSON 一起过会把替换成的 *** 写进 url，
+            // 消息存进去就是一条打不开的破图 —— 先拆、过滤、再拼回去。
+            [$okR, $msgR, $rText, $rMedia] = self::normalizeRich($content);
+            if (!$okR) return [false, $msgR];
+            self::filterText($rText, 'message', $actor);
+            $content = json_encode(['text' => $rText, 'media' => $rMedia], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        } elseif ($type === 'file') {
             // 文件消息 content 是 JSON：只允许 name/size/ext/path 四个字段，
             // 且 path 必须来自上传接口返回（Upload::fileAbs 会再校验一次）
             $info = json_decode($content, true);
@@ -1683,6 +1728,16 @@ class Chat
     {
         $t = (string)$m['type'];
         if ($t === 'image') return '[图片]';
+        if ($t === 'rich') {
+            // 混排消息的摘要：有文字就用文字打头，纯媒体就退回「[图片]」。
+            // 不这么处理，会话列表那一行会直接把 JSON 抖给用户看。
+            $j = json_decode((string)$m['content'], true);
+            $txt = trim((string)(is_array($j) ? ($j['text'] ?? '') : ''));
+            $n = is_array($j) && isset($j['media']) && is_array($j['media']) ? count($j['media']) : 0;
+            // 不写「×N」：整行摘要本来就是动态文字，语言包按整句精确匹配，
+            // 掺进计数只会让英文界面冒出一句带中文标签的串
+            return $txt !== '' ? mb_substr($txt, 0, 60) : ($n > 0 ? '[图片]' : '');
+        }
         if ($t === 'file') {
             $info = json_decode((string)$m['content'], true);
             return '[文件] ' . (is_array($info) ? (string)($info['name'] ?? '') : '');
@@ -1961,9 +2016,12 @@ class Chat
      * 站点不提供聊天记录导出，故到期即物理清除——**无法恢复**，这是有意为之：
      * 保留期是站点对「留多久」的明确承诺，留着超期数据等于承诺落空。
      *
-     * 附件处理：消息行删除前先取出其 file 类型消息的 path，删行后同步 unlink 磁盘文件
-     * （图片/头像/贴纸不动 —— 那些可能被收藏贴纸引用，生命周期与消息不同）。
+     * 附件处理：消息行删除前先取出 file 消息的 path 与 rich 消息里的**视频**（v1.3.86 起
+     * 视频也存在 uploads/file/ 下，与文件同一份存储、同一套到期口径），删行后同步 unlink。
+     * 图片/头像/贴纸不动 —— 那些可能被收藏贴纸引用，生命周期与消息不同。
      * 删除只对 uploads/file/ 下的路径生效，且经 fileAbs() 二次校验（阻断路径穿越）。
+     * ⚠️ 文件按内容哈希命名，同一份物理文件可被多条消息共用；因此 unlink 前要确认
+     * 没有别的消息还在引用它，否则就是删掉一条消息、抽走另一条消息的地基。
      *
      * 安全：逐条 DELETE 而非大范围 WHERE，避免一次锁表；
      * 单条失败只跳过该条（记入日志），绝不影响读消息主流程。
@@ -1988,17 +2046,60 @@ class Chat
 
             $msgs = 0; $files = 0; $paths = [];
             foreach ($rows as $m) {
+                $ty = (string)$m['type'];
                 // 先收集附件路径：删行之后 content 就没了，必须在删除前提取。
-                if ((string)$m['type'] === 'file') {
+                if ($ty === 'file') {
                     $info = json_decode((string)$m['content'], true);
                     if (is_array($info) && !empty($info['path'])) $paths[] = (string)$info['path'];
+                } elseif ($ty === 'rich') {
+                    // v1.3.86：混排消息里的**视频**也存在 uploads/file/ 下，所以它跟着这条消息一起到期。
+                    // 图片不在这里收 —— uploads/image/ 本来就只随记录留、不进磁盘清理
+                    // （image 消息今天也是这样），别在这一处顺手改图片的保留口径。
+                    $j = json_decode((string)$m['content'], true);
+                    $md = is_array($j) && is_array($j['media'] ?? null) ? $j['media'] : [];
+                    foreach ($md as $one) {
+                        $u = (string)(is_array($one) ? ($one['url'] ?? '') : '');
+                        if ((string)(is_array($one) ? ($one['kind'] ?? '') : '') === 'video' && strpos($u, 'uploads/file/') === 0) {
+                            $paths[] = substr($u, strlen('uploads/'));
+                        }
+                    }
                 }
                 if (DB::run('DELETE FROM messages WHERE id=?', [(int)$m['id']])) $msgs++;
             }
 
             // 附件文件同步清理：只删 uploads/file/ 下、经 fileAbs 二次校验的路径。
             // 校验失败就跳过（宁可留垃圾文件，也不能让一条脏数据指向 uploads 外的文件）。
+            //
+            // ⚠️ 删之前必须问一句「还有别的消息在用这个文件吗」：文件按内容哈希命名，
+            // 同一段视频可能被 A 当**文件**发、又被 B 塞进**混排消息**（还可能是重发的同图）。
+            // 刚删掉的这条已经不在计数里，所以查得到就说明另有活消息 —— 那时只删记录、留文件。
+            // 少了这一问，90 天到期就会把别人消息里的视频抽走（且不可恢复）。
+            // 一次查一批而不是每个文件扫一遍全表：一轮最多 500 个待删路径，
+            // 逐条 LIKE 就是 500 次全表扫描，这个函数是在页面请求里顺带跑的。
+            $alive = [];
+            $stems = [];
+            $stemOf = [];
             foreach (array_unique($paths) as $rel) {
+                $s = (string)preg_replace('/\.[A-Za-z0-9]{1,8}$/', '', basename($rel));
+                if ($s !== '' && preg_match('/^[A-Za-z0-9_\-]{6,80}$/', $s)) {
+                    $stemOf[$rel] = $s;
+                    $stems[$s] = 1;
+                }
+            }
+            if (!empty($stems)) {
+                foreach (array_chunk(array_keys($stems), 50) as $chunk) {
+                    $ors = []; $binds = [];
+                    foreach ($chunk as $s) { $ors[] = 'content LIKE ?'; $binds[] = '%/' . $s . '.%'; }
+                    // 斜杠在 JSON 里可能写成 \/，所以匹配串带着前导 / 也照样命中（\/xxx.mp4 含 /xxx.mp4）
+                    foreach (DB::all("SELECT content FROM messages WHERE type IN ('file','rich') AND ("
+                        . implode(' OR ', $ors) . ')', $binds) as $r) {
+                        $c = (string)$r['content'];
+                        foreach ($chunk as $s) { if (strpos($c, '/' . $s . '.') !== false) $alive[$s] = 1; }
+                    }
+                }
+            }
+            foreach (array_unique($paths) as $rel) {
+                if (isset($alive[$stemOf[$rel] ?? ''])) continue;
                 $abs = Upload::fileAbs($rel);
                 if ($abs && @unlink($abs)) $files++;
             }

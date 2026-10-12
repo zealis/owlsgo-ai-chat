@@ -45,7 +45,9 @@ function owATDefaultConfig(): array
         // 正常连发够用，脚本刷盘会撞限。
         'rate_mb' => '60',
         // v1.3.13：默认白名单补上一般图片格式 —— 头像上传也走这张表
-        'exts'    => 'jpg,jpeg,png,gif,webp,bmp,zip,rar,7z,pdf,txt,md,doc,docx,xls,xlsx,ppt,pptx,mp3,mp4',
+        // v1.3.86：再加 webm —— 「以视频方式发送」要能在聊天里直接播，
+        //        mp4 与 webm 是浏览器原生支持的两种容器（webm 本来就在安全表里，只是没进默认串）
+        'exts'    => 'jpg,jpeg,png,gif,webp,bmp,zip,rar,7z,pdf,txt,md,doc,docx,xls,xlsx,ppt,pptx,mp3,mp4,webm',
         // v1.2.0：图片压缩（WebP 有损转换）。总开关默认关闭 = 原图直存，与旧行为一致。
         // v1.3.0：细分开关 —— 总开关开启后，各自决定是否压缩（默认全开）。
         'compress'         => '0',
@@ -474,6 +476,13 @@ function owAM_refCount(string $pathOrUrl, int $excludeMsgId = 0): int
         "SELECT COUNT(*) FROM messages WHERE id<>? AND type='image' AND content LIKE ?",
         [$excludeMsgId, $needle]
     );
+    // v1.3.86：图文混排消息把媒体地址埋在 content 的 JSON 里（媒体可能是 uploads/file/ 下的视频）。
+    // 漏算它 = 管理员删掉一条**文件**消息时，把某条混排消息正在引用的同一段视频 unlink 掉，
+    // 那条消息从此只播得出一半 —— 与 v1.3.82 的贴纸误删是同一个坑，只是换了张表。
+    $n += (int)DB::val(
+        "SELECT COUNT(*) FROM messages WHERE id<>? AND type='rich' AND content LIKE ?",
+        [$excludeMsgId, $needle]
+    );
     // v1.3.82：还有一类引用者不在 messages 里 —— **收藏成贴纸的图**。
     // stickers 只存一个 URL，没有自己的文件，所以「这条图片消息没人用了」并不等于
     // 「这个文件没人用了」：只要有人收藏过，unlink 掉就是把他人的贴纸撕了，
@@ -636,6 +645,10 @@ Plugin::on('page.head', function () {
 });
 
 Plugin::asset('js', 'attachment-manager/chat.js');
+// 前台样式（待发区 / 拖拽高亮 / 二选一弹窗）：跟 chat.js 一起登记，
+// 由上面那条 page.head 的 <link> 合并输出 —— 样式写死在 owlsgo.css 里
+// 会让插件停用时留下一堆没人用的规则（gif-stickers 在 v1.3.78 踩过同样的坑）。
+Plugin::asset('css', 'attachment-manager/style.css');
 
 
 /** 管理员鉴权：插件路由的公共守卫 */

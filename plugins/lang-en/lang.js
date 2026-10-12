@@ -198,7 +198,6 @@
         '当前浏览器无法处理图片，请更换浏览器': 'This browser cannot process images — try another one',
         '上传失败，请重试': 'Upload failed, please retry',
         '文件上传中…': 'Uploading file…',
-        '图片上传中…': 'Uploading image…',
         '上传中…': 'Uploading…',
         '保存中…': 'Saving…',
         '搜索中…': 'Searching…',
@@ -373,6 +372,14 @@
         '非法用户': 'Invalid user',
         '未接收到文件': 'No file received',
         '文件不存在': 'File not found',
+        /* 图文混排消息的服务端校验（Chat::normalizeRich，v1.3.86） */
+        '混排消息格式不正确': 'That mixed message is not well-formed',
+        '混排消息里的媒体项不正确': 'A media item in that mixed message is invalid',
+        '混排消息只支持图片和视频': 'Mixed messages support images and videos only',
+        '混排消息里的文件无效或已被删除': 'A file in that message is invalid or has been deleted',
+        '一次最多发送 9 个图片/视频': 'Up to 9 images or videos per message',
+        '消息过长（最多 2000 字）': 'Message too long (2000 characters max)',
+        '消息不能为空': 'Message cannot be empty',
         '请选择 zip 文件': 'Choose a zip file',
         '远程链接需以 https:// 开头': 'Remote links must start with https://',
         '本站强制 HTTPS，请通过 https:// 地址重试': 'This site requires HTTPS — retry over an https:// address',
@@ -598,7 +605,22 @@
         '服务器未启用 PHP mail() 函数': 'PHP mail() is not enabled on this server',
         '配置不完整': 'Configuration incomplete',
         '请检查发件地址与 SMTP 参数': 'Check the sender address and the SMTP parameters',
-        '邮件发送失败：': 'Sending failed: '
+        '邮件发送失败：': 'Sending failed: ',
+
+        /* ---------- 图文混排：待发区 + 拖拽二选一（attachment-manager v1.3.86） ---------- */
+        '怎么发送这些文件？': 'How should these files be sent?',
+        '以图片方式发送': 'Send as images',
+        '以视频方式发送': 'Send as video',
+        '以文件方式发送': 'Send as files',
+        '直接出现在聊天里，支持图文混排，辅助表达更清晰。': 'They appear inline in the chat and mix with your text — clearer than a download link.',
+        '直接出现在聊天里可播放，可与文字一起发。': 'It plays right in the chat, and can go out together with your text.',
+        '保留格式与文件名，便于识别和管理（不压缩）。': 'Keeps the original format and file name — nothing is compressed.',
+        '移除': 'Remove',
+        '视频': 'Video',
+        '一次最多 9 个图片/视频': 'Up to 9 images or videos per message',
+        '还有文件在上传，请稍候': 'Still uploading — one moment',
+        '上传失败': 'Upload failed',
+        '[图片]': '[Image]'
     };
 
     w.OwI18n.register('en', 'English', dict);

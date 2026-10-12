@@ -1,0 +1,96 @@
+/**
+ * attachment-manager · 前台样式（v1.3.86 图文混排）
+ *
+ * 三块：待发区（.ow-pend，输入框上方）、拖拽时的落点高亮（.ow-drop-on）、
+ * 「怎么发送这些文件」二选一弹窗（.ow-pick）。
+ * 底色/描边一律走核心令牌，深色模式要跟着翻；ES5 时代的 -webkit- 前缀补齐
+ * （本站 JS 只写 ES5，CSS 也按同样的保守口径来）。
+ */
+
+/* ---------- 待发区：紧贴输入框上沿，媒体在上、文字输入在下 ---------- */
+.ow-pend {
+    display: -webkit-flex; display: flex;
+    -webkit-flex-wrap: wrap; flex-wrap: wrap;
+    -webkit-align-items: flex-start; align-items: flex-start;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+.ow-pend-item {
+    position: relative;
+    width: 64px; height: 64px;
+    border: 1px solid var(--ow-border);
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--ow-bg);
+    flex-shrink: 0; -webkit-flex-shrink: 0;
+}
+.ow-pend-item img, .ow-pend-item video {
+    width: 100%; height: 100%; object-fit: cover; display: block;
+}
+/* 没有可显示的预览（视频载不出首帧、浏览器不支持 object URL）时兜一个类型字样，
+   避免出现一个纯白空格子——用户会以为文件丢了 */
+.ow-pend-kind {
+    display: -webkit-flex; display: flex;
+    -webkit-align-items: center; align-items: center;
+    -webkit-justify-content: center; justify-content: center;
+    width: 100%; height: 100%;
+    font-size: 12px; color: var(--ow-text-sub);
+}
+/* 还在上传：缩略图压暗 + 转圈，避免用户以为已经传完就直接点发送 */
+.ow-pend-item.is-busy img, .ow-pend-item.is-busy video { opacity: .35; }
+.ow-pend-item.is-busy::after {
+    content: '';
+    position: absolute; left: 50%; top: 50%;
+    width: 16px; height: 16px; margin: -8px 0 0 -8px;
+    border: 2px solid var(--ow-border-control);
+    border-top-color: transparent;
+    border-radius: 50%;
+    -webkit-animation: owPendSpin .8s linear infinite; animation: owPendSpin .8s linear infinite;
+}
+@-webkit-keyframes owPendSpin { to { -webkit-transform: rotate(360deg); } }
+@keyframes owPendSpin { to { transform: rotate(360deg); } }
+.ow-pend-x {
+    position: absolute; right: 2px; top: 2px;
+    width: 18px; height: 18px; line-height: 16px;
+    padding: 0; border: none; border-radius: 50%;
+    background: var(--ow-toast-bg); color: var(--ow-toast-fg);
+    font-size: 11px; cursor: pointer;
+}
+.ow-pend-x:hover { background: var(--ow-red); color: #fff; }
+.ow-pend-count {
+    -webkit-align-self: center; align-self: center;
+    font-size: 12px; color: var(--ow-text-sub);
+    padding-left: 2px;
+}
+
+/* ---------- 拖拽落点：只描边，不占位（改 padding 会让消息区抖一下） ---------- */
+.ow-main.ow-drop-on {
+    -webkit-box-shadow: inset 0 0 0 2px var(--ow-primary-strong);
+    box-shadow: inset 0 0 0 2px var(--ow-primary-strong);
+}
+
+/* ---------- 二选一弹窗：竖排两张卡，图标在左、说明在右 ---------- */
+.ow-pick {
+    display: -webkit-flex; display: flex;
+    -webkit-flex-direction: column; flex-direction: column;
+    gap: 8px;
+    margin: 14px 0 4px;
+}
+.ow-pick-card {
+    display: -webkit-flex; display: flex;
+    -webkit-align-items: center; align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    text-align: left;
+    background: var(--ow-bg-sub);
+    border: 1px solid var(--ow-border);
+    border-radius: 8px;
+    cursor: pointer;
+    color: var(--ow-text);
+    font: inherit;
+}
+/* hover 必须比底色更深一档：#EBEBEB 压在 #F5F5F5 上会「越悬停越浅」 */
+.ow-pick-card:hover { background: var(--ow-active-bg); border-color: var(--ow-primary-strong); }
+.ow-pick-card > .ow-ico { flex-shrink: 0; -webkit-flex-shrink: 0; color: var(--ow-primary); }
+.ow-pick-card b { display: block; font-size: 14px; color: var(--ow-text-title); }
+.ow-pick-card span { display: block; font-size: 12px; color: var(--ow-text-sub); margin-top: 3px; line-height: 1.5; }

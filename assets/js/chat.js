@@ -482,6 +482,9 @@
         word:   { c: '#4895FF', g: 'M361.81 703h93.1l53.41-215.6h2.94L563.69 703h93.1l77.91-340.06h-76.93l-49.98 251.37h-2.94l-49-218.54h-86.24l-51.94 218.54h-2.94l-49-251.37h-77.91z' },
         /* PDF：PDF 字样 */
         pdf:    { c: '#FF6359', g: 'M234.64 641h48.64v-68.48h27.2c62.72 0 87.36-20.16 87.36-78.08 0-53.44-20.8-75.52-87.36-75.52h-75.84V641z m48.64-107.52v-76.16h20.8c32.64 0 44.16 9.6 44.16 38.08 0 29.44-11.2 38.08-44.16 38.08h-20.8zM437.52 418.92V641h76.16c65.28 0 108.16-25.28 108.16-111.04 0-92.48-42.88-111.04-108.16-111.04h-76.16z m48.64 180.48V459.88h24.96c40 0 60.48 12.8 60.48 70.08 0 54.08-19.52 69.44-60.48 69.44h-24.96zM801.36 461.16v-42.24H665.68V641h48.64v-86.4h80.64v-41.92h-80.64v-51.52z' },
+        /* 图片（v1.3.86）：山峰 + 太阳。此前 jpg/png 作为**文件**发送时落到 unknown（灰色问号），
+           而「以文件方式发送图片」这条路的意义恰恰是让人一眼看出那是张图片。 */
+        image:  { c: '#FFAB4E', g: 'M440.26 397.636l152.711 269.49c4.901 8.649 1.863 19.633-6.786 24.534a18 18 0 0 1-8.874 2.34H271.889c-9.941 0-18-8.059-18-18a18 18 0 0 1 2.34-8.874l152.71-269.49c4.902-8.649 15.886-11.687 24.535-6.786a18 18 0 0 1 6.786 6.786z M633.04 497.15l96.32 169.976c4.9 8.649 1.863 19.633-6.786 24.534a18 18 0 0 1-8.875 2.34H521.061c-9.942 0-18-8.059-18-18a18 18 0 0 1 2.34-8.874L601.72 497.15c4.9-8.649 15.885-11.687 24.534-6.786a18 18 0 0 1 6.786 6.786z M695 420m-50 0a50 50 0 1 0 100 0 50 50 0 1 0-100 0Z' },
         /* 未知：问号 */
         unknown:{ c: '#BEBEBE', g: 'M474.17 591.28h59.78v-11.27c0-16.66 5.88-25.97 35.77-48.02 33.32-24.99 44.1-42.63 44.1-88.2 0-68.6-33.32-86.73-113.68-86.73-29.4 0-55.86 3.43-73.99 8.82v60.76c17.15-5.39 39.69-8.33 59.78-8.33 39.69 0 51.94 6.37 51.94 35.77 0 20.58-4.41 29.89-25.97 47.04-28.91 24.99-37.73 40.18-37.73 68.11v22.05z m30.38 114.66c34.79 0 41.65-5.88 41.65-41.16 0-34.3-6.86-40.67-41.65-40.67-35.28 0-41.65 6.37-41.65 40.67 0 35.28 6.37 41.16 41.65 41.16z' }
     };
@@ -504,6 +507,8 @@
         /* 音频 */
         'mp3': 'audio', 'wav': 'audio', 'flac': 'audio', 'ogg': 'audio', 'm4a': 'audio',
         'aac': 'audio', 'wma': 'audio', 'amr': 'audio', 'mid': 'audio',
+        /* 图片（作为文件发送时）*/
+        'jpg': 'image', 'jpeg': 'image', 'png': 'image', 'gif': 'image', 'webp': 'image', 'bmp': 'image',
         /* 视频 */
         'mp4': 'video', 'webm': 'video', 'avi': 'video', 'mkv': 'video', 'mov': 'video',
         'wmv': 'video', 'flv': 'video', 'm4v': 'video', 'rmvb': 'video', 'mpg': 'video', 'mpeg': 'video',
@@ -539,6 +544,50 @@
             + '" title="' + esc(nm) + '">' + esc(nm) + '</span>'
             + '<span class="ow-file-size">' + esc(sizeText(info.size)) + '</span></span>'
             + '<a class="ow-file-dl" href="' + dl + '" title="下载">' + owSvg('download', 18) + '</a></div>';
+    }
+
+    /**
+     * 图文混排消息（type=rich，v1.3.86）的解析与渲染。
+     * content = {"text":"…","media":[{"url":"uploads/image/…","kind":"image|video"},…]}
+     *
+     * 为什么服务端校验过了这里还要逐层防：历史消息里可能有别的版本写进来的脏数据，
+     * `JSON.parse` 一抛就是整条消息渲染不出来 —— 满屏空白比一张破图更难排查。
+     * url 也只认本站 uploads/ 前缀：消息内容里不能出现外站地址，
+     * 那等于让每个看记录的人的浏览器去加载任意 URL。
+     */
+    function richParts(m) {
+        var out = { text: '', media: [] }, j = null, i, u, k;
+        try { j = JSON.parse(m.content); } catch (e) { return out; }
+        if (!j || typeof j !== 'object') return out;
+        if (typeof j.text === 'string') out.text = j.text;
+        if (j.media && j.media.length) {
+            for (i = 0; i < j.media.length && out.media.length < 9; i++) {
+                u = String((j.media[i] || {}).url || '');
+                k = String((j.media[i] || {}).kind || '');
+                if (!/^uploads\/[a-z0-9_.\/-]+$/i.test(u)) continue;
+                if (k !== 'image' && k !== 'video') continue;
+                out.media.push({ url: u, kind: k });
+            }
+        }
+        return out;
+    }
+    function richHtml(m) {
+        var p = richParts(m), h = '', i;
+        if (p.media.length) {
+            h += '<span class="ow-rich-media">';
+            for (i = 0; i < p.media.length; i++) {
+                h += p.media[i].kind === 'video'
+                    // 视频直接放进来播，不给「下载」——这是用户要的「和图片一样直接展示」。
+                    // preload=metadata：只取时长与首帧，不替访客把整段流量走完。
+                    ? '<video class="ow-rich-video" src="' + esc(p.media[i].url) + '" controls preload="metadata" playsinline></video>'
+                    : '<img class="ow-rich-img" src="' + esc(p.media[i].url) + '" data-url="' + esc(p.media[i].url)
+                      + '" loading="lazy" alt="图片" onclick="OwChat.viewImg(this.src)">';
+            }
+            h += '</span>';
+        }
+        // 文字在媒体下方：与输入框里的待发区（图在上、输入在下）保持同一视觉顺序
+        if (p.text !== '') h += '<span class="ow-rich-text">' + esc(p.text) + '</span>';
+        return h;
     }
 
     /* ---------- 文件名「中间省略」（v1.2.18） ----------
@@ -937,8 +986,11 @@
         logout: '<path d="M14 4H6.5A1.5 1.5 0 0 0 5 5.5v13A1.5 1.5 0 0 0 6.5 20H14"/><path d="M10 12h10M17 8.5l3.5 3.5-3.5 3.5"/>',
         mute: '<path d="M8 6.5A6 6 0 0 1 18 10c0 4 1.5 5.5 2 6h-3M6.2 8.5C6.1 9 6 9.5 6 10c0 4-1.5 5.5-2 6h11"/><line x1="4" y1="4" x2="20" y2="20"/>',
         file: '<path d="M13 3.5H7a1.5 1.5 0 0 0-1.5 1.5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V9z"/><path d="M13 3.5V9h5.5"/>',
+        paperclip: '<g transform="scale(0.82) translate(2.6 2.6)"><path d="M16.5 7.5l-7 7a3.5 3.5 0 0 0 5 5l7-7a5.5 5.5 0 0 0-8-8L6 12a7.5 7.5 0 0 0 11 11"/></g>',
         /* 仅 JS 侧使用 */
         upload: '<path d="M12 16V4"/><path d="M7.5 8.5L12 4l4.5 4.5"/><path d="M4.5 19.5h15"/>',
+        // v1.3.86 待发区弹窗的「以视频方式发送」卡片
+        video: '<rect x="3.5" y="5.5" width="17" height="13" rx="2.5"/><path d="M10.5 9.3l4.6 2.7-4.6 2.7z"/>',
         // v1.2.28 私聊右侧栏四入口：统一 24 网格、stroke 1.8、round 端点（禁实心填充）
         pin: '<path d="M9 3.5h6M10 3.5v5.2L7.4 13h9.2L14 8.7V3.5"/><path d="M12 13v7.5"/>',
         pinOff: '<path d="M9 3.5h6M10 3.5v5.2L7.4 13h9.2M14 8.7V3.5"/><path d="M12 13v7.5"/><path d="M4 20.5L20 3.5"/>',
@@ -2936,6 +2988,7 @@
             // 去掉节点最干净。留空 span 反而会破坏 flex 基线对齐。
             else if (m.type === 'file') content = '<span class="ow-msg-plain">' + fileCardHtml(m) + '</span>';
             else if (m.type === 'image') content = '<span class="ow-msg-plain"><img class="ow-msg-img" src="' + esc(m.content) + '" onclick="OwChat.viewImg(this.src)" alt="图片"></span>';
+            else if (m.type === 'rich') content = '<span class="ow-msg-plain ow-msg-rich">' + richHtml(m) + '</span>';
             else content = '<span class="ow-msg-content">' + (m.quote && (m.quote.nick || m.quote.text)
                     ? '<span class="ow-msg-quote' + (m.quote.id ? ' ow-quote-link' : '') + '"'
                       + (m.quote.id ? ' title="点击查看原消息" onclick="OwChat.jumpToQuote(' + (m.quote.id | 0) + ')"' : '')
@@ -3706,6 +3759,24 @@
          *
          * 昵称仅作展示快照，不作身份；服务端以数字 ID 判定双方可见性。
          */
+        /**
+         * 扩展点（v1.3.86）：输入框文字发出去**之前**给插件一次接管机会。
+         * 附件插件用它实现图文混排 —— 待发区里有图片/视频时，「发送」意味着
+         * 「文字 + 这些媒体合成一条 rich 消息」，而不是先甩一条纯文本。
+         * 回调返回 true = 已接管本次发送，核心**立即中止**本次发送。
+         * ⚠️ 核心不碰输入框：清不清、什么时候清由接管方决定 —— 附件插件在「还有文件
+         * 在上传」时也要返回 true 拦下这次发送，那种情况下用户刚打的字必须原样留着，
+         * 核心若在这里统一清空，就是静默吞掉用户输入。
+         *
+         * ⚠️ 只拦「从输入框发出去的普通文字」这一种：插件自己调用
+         * `OwChat.send({type:'file'|'image'|…})` 时不能再次被拦，否则递归。
+         */
+        onBeforeSend: function (fn) { if (typeof fn === 'function') this._beforeSend.push(fn); },
+        _beforeSend: [],
+        /** 核心线性图标（v1.3.86 对外暴露）：插件要图标就调这个，
+         *  别在自己文件里再抄一份 path —— 附件插件那份 paperclip 就是前车之鉴。 */
+        icon: owIco,
+
         send: function (opt) {
             opt = opt || {};
             var input = $('owInput');
@@ -3718,6 +3789,15 @@
             if (this._inputGate === 'friend') { toast('请先选择一个联系人'); return; }
             if (this._inputGate === 'conv') { toast('请先选择一个会话'); return; }
             if (this._inputGate === 'room') { toast('请先从左侧选择一个群聊'); return; }
+            /* 待发区（图片/视频）非空时，「发送」= 文字 + 媒体合成一条 rich 消息。
+               必须放在下面「文字为空就直接 return」**之前**：只发图不打字是完全正常的操作。 */
+            if (opt.content == null && !opt.type) {
+                for (var bsi = 0; bsi < this._beforeSend.length; bsi++) {
+                    var taken = false;
+                    try { taken = this._beforeSend[bsi](input ? input.value : '') === true; } catch (e) {}
+                    if (taken) return;
+                }
+            }
             var content = opt.content != null ? opt.content : input.value;
             if (!content || !content.replace(/^\s+|\s+$/g, '')) return;
             var self = this;
@@ -5531,10 +5611,15 @@
         /** 插件扩展点：右键消息「内容」时追加菜单项 */
         onMsgContent: function (fn) { if (typeof fn === 'function') this._ctxExtContent.push(fn); },
 
-        /** 复制消息内容（图片/文件消息复制其可读文本） */
+        /** 复制消息内容（图片/文件/混排消息复制其可读文本） */
         copyMsg: function (m) {
             var text = m.type === 'file' ? (function () {
                 try { return JSON.parse(m.content).name || m.content; } catch (e) { return m.content; }
+            })() : m.type === 'rich' ? (function () {
+                // 混排消息复制的是**文字那一段**；只有图没文字时复制占位说明，
+                // 把 JSON 塞进剪贴板对用户没有任何用处
+                var p = richParts(m);
+                return p.text !== '' ? p.text : '[图片]';
             })() : m.content;
             text = String(text || '');
             var ta = document.createElement('textarea');
@@ -5555,6 +5640,13 @@
         quoteMsg: function (m) {
             var text = m.type === 'image' ? '[图片]' : (m.type === 'file' ? (function () {
                 try { return '[文件] ' + (JSON.parse(m.content).name || ''); } catch (e) { return '[文件]'; }
+            })() : m.type === 'rich' ? (function () {
+                // 引用条只有一行：混排消息引用时显示「文字 + 一张图的标记」，
+                // 把整段 JSON 或全部图片塞进去会把引用条撑破。
+                // 不写「×N」—— 与会话列表摘要（Chat::convText）同一口径：
+                // 掺进数字的串语言包按整句匹配不上，英文界面只会多出半句中文。
+                var p = richParts(m);
+                return p.text !== '' ? p.text + (p.media.length ? ' [图片]' : '') : '[图片]';
             })() : String(m.content || ''));
             var q = { nick: m.nickname || '', text: text, id: m.id || 0 };
             for (var i = 0; i < this._quoteExt.length; i++) {

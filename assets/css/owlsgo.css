@@ -2370,6 +2370,30 @@ span.ow-panel-entry-ico.ow-avatar { width: 16px; height: 16px; line-height: 16px
     border-top: none; border-bottom: 5px solid #2C2C2E;
 }
 
+/* ---------- 图文混排消息（type=rich，v1.3.86） ----------
+   容器是 .ow-msg-plain（无气泡底座），而它的 `line-height:0` 是为了消掉图片的基线间隙 ——
+   ⚠️ 文字那一段必须自己把行高设回来，否则整段按 0 行高排版，等于看不见。 */
+.ow-msg-rich { max-width: 100%; }
+.ow-rich-media {
+    display: -webkit-flex; display: flex;
+    -webkit-flex-wrap: wrap; flex-wrap: wrap;
+    -webkit-gap: 4px; gap: 4px;
+}
+.ow-rich-img {
+    width: 160px; height: 160px; object-fit: cover;
+    border-radius: 6px; display: block; cursor: zoom-in;
+    background: var(--ow-bg-sub);
+}
+/* 只有一张图时不裁切，按原比例显示（与单发一条图片消息观感一致）；
+   多张才走方形裁切，避免一行里挤进好几张变形图。 */
+.ow-rich-img:only-child { width: auto; height: auto; max-width: 260px; max-height: 320px; object-fit: contain; }
+.ow-rich-video { width: 268px; max-width: 100%; border-radius: 6px; display: block; background: #000; }
+.ow-rich-text {
+    display: block; margin-top: 6px; line-height: 1.6;
+    white-space: pre-wrap; word-break: break-word;
+}
+.ow-rich-text:first-child { margin-top: 0; }
+
 /* ---------- 头像设置弹窗（v1.3.11） ----------
    点击头像不再直接开文件选择，而是先弹这个框：
    当前头像预览 + 「上传头像（插件启用时才有）」/「浏览插图」+ 群聊额外有「恢复默认」。 */
