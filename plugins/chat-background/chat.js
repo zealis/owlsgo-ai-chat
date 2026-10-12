@@ -60,7 +60,7 @@
             }
         } else if (st.mode === 'custom') {
             if (st.custom_url) url = st.custom_url;
-            else if (st.custom_file) url = '?action=plugin_chat_background_path&file=' + encodeURIComponent(st.custom_file);
+            else if (st.custom_preview) url = st.custom_preview;
         }
         if (!url) return;
         var bgCss = tile
@@ -205,7 +205,7 @@
         var curUrl = st.custom_url || '';
         var curFile = st.custom_file || '';
         // 用 JS 设背景图（避免 HTML 属性里 url('...') 被引号冲突破坏）
-        var prevUrl = curUrl || (curFile ? '?action=plugin_chat_background_path&file=' + encodeURIComponent(curFile) : '');
+        var prevUrl = curUrl || (st.custom_preview || '');
 
         var h = '<div class="ow-cb-custom">';
         if (!state.cfg.can_custom) {
@@ -241,6 +241,7 @@
             urlInput.oninput = function () {
                 st.custom_url = urlInput.value.trim();
                 st.custom_file = '';   // 一旦改了 URL 就清掉文件选择
+                st.custom_preview = '';
                 var prev = $('owCBCustomPreview');
                 if (prev) {
                     if (st.custom_url) {
@@ -329,6 +330,7 @@
                 if (state.setting) {
                     state.setting.custom_file = r.file;
                     state.setting.custom_url = '';   // 上传后清掉 URL
+                    state.setting.custom_preview = r.preview || '';  // 直链预览 URL
                 }
                 toast('上传成功');
                 renderCustom();

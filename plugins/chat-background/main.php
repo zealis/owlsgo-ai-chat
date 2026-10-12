@@ -166,15 +166,38 @@ $owCBUserGuard = function (array $ctx): void {
 /**
  * 取一条背景库记录的最终展示 URL（前端 CSS 用的 url(...)）。
  * - kind=url：直接用远程 URL
- * - 否则：走本插件的 file 路由（兼容 svg / 图片）
+ * - 图片（webp/jpg/png/gif）：直链 uploads/background/filename（nginx 允许非 SVG 直访）
+ * - SVG：nginx 拦截 /uploads/*.svg 直访，?action= 路由又需签名（CSS url() 的 GET 不带签名），
+ *   故 SVG 走 data URI 内联（base64），唯一不需要改主程序或 nginx 的方案
  */
 function owCBItemUrl(array $item): string
 {
     if ((string)$item['kind'] === 'url' && (string)$item['url'] !== '') {
         return (string)$item['url'];
     }
-    // 走插件路由：可被反代/子目录部署正确处理，且不暴露 uploads 物理路径
-    return '?action=plugin_chat_background_file&id=' . (int)$item['id'] . '&v=' . (int)$item['updated_at'];
+    $file = (string)$item['file'];
+    if ($file === '') return '';
+    $ext = strtolower((string)pathinfo($file, PATHINFO_EXTENSION));
+    // SVG：nginx 拦截 + ?action= 需签名 → 内联 data URI
+    if ($ext === 'svg' || $ext === 'svgz') {
+        $abs = owCBBgDir() . '/' . $file;
+        if (!is_file($abs)) return '';
+        $raw = @file_get_contents($abs);
+        if ($raw === false || $raw === '') return '';
+        return 'data:image/svg+xml;base64,' . base64_encode($raw);
+    }
+    // 图片：直链（nginx 仅拦截 uploads 下的 svg/php/html，webp/jpg/png/gif 可直访）
+    return owCBUploadUrl() . '/background/' . rawurlencode($file);
+}
+
+/**
+ * 取用户自定义上传背景文件的直链 URL。
+ * 用户上传只允许图片（jpg/png/gif/webp），不允许 SVG，故直链可行。
+ */
+function owCBUserFileUrl(string $relFile): string
+{
+    if ($relFile === '') return '';
+    return owCBUploadUrl() . '/background/' . implode('/', array_map('rawurlencode', explode('/', $relFile)));
 }
 
 /** 取用户当前背景设置（无则返回默认空设置） */
@@ -558,6 +581,7 @@ Plugin::route('plugin_chat_background_user_load', function (array $ctx) {
         'setting' => [
             'mode' => (string)$st['mode'], 'item_id' => (int)$st['item_id'],
             'custom_url' => (string)$st['custom_url'], 'custom_file' => (string)$st['custom_file'],
+            'custom_preview' => owCBUserFileUrl((string)$st['custom_file']),
             'overlay' => (string)$st['overlay'], 'opacity' => (int)$st['opacity'],
         ],
         'items' => $list,
@@ -653,7 +677,7 @@ Plugin::route('plugin_chat_background_user_upload', function (array $ctx) {
     if (empty($ctx['files']['file'])) Api::json(['ok' => false, 'msg' => '未接收到文件'], 400);
     [$ok2, $relOrMsg] = owCBStoreUpload($ctx['files']['file']);
     if (!$ok2) Api::json(['ok' => false, 'msg' => $relOrMsg], 400);
-    Api::json(['ok' => true, 'file' => $relOrMsg, 'preview' => '?action=plugin_chat_background_path&file=' . urlencode($relOrMsg)]);
+    Api::json(['ok' => true, 'file' => $relOrMsg, 'preview' => owCBUserFileUrl($relOrMsg)]);
 });
 
 /* ============================ 文件输出路由 ============================ */
@@ -745,7 +769,7 @@ Plugin::on('page.head', function () {
         if ((string)$st['custom_url'] !== '') {
             $url = (string)$st['custom_url'];
         } elseif ((string)$st['custom_file'] !== '') {
-            $url = '?action=plugin_chat_background_path&file=' . urlencode((string)$st['custom_file']);
+            $url = owCBUserFileUrl((string)$st['custom_file']);
         }
     }
     if ($url === '') return;
