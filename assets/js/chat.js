@@ -582,8 +582,10 @@
                     //    metadata 也会把每条的头部拉下来；而本站消息区里视频多数是「先看标题再说」。
                     //    代价是黑块 + 原生 ▶，看不到首帧画面（要预览得等用户点）。
                     // 标题跟着走：播放器本身没有任何文字信息，不看文件名就只知道「这里有个视频」。
+                    // ⚠️ muted：**默认静音，必须手动开声**。消息区里的视频不是「点开看的播放器」，
+                    //    而是随手滚到的内容 —— 不静音就会有人被突然外放吓到，也打扰旁人。
                     ? '<span class="ow-rich-vid"><video class="ow-rich-video" src="' + esc(p.media[i].url)
-                      + '" controls preload="none" playsinline></video>'
+                      + '" controls muted preload="none" playsinline></video>'
                       + (p.media[i].name ? '<span class="ow-rich-name">' + esc(p.media[i].name) + '</span>' : '') + '</span>'
                     : '<img class="ow-rich-img" src="' + esc(p.media[i].url) + '" data-url="' + esc(p.media[i].url)
                       + '" loading="lazy" alt="图片" onclick="OwChat.viewImg(this.src)">';
