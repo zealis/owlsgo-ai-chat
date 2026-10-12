@@ -1,5 +1,5 @@
 /**
- * 群聊嵌入插件（room-embed）前端脚本 v1.4.1
+ * 群聊嵌入插件（room-embed）前端脚本 v1.5.0
  *
  * 职责：
  *   1. 嵌入模式（?embed=1）：域名白名单守卫 + UI 微调（隐藏音效按钮/拖拽手柄）
@@ -26,6 +26,12 @@
  *   - 修「返回聊天仍显示请选择一个群聊」：等级页 URL 被点击钩子补上令牌后走
  *     「URL 带令牌」分支，window.name 的房间被覆盖成空。main.php 已改为合并语义
  *     （没带房间就保留上次的），本文件无逻辑改动。
+ * v1.5.0（2026-10-12）：
+ *   - 嵌入态顶栏新增「登录/注册」入口：第三方 iframe 存不了登录 cookie，
+ *     点它新标签页打开主站登录页（第一方上下文）；已登录身份（同站嵌入）不注入；
+ *   - 启动器图标底色改自动适配页面深浅（autoTheme 沿祖先链算背景亮度，
+ *     浅页深底白图形/深页白底深图形），可用 --owlsgo-launcher-bg/fg 覆盖，
+ *     transparent 即透明图标；替换掉原来写死的黄褐兜底色。
  */
 (function () {
     var w = window;
@@ -57,9 +63,39 @@
         } else {
             document.addEventListener('DOMContentLoaded', trimEmbedUI);
         }
-        embedTokenBoot();   // v1.2.0：令牌引导（跨站无 cookie 时顶替签名门禁）
-        embedGuard();       // 兜底：无令牌/令牌失效时的恢复引导
+        injectLoginEntry();   // v1.5.0：登录/注册入口（新标签页打开主站）
+        embedTokenBoot();     // v1.2.0：令牌引导（跨站无 cookie 时顶替签名门禁）
+        embedGuard();         // 兜底：无令牌/令牌失效时的恢复引导
         return;
+    }
+
+    /* ---------- 嵌入模式：登录/注册入口（v1.5.0） ----------
+       为什么不在嵌入窗口内直接登录：第三方 iframe 里浏览器拒绝落地会话 cookie
+       （SameSite=Lax 不允许在第三方上下文存储），登录态根本无法保存在 iframe 内。
+       唯一可行路径：新标签页打开主站登录页（第一方上下文，cookie 正常落地）。
+       登录后访客可用自己的账号在主站聊天；嵌入窗口本身仍以该群访客身份参与
+       （令牌机制与登录态互不影响）。同站嵌入且已登录时（actor.kind=user）不注入。 */
+    function injectLoginEntry() {
+        var actor = w.OwChat.cfg && w.OwChat.cfg.actor;
+        if (actor && actor.kind === 'user') return;          // 已登录（同站嵌入场景）不显示
+        if (document.getElementById('owEmbedLogin')) return;
+        function place() {
+            if (document.getElementById('owEmbedLogin')) return;
+            var bar = document.querySelector('.ow-topbar');
+            if (!bar) return;
+            var base = (w.OwChat.cfg && w.OwChat.cfg.site_url) ? w.OwChat.cfg.site_url : w.location.origin;
+            var a = document.createElement('a');
+            a.id = 'owEmbedLogin';
+            a.className = 'ow-embed-login';
+            a.href = base + '/?page=login';
+            a.target = '_blank';
+            a.rel = 'noopener';
+            a.textContent = '登录/注册';
+            a.title = '嵌入窗口内无法保存登录状态，将在新标签页打开主站';
+            bar.appendChild(a);
+        }
+        if (document.readyState === 'complete' || document.readyState === 'interactive') place();
+        else document.addEventListener('DOMContentLoaded', place);
     }
 
     /* ---------- 嵌入模式：域名白名单守卫（v1.3.0） ----------
@@ -264,8 +300,10 @@
             var src = base + '/?page=chat&room=' + roomId + '&embed=1'
                 + (token ? '&embed_token=' + token + '&embed_visitor=' : '');
             // ⚠️ 例外（PLUGIN.md「图像像素」类）：本串是粘贴到**外部站点**运行的代码，
-            // 外部页面没有 --ow-* 变量体系，按钮底色/投影按外部站点装饰写死（可用
-            // --owlsgo-launcher-bg 覆盖），不随本站主题变化。
+            // 外部页面没有 --ow-* 变量体系，按钮底色/投影按外部站点装饰处理。
+            // v1.5.0：底色默认**自动适配页面深浅**（见下方 autoTheme），不再写死；
+            // 站点主人仍可用 --owlsgo-launcher-bg / --owlsgo-launcher-fg 覆盖
+            // （设 transparent 即得透明图标，图形色随页面底色反差）。
             // 访客标识在**父页面**（第一方）localStorage 铸造后随 iframe URL 带上——
             // 第三方 iframe 自己的存储可能被浏览器拦掉，父页面不会；每个访客因此有稳定身份。
             var frameStyle = 'position:fixed;bottom:84px;right:20px;z-index:99998;overflow:hidden;'
@@ -279,7 +317,9 @@
                 + '#owlsgo-launcher{position:fixed;bottom:20px;right:20px;z-index:99999;width:52px;height:52px;\n'
                 + 'border-radius:50%;cursor:pointer;border:none;padding:0;font-size:0;line-height:0;\n'
                 + 'display:-webkit-flex;display:flex;align-items:center;justify-content:center;\n'
-                + 'background:var(--owlsgo-launcher-bg,#8a7a68);color:#fff;box-shadow:0 4px 16px rgba(0,0,0,.22);\n'
+                + 'background:var(--owlsgo-launcher-bg,var(--owlsgo-launcher-bg-auto,#2b2f36));\n'
+                + 'color:var(--owlsgo-launcher-fg,var(--owlsgo-launcher-fg-auto,#ffffff));\n'
+                + 'box-shadow:0 4px 16px rgba(0,0,0,.22);\n'
                 + '-webkit-transition:transform .15s;transition:transform .15s;}\n'
                 + '#owlsgo-launcher:hover{transform:scale(1.06);}\n'
                 + '#owlsgo-launcher svg{width:24px;height:24px;}\n'
@@ -290,11 +330,25 @@
                 + 'try{v=window.localStorage.getItem(k)||"";}catch(e){}\n'
                 + 'if(!/^[a-z0-9]{4,16}$/.test(v)){v=Math.random().toString(16).slice(2,10);'
                 + 'try{window.localStorage.setItem(k,v);}catch(e){}}\n'
+                // 自动配色：沿祖先链找第一个不透明背景色算亮度——浅色页面出深底白图形，
+                // 深色页面出白底深图形；取不到按浅色处理（最常见），并参考 prefers-color-scheme。
+                + 'function autoTheme(){\n'
+                + 'var el=document.body,bg="",n=0,c;\n'
+                + 'while(el&&n<8){c=getComputedStyle(el).backgroundColor;\n'
+                + 'if(c&&c!=="transparent"&&c!=="rgba(0, 0, 0, 0)"){bg=c;break;}\n'
+                + 'el=el.parentElement;n++;}\n'
+                + 'var light=true,m=/rgba?\\((\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)/.exec(bg||"");\n'
+                + 'if(m){var L=(0.299*(+m[1])+0.587*(+m[2])+0.114*(+m[3]))/255;light=L>=0.55;}\n'
+                + 'else if(window.matchMedia&&matchMedia("(prefers-color-scheme: dark)").matches)light=false;\n'
+                + 'return light?["#2b2f36","#ffffff"]:["#ffffff","#2b2f36"];}\n'
                 + 'var SITE=' + JSON.stringify(base) + ',ROOM=' + roomId + ',TOKEN=' + JSON.stringify(token || '')
                 + ',DIRECT=' + (direct ? 'true' : 'false') + ';\n'
                 + 'var launcher=document.createElement("button");\n'
                 + 'launcher.id="owlsgo-launcher";launcher.type="button";launcher.title="在线聊天";\n'
                 + 'launcher.innerHTML=' + JSON.stringify(phoneSvg) + ';\n'
+                + 'var _t=autoTheme();\n'
+                + 'launcher.style.setProperty("--owlsgo-launcher-bg-auto",_t[0]);\n'
+                + 'launcher.style.setProperty("--owlsgo-launcher-fg-auto",_t[1]);\n'
                 + 'var frame=null;\n'
                 + 'function ensureFrame(){\n'
                 + 'if(frame)return frame;\n'
@@ -331,6 +385,9 @@
                     ? '<p style="color:var(--ow-text-sub,#999);font-size:12px;margin:0 0 10px">代码内含嵌入令牌（有效期至 '
                       + fmtDate(expiresAt) + '）：浏览器拦截第三方 Cookie 的跨站场景下靠它维持连接，每位访客会自动获得独立身份（可单独禁言），权力等同该群访客。请勿公开粘贴完整代码，怀疑泄露可到后台「群聊嵌入」页吊销；再次生成会换发新令牌，旧代码立即失效。</p>'
                     : '')
+                + '<p style="color:var(--ow-text-sub,#999);font-size:12px;margin:0 0 10px">'
+                + '图标底色会自动适应你网站的深浅色（也可用 CSS 变量 <code>--owlsgo-launcher-bg</code> 覆盖，设 <code>transparent</code> 即为透明图标）；'
+                + '嵌入窗口无法保存登录状态（浏览器拦截第三方 Cookie），聊天窗顶栏提供「登录/注册」按钮，访客点击将在新标签页打开主站，用自己账号登录后可在主站聊天。</p>'
                 + '<div class="ow-form-row" style="gap:8px">'
                 + '<button class="ow-btn ow-btn-primary" onclick="OwRoomEmbed.copy()">复制代码</button>'
                 + '<button class="ow-btn ow-btn-ghost" onclick="OwChat.closeModal()">关闭</button>'

@@ -1,6 +1,6 @@
 <?php
 /**
- * 群聊嵌入插件（room-embed）v1.4.1
+ * 群聊嵌入插件（room-embed）v1.5.0
  *
  * 功能：
  *   - 群主/管理员可在「群聊信息」面板获取该群的嵌入代码（默认浮动手机按钮，
@@ -59,6 +59,14 @@
  *   10. 修 v1.4.0 的漏网路径：**点击**等级链接时钩子会给等级页 URL 补上令牌，
  *      等级页走「URL 带令牌」分支，nameSet 把房间覆盖成空 → 返回聊天仍补不回
  *      room（用户实测复现）。改为合并语义：当前页 URL 没带房间时保留上次记住的。
+ * v1.5.0（2026-10-12）：
+ *   11. 嵌入态支持「登录/注册」：第三方 iframe 里浏览器拒绝落地会话 cookie，
+ *      嵌入窗口内做不了登录——顶栏新增入口，点击新标签页打开主站登录页
+ *      （第一方上下文，cookie 正常）；已登录身份（同站嵌入）不显示该入口。
+ *   12. 启动器图标底色改自动适配页面深浅：autoTheme 沿祖先链找第一个不透明
+ *      背景色算亮度，浅色页面出深底白图形、深色页面出白底深图形；站点主人可用
+ *      --owlsgo-launcher-bg / --owlsgo-launcher-fg 覆盖（transparent = 透明图标）。
+ *      替换掉原来写死的黄褐兜底色（用户报「不要这个黄色」）。
  */
 if (!defined('OWLSGO_VERSION')) exit;
 
@@ -321,7 +329,16 @@ Plugin::on('page.head', function (): void {
 .ow-topbar{height:44px!important;padding:0 12px!important}
 .ow-topbar .ow-only-mobile{display:none!important}   /* 窄屏「菜单」抽屉按钮：没有侧栏可开 */
 .ow-topbar .ow-icon-btn{display:none!important}      /* 「群聊信息」竖三点：右栏已隐藏 */
-.ow-room-name{font-size:14px!important;margin:0!important}
+.ow-room-name{font-size:14px!important;margin:0!important;
+  overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;min-width:0!important}
+/* 「登录/注册」入口（v1.5.0）：第三方 iframe 里浏览器拒绝落地会话 cookie，
+   嵌入窗口内做不了登录——唯一可行路径是新标签页打开主站登录页（第一方上下文）。
+   同站嵌入且已登录（actor.kind=user）时前端不注入本按钮。 */
+.ow-embed-login{margin-left:auto!important;flex-shrink:0!important;-webkit-flex-shrink:0!important;
+  font-size:12px;line-height:1;padding:6px 10px;border-radius:6px;white-space:nowrap;
+  color:var(--ow-primary,#00A0E9);border:1px solid var(--ow-primary,#00A0E9);
+  text-decoration:none;background:transparent}
+.ow-embed-login:hover,.ow-embed-login:active{background:var(--ow-primary,#00A0E9);color:#fff}
 .ow-latency{display:none!important}
 .ow-tag{display:none!important}
 .ow-main{border:none!important;min-width:0!important}
@@ -556,7 +573,9 @@ Plugin::adminPage('room-embed', '群聊嵌入', function () {
         . '<li>复制生成的代码，粘贴到目标网站的 HTML 中即可</li>'
         . '</ol>'
         . '<h3>嵌入效果（v1.3.0）</h3>'
-        . '<p style="color:var(--ow-text,#333)">默认在网站右下角显示一个圆形手机图标，访客点击才展开聊天室，点聊天室外部自动收回；也可在生成时选择「直接展开」。小窗只保留群名、消息与输入框，站点品牌条与侧栏不进入嵌入页。</p>'
+        . '<p style="color:var(--ow-text,#333)">默认在网站右下角显示一个圆形手机图标，访客点击才展开聊天室，点聊天室外部自动收回；也可在生成时选择「直接展开」。小窗只保留群名、消息与输入框，站点品牌条与侧栏不进入嵌入页。图标底色会自动适应 embedding 网站的深浅色，也可用 CSS 变量 <code>--owlsgo-launcher-bg</code> 覆盖。</p>'
+        . '<h3>登录与注册（v1.5.0）</h3>'
+        . '<p style="color:var(--ow-text,#333)">浏览器会拦截第三方iframe里的登录 Cookie，嵌入窗口内无法直接登录。聊天窗顶栏提供「登录/注册」按钮：访客点击后将在<strong>新标签页打开主站</strong>登录页，用自己账号登录后即可在主站聊天；嵌入窗口本身仍以该群访客身份参与（发言受「游客发言」开关约束）。</p>'
         . '<h3>域名白名单（v1.3.0）</h3>'
         . '<p style="color:var(--ow-text,#333)">生成嵌入代码时可填写允许加载的域名（每行一个）：只有名单内的域名才能加载聊天，其他网站即使拿到代码也只会看到「未授权」提示。填 <code>example.com</code> 同时覆盖其子域名；填 <code>*</code> 表示不限制；留空同样不限制（兼容旧代码）。校验在服务端与前端双重生效。</p>'
         . '<h3>嵌入令牌（v1.2.0）</h3>'
