@@ -691,8 +691,11 @@ class Chat
             if (!in_array($kind, ['image', 'video'], true)) return [false, '混排消息只支持图片和视频', '', []];
             $rel = Upload::mediaRel((string)($m['url'] ?? ''));
             if ($rel === null) return [false, '混排消息里的文件无效或已被删除', '', []];
+            // 文件名只是展示用的标题（视频气泡下面那行字），不参与寻址：
+            // 换行与引号一律去掉，长度截到 120，别让它变成注入 JSON 的入口。
+            $name = mb_substr(str_replace(["\r", "\n", '"'], '', trim((string)($m['name'] ?? ''))), 0, 120);
             // 存相对路径（uploads/ 下）：换域名 / 换协议时，历史消息不会跟着一起失效
-            $media[] = ['url' => 'uploads/' . $rel, 'kind' => $kind];
+            $media[] = ['url' => 'uploads/' . $rel, 'kind' => $kind, 'name' => $name];
         }
         if ($text === '' && !$media) return [false, '消息不能为空', '', []];
         return [true, '', $text, $media];

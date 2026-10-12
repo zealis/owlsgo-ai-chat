@@ -566,7 +566,7 @@
                 k = String((j.media[i] || {}).kind || '');
                 if (!/^uploads\/[a-z0-9_.\/-]+$/i.test(u)) continue;
                 if (k !== 'image' && k !== 'video') continue;
-                out.media.push({ url: u, kind: k });
+                out.media.push({ url: u, kind: k, name: String((j.media[i] || {}).name || '').slice(0, 120) });
             }
         }
         return out;
@@ -579,7 +579,10 @@
                 h += p.media[i].kind === 'video'
                     // 视频直接放进来播，不给「下载」——这是用户要的「和图片一样直接展示」。
                     // preload=metadata：只取时长与首帧，不替访客把整段流量走完。
-                    ? '<video class="ow-rich-video" src="' + esc(p.media[i].url) + '" controls preload="metadata" playsinline></video>'
+                    // 标题跟着走：播放器本身没有任何文字信息，不看文件名就只知道「这里有个视频」。
+                    ? '<span class="ow-rich-vid"><video class="ow-rich-video" src="' + esc(p.media[i].url)
+                      + '" controls preload="metadata" playsinline></video>'
+                      + (p.media[i].name ? '<span class="ow-rich-name">' + esc(p.media[i].name) + '</span>' : '') + '</span>'
                     : '<img class="ow-rich-img" src="' + esc(p.media[i].url) + '" data-url="' + esc(p.media[i].url)
                       + '" loading="lazy" alt="图片" onclick="OwChat.viewImg(this.src)">';
             }
@@ -1002,6 +1005,8 @@
         quote: '<path d="M5 5.5v13"/><path d="M9.5 9h9M9.5 12.5h9M9.5 16h6"/>',
         undo: '<path d="M4.5 9.5h9.5a5 5 0 1 1 0 10H8"/><path d="M8 5.5L4.5 9.5 8 13.5"/>',
         star: '<path d="M12 4l2.4 5 5.4.7-4 3.8 1 5.4-4.8-2.7-4.8 2.7 1-5.4-4-3.8 5.4-.7z"/>',
+        // 右键头像菜单第一行「@ 昵称」：标签是动态的，按文字查表查不到，只能显式指定
+        at: '<circle cx="12" cy="12" r="4"/><path d="M16 8v5.5a2.5 2.5 0 0 0 5 0V12a9 9 0 1 0-3.6 7.1"/>',
         monitor: '<rect x="3.5" y="5" width="17" height="11.5" rx="2"/><path d="M9 20h6M12 16.5V20"/>'
     };
     function owIco(name, size, extra) {
@@ -2988,7 +2993,9 @@
             // 去掉节点最干净。留空 span 反而会破坏 flex 基线对齐。
             else if (m.type === 'file') content = '<span class="ow-msg-plain">' + fileCardHtml(m) + '</span>';
             else if (m.type === 'image') content = '<span class="ow-msg-plain"><img class="ow-msg-img" src="' + esc(m.content) + '" onclick="OwChat.viewImg(this.src)" alt="图片"></span>';
-            else if (m.type === 'rich') content = '<span class="ow-msg-plain ow-msg-rich">' + richHtml(m) + '</span>';
+            // 混排消息**带文字**，所以走气泡（.ow-msg-content）而不是 .ow-msg-plain：
+            // 纯图/纯文件才需要「无底座」，有文字却没气泡会显得半句话悬在空中。
+            else if (m.type === 'rich') content = '<span class="ow-msg-content ow-msg-rich">' + richHtml(m) + '</span>';
             else content = '<span class="ow-msg-content">' + (m.quote && (m.quote.nick || m.quote.text)
                     ? '<span class="ow-msg-quote' + (m.quote.id ? ' ow-quote-link' : '') + '"'
                       + (m.quote.id ? ' title="点击查看原消息" onclick="OwChat.jumpToQuote(' + (m.quote.id | 0) + ')"' : '')
@@ -3717,7 +3724,7 @@
         showUserMenu: function (x, y, m) {
             var self = this, admin = this.cfg.actor.role === 'admin', items = [];
             if (!m.recalled && !m.deleted) {
-                items.push({ t: '@ ' + m.nickname, run: function () { self.mention(m.nickname); } });
+                items.push({ t: '@ ' + m.nickname, icon: 'at', run: function () { self.mention(m.nickname); } });
                 // v1.1.2：**只有对方也是注册用户才给「私信」**（m.uid 为空即游客）。
                 // 原先只判自己是不是注册用户，于是「注册用户 → 游客」的入口一直挂着，
                 // 而服务端已彻底关闭跨身份私聊 —— 前端不收口就会变成点进去必然报错的死按钮。
@@ -3727,7 +3734,7 @@
             }
             // 插件扩展（v1.0.54）：如禁言插件按「管理员 / 房主」身份追加菜单项；
             // IP 归属地已移出核心，插件可在此注册（服务端走 ip_loc + ip.location 钩子）
-            for (i = 0; i < this._ctxExt.length; i++) {
+            for (var i = 0; i < this._ctxExt.length; i++) {
                 try { this._ctxExt[i](items, m, { roomId: this.room, actor: this.cfg.actor }); } catch (e) {}
             }
             if (!items.length) return;

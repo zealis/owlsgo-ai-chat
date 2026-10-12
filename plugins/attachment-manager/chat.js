@@ -193,7 +193,7 @@
         var media = [], i;
         for (i = 0; i < pend.length; i++) {
             if (pend[i].busy) { toast('还有文件在上传，请稍候'); return true; }
-            if (pend[i].url) media.push({ url: pend[i].url, kind: pend[i].kind });
+            if (pend[i].url) media.push({ url: pend[i].url, kind: pend[i].kind, name: pend[i].name || '' });
         }
         if (!media.length) return false;
         var input = $('owInput');

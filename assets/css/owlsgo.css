@@ -1540,9 +1540,16 @@ input[type=range] {
 .ow-msg.mine { flex-direction: row-reverse; -webkit-flex-direction: row-reverse; }
 .ow-msg.mine .ow-msg-body { text-align: right; }
 /* v1.2.7：自己消息的气泡也改为 #FFFFFF。原先是 --ow-blue-light(#E6F7FF 浅蓝)，
-   靠色相区分左右；改白后左右气泡同为白底，改由**位置（左右分栏）+ 头像**区分，
-   边框色也从 #91d5ff 回到中性 --ow-border，避免与白底冲突显得脏。 */
-.ow-msg.mine .ow-msg-content { background: var(--ow-surface); border-color: var(--ow-border); text-align: left; }
+   靠色相区分左右；改白后左右气泡同为白底，改由**位置（左右分栏）+ 头像**区分。
+   v1.3.88 回退这个决定：用户要求「自己发的应该是主题色」—— 同白底时左右只靠位置区分，
+   扫一眼分不出谁说的。改回实心品牌蓝（与 .ow-btn-primary 同档 --ow-primary-strong，
+   这套令牌里「实心品牌蓝 + 白字」就是它，白字对比 3.6:1）。
+   ⚠️ 深色模式下 --ow-primary-strong 是 #1E90FF，仍是中蓝，白字照样站得住；
+      而 --ow-primary-dark 在深色下会翻成**浅色**（那是给 hover 用的），不能拿来当底。 */
+.ow-msg.mine .ow-msg-content { background: var(--ow-primary-strong); border-color: var(--ow-primary-strong); color: #fff; text-align: left; }
+/* 气泡内部那些「次要色」在品牌蓝上会糊掉，跟着翻成白系 */
+.ow-msg.mine .ow-msg-content .ow-rich-name { color: rgba(255,255,255,.82); }
+.ow-msg.mine .ow-msg-content .ow-quote-nick, .ow-msg.mine .ow-msg-content .ow-quote-text { color: rgba(255,255,255,.9); }
 /* v1.2.7：@ 提及原为 #fffbe6（浅黄），在纯白气泡体系下与白色几乎无法分辨。
        加深到 #FFF3C4 并把边框同步加深，保留「这条是在叫我」的视觉提示。 */
 .ow-msg.mention .ow-msg-content { background: #FFF3C4; border-color: #E6B800; }
@@ -2379,8 +2386,9 @@ span.ow-panel-entry-ico.ow-avatar { width: 16px; height: 16px; line-height: 16px
 }
 
 /* ---------- 图文混排消息（type=rich，v1.3.86） ----------
-   容器是 .ow-msg-plain（无气泡底座），而它的 `line-height:0` 是为了消掉图片的基线间隙 ——
-   ⚠️ 文字那一段必须自己把行高设回来，否则整段按 0 行高排版，等于看不见。 */
+   v1.3.88 起混排消息走**气泡**（.ow-msg-content）：它带文字，没气泡会显得半句话悬在空中。
+   媒体那一块自己撑满气泡内容宽，文字段照旧要显式行高 —— 气泡是 inline-block，
+   不设行高的话这段会跟着继承来怪值。 */
 .ow-msg-rich { max-width: 100%; }
 .ow-rich-media {
     display: -webkit-flex; display: flex;
@@ -2395,7 +2403,14 @@ span.ow-panel-entry-ico.ow-avatar { width: 16px; height: 16px; line-height: 16px
 /* 只有一张图时不裁切，按原比例显示（与单发一条图片消息观感一致）；
    多张才走方形裁切，避免一行里挤进好几张变形图。 */
 .ow-rich-img:only-child { width: auto; height: auto; max-width: 260px; max-height: 320px; object-fit: contain; }
+.ow-rich-vid { display: block; }
 .ow-rich-video { width: 268px; max-width: 100%; border-radius: 6px; display: block; background: #000; }
+/* 视频文件名：播放器本身没有任何文字信息，不看标题就只知道「这里有个视频」 */
+.ow-rich-name {
+    display: block; max-width: 268px; margin-top: 3px;
+    font-size: 12px; line-height: 1.4; color: var(--ow-text-sub);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .ow-rich-text {
     display: block; margin-top: 6px; line-height: 1.6;
     white-space: pre-wrap; word-break: break-word;
