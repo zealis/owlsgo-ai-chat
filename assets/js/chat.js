@@ -578,10 +578,12 @@
             for (i = 0; i < p.media.length; i++) {
                 h += p.media[i].kind === 'video'
                     // 视频直接放进来播，不给「下载」——这是用户要的「和图片一样直接展示」。
-                    // preload=metadata：只取时长与首帧，不替访客把整段流量走完。
+                    // ⚠️ preload=none：**没点播放就一个字节都不下**。一屏滚过十条视频消息时，
+                    //    metadata 也会把每条的头部拉下来；而本站消息区里视频多数是「先看标题再说」。
+                    //    代价是黑块 + 原生 ▶，看不到首帧画面（要预览得等用户点）。
                     // 标题跟着走：播放器本身没有任何文字信息，不看文件名就只知道「这里有个视频」。
                     ? '<span class="ow-rich-vid"><video class="ow-rich-video" src="' + esc(p.media[i].url)
-                      + '" controls preload="metadata" playsinline></video>'
+                      + '" controls preload="none" playsinline></video>'
                       + (p.media[i].name ? '<span class="ow-rich-name">' + esc(p.media[i].name) + '</span>' : '') + '</span>'
                     : '<img class="ow-rich-img" src="' + esc(p.media[i].url) + '" data-url="' + esc(p.media[i].url)
                       + '" loading="lazy" alt="图片" onclick="OwChat.viewImg(this.src)">';

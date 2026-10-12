@@ -1546,15 +1546,12 @@ input[type=range] {
 .ow-msg.mine .ow-msg-body { text-align: right; }
 /* v1.2.7：自己消息的气泡也改为 #FFFFFF。原先是 --ow-blue-light(#E6F7FF 浅蓝)，
    靠色相区分左右；改白后左右气泡同为白底，改由**位置（左右分栏）+ 头像**区分。
-   v1.3.88 回退这个决定：用户要求「自己发的应该是主题色」—— 同白底时左右只靠位置区分，
-   扫一眼分不出谁说的。改回实心品牌蓝（与 .ow-btn-primary 同档 --ow-primary-strong，
-   这套令牌里「实心品牌蓝 + 白字」就是它，白字对比 3.6:1）。
-   ⚠️ 深色模式下 --ow-primary-strong 是 #1E90FF，仍是中蓝，白字照样站得住；
-      而 --ow-primary-dark 在深色下会翻成**浅色**（那是给 hover 用的），不能拿来当底。 */
-.ow-msg.mine .ow-msg-content { background: var(--ow-primary-strong); border-color: var(--ow-primary-strong); color: #fff; text-align: left; }
-/* 气泡内部那些「次要色」在品牌蓝上会糊掉，跟着翻成白系 */
-.ow-msg.mine .ow-msg-content .ow-rich-name { color: rgba(255,255,255,.82); }
-.ow-msg.mine .ow-msg-content .ow-quote-nick, .ow-msg.mine .ow-msg-content .ow-quote-text { color: rgba(255,255,255,.9); }
+   v1.3.88 回退这个决定（两侧同白，扫一眼分不出谁说的）→ 先试了实心品牌蓝 + 白字；
+   v1.3.91 按反馈改回**浅底**：实心蓝当大面积底色太重，一屏自己说的话像一列按钮。
+   用 --ow-blue-light 而不是写死浅蓝：深色模式下它翻成深青底（#14323F），
+   而且色系插件会按当前配色一起改 —— 换紫色主题时自己的气泡不会仍是蓝色。
+   文字回到常规 --ow-text，所以 v1.3.88 那两条「气泡内次要色翻白」的补丁一并撤掉。 */
+.ow-msg.mine .ow-msg-content { background: var(--ow-blue-light); border-color: var(--ow-border); color: var(--ow-text); text-align: left; }
 /* v1.2.7：@ 提及原为 #fffbe6（浅黄），在纯白气泡体系下与白色几乎无法分辨。
        加深到 #FFF3C4 并把边框同步加深，保留「这条是在叫我」的视觉提示。 */
 .ow-msg.mention .ow-msg-content { background: #FFF3C4; border-color: #E6B800; }
