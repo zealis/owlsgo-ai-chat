@@ -916,49 +916,98 @@
         return '<span class="' + cls + '"><img src="' + esc(src) + '" alt="" loading="lazy" onerror="OwAvatar.fallback(this)"></span>';
     }
 
-    /* ---------- 侧栏入口行（v1.1.10） ----------
-       右侧栏「群聊信息」区的统一行样式：图标 + 文案 + 右箭头，整行可点。
-       「群聊设置」由核心渲染，「群公告」等插件入口复用同一外观（announcements 插件
-       走 #owREExtras 容器并用 .ow-panel-entry 类），因此两行视觉上完全一致。
-       icon 用内联 SVG 路径表（与 PHP 侧 ow_icon 的路径一致，避免为此新增接口）。 */
-    var OW_ENTRY_ICONS = {
-        // v1.3.84：与 PHP 侧 ow_icon('gear') 同步换成带齿的 Cog 轮廓 ——
-        // 旧的「小圆 + 八根悬空短线」是太阳/亮度符号，认不出是设置。
+    /* ---------- 线性图标表（v1.3.85 合并成一张） ----------
+       原先有两张：OW_ENTRY_ICONS（侧栏入口行）与 OW_ICONS（owIco），
+       同名图标各存一份 path —— gear 就有两份，改一处漏一处的漂移只是时间问题。
+       现在只留 OW_ICONS 一张：侧栏入口行与右键菜单都从这里取。
+       ⚠️ 与 PHP 侧 ow_icon **同名**的条目必须逐字同 path（.tools/icon-audit.php 会比对并报警），
+       只在 JS 出现的（copy / quote / undo / star / monitor / pin / trash / flag…）不受此约束。
+       禁 Emoji 作功能图标。 */
+    var OW_ICONS = {
+        /* 与 PHP ow_icon 同名同 path */
+        image: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="M4 17l4.5-4.5 3.5 3.5 3-3 5 5"/>',
+        smile: '<circle cx="12" cy="12" r="9"/><path d="M8.5 14.5c1 1.5 2.2 2.2 3.5 2.2s2.5-.7 3.5-2.2"/><line x1="9" y1="9.5" x2="9" y2="10.5"/><line x1="15" y1="9.5" x2="15" y2="10.5"/>',
         gear: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
         mega: '<path d="M3 11v3l4 .5V10.5z"/><path d="M7 10.5L18 5v13l-11-4.5"/><path d="M9 15.5V18a2 2 0 0 0 4 .5"/>',
-        // v1.2.28 私聊右侧栏四入口。统一 24 网格、stroke 1.8、round 端点，
-        // 与 gear/mega 同一套描边风格（禁实心填充，保持扁平 UI）。
+        user: '<circle cx="12" cy="8" r="4"/><path d="M4.5 20c1.2-4 4-6 7.5-6s6.3 2 7.5 6"/>',
+        chat: '<path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v8a2.5 2.5 0 0 1-2.5 2.5H9l-5 4z"/>',
+        send: '<path d="M3.5 12L21 4l-7.5 17-2.5-7z"/>',
+        plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+        shield: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
+        logout: '<path d="M14 4H6.5A1.5 1.5 0 0 0 5 5.5v13A1.5 1.5 0 0 0 6.5 20H14"/><path d="M10 12h10M17 8.5l3.5 3.5-3.5 3.5"/>',
+        mute: '<path d="M8 6.5A6 6 0 0 1 18 10c0 4 1.5 5.5 2 6h-3M6.2 8.5C6.1 9 6 9.5 6 10c0 4-1.5 5.5-2 6h11"/><line x1="4" y1="4" x2="20" y2="20"/>',
+        file: '<path d="M13 3.5H7a1.5 1.5 0 0 0-1.5 1.5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V9z"/><path d="M13 3.5V9h5.5"/>',
+        /* 仅 JS 侧使用 */
+        upload: '<path d="M12 16V4"/><path d="M7.5 8.5L12 4l4.5 4.5"/><path d="M4.5 19.5h15"/>',
+        // v1.2.28 私聊右侧栏四入口：统一 24 网格、stroke 1.8、round 端点（禁实心填充）
         pin: '<path d="M9 3.5h6M10 3.5v5.2L7.4 13h9.2L14 8.7V3.5"/><path d="M12 13v7.5"/>',
         pinOff: '<path d="M9 3.5h6M10 3.5v5.2L7.4 13h9.2M14 8.7V3.5"/><path d="M12 13v7.5"/><path d="M4 20.5L20 3.5"/>',
         trash: '<path d="M4 6.5h16"/><path d="M9.5 6.5V4.2h5v2.3"/><path d="M6.5 6.5l1 13.3h9l1-13.3"/><path d="M10.2 10v6.2M13.8 10v6.2"/>',
         userX: '<circle cx="10" cy="8" r="3.4"/><path d="M3.8 20.2c0-3.4 2.8-5.7 6.2-5.7 1 0 1.9.2 2.7.5"/><path d="M16.2 16.6l4.6 4.6M20.8 16.6l-4.6 4.6"/>',
-        flag: '<path d="M5.5 21.2V3.6"/><path d="M5.5 4.6h11.8l-2.2 3.9 2.2 3.9H5.5z"/>'
+        flag: '<path d="M5.5 21.2V3.6"/><path d="M5.5 4.6h11.8l-2.2 3.9 2.2 3.9H5.5z"/>',
+        // v1.3.85 右键菜单新增：复制 / 引用 / 撤回 / 收藏 / 后台
+        copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V5.5a2 2 0 0 0-2-2H5.5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h3"/>',
+        quote: '<path d="M5 5.5v13"/><path d="M9.5 9h9M9.5 12.5h9M9.5 16h6"/>',
+        undo: '<path d="M4.5 9.5h9.5a5 5 0 1 1 0 10H8"/><path d="M8 5.5L4.5 9.5 8 13.5"/>',
+        star: '<path d="M12 4l2.4 5 5.4.7-4 3.8 1 5.4-4.8-2.7-4.8 2.7 1-5.4-4-3.8 5.4-.7z"/>',
+        monitor: '<rect x="3.5" y="5" width="17" height="11.5" rx="2"/><path d="M9 20h6M12 16.5V20"/>'
     };
-
-    /** 通用线性图标（与 PHP 侧 ow_icon 的路径表保持一致；禁 Emoji 作功能图标） */
-    var OW_ICONS = {
-        image: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="M4 17l4.5-4.5 3.5 3.5 3-3 5 5"/>',
-        smile: '<circle cx="12" cy="12" r="9"/><path d="M8.5 14.5c1 1.5 2.2 2.2 3.5 2.2s2.5-.7 3.5-2.2"/><line x1="9" y1="9.5" x2="9" y2="10.5"/><line x1="15" y1="9.5" x2="15" y2="10.5"/>',
-        upload: '<path d="M12 16V4"/><path d="M7.5 8.5L12 4l4.5 4.5"/><path d="M4.5 19.5h15"/>'
-    };
-    function owIco(name, size) {
+    function owIco(name, size, extra) {
         var d = OW_ICONS[name] || '';
         if (!d) return '';
-        return '<svg class="ow-ico" width="' + (size || 16) + '" height="' + (size || 16) + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + d + '</svg>';
+        return '<svg class="ow-ico' + (extra ? ' ' + extra : '') + '" width="' + (size || 16) + '" height="' + (size || 16) + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + d + '</svg>';
     }
 
-    /** 生成一行侧栏入口（整行可点）。onclick 缺省时渲染为不可点的静态行 */
-    function entryRow(label, icon, onclick) {
-        var d = OW_ENTRY_ICONS[icon] || OW_ENTRY_ICONS.gear;
-        var svg = '<svg class="ow-ico ow-panel-entry-ico" width="16" height="16" viewBox="0 0 24 24" fill="none"'
-            + ' stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + d + '</svg>';
+    /**
+     * 生成一行侧栏入口（整行可点）。onclick 缺省时渲染为不可点的静态行。
+     *
+     * @param {string} label    行文字
+     * @param {string} icon     OW_ICONS 里的图标名（avatarUrl 给了就不看它）
+     * @param {string} onclick  点击表达式；空 = 静态行
+     * @param {string} [avatarUrl] 传了就把**图标位换成头像**：这一行代表的是「这个会话」，
+     *                  群聊显示群头像、私聊显示对方头像，比一枚通用齿轮更能说明「我在看谁」。
+     */
+    function entryRow(label, icon, onclick, avatarUrl) {
+        var ico = avatarUrl
+            ? roomAvatarHtml(avatarUrl, 'xs', 'ow-avatar ow-avatar-xs ow-panel-entry-ico')
+            : (function () {
+                var d = OW_ICONS[icon] || OW_ICONS.gear;
+                return '<svg class="ow-ico ow-panel-entry-ico" width="16" height="16" viewBox="0 0 24 24" fill="none"'
+                    + ' stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + d + '</svg>';
+            })();
         var arrow = '<span class="ow-panel-entry-arrow">›</span>';
         if (!onclick) {
-            return '<div class="ow-panel-entry is-static">' + svg + '<span class="ow-panel-entry-t">' + esc(label) + '</span>' + arrow + '</div>';
+            return '<div class="ow-panel-entry is-static">' + ico + '<span class="ow-panel-entry-t">' + esc(label) + '</span>' + arrow + '</div>';
         }
         return '<div class="ow-panel-entry" role="button" tabindex="0" onclick="' + onclick + '"'
             + ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();' + onclick + '}">'
-            + svg + '<span class="ow-panel-entry-t">' + esc(label) + '</span>' + arrow + '</div>';
+            + ico + '<span class="ow-panel-entry-t">' + esc(label) + '</span>' + arrow + '</div>';
+    }
+
+    /**
+     * 右键 / 点击菜单的条目 HTML（v1.3.85）。四处菜单（消息右键、点头像昵称、右键头像、
+     * 成员搜索结果）原先各拼一遍 `<a>`，图标只能加在其中几处 —— 现在共用一个渲染口。
+     *
+     * 图标取值顺序：条目自带的 `icon` → 按文字查 OW_CTX_ICONS → 无图标。
+     * 第二档是为**插件注入的条目**准备的：禁言 / 举报 / 屏蔽这些文字由各自插件 push，
+     * 核心不认识它们，但也不能让这几行看起来缺了一块。
+     */
+    var OW_CTX_ICONS = {
+        '查看个人资料': 'user', '发私信': 'chat', '私信': 'chat',
+        '复制': 'copy', '引用': 'quote', '回复': 'quote', '撤回': 'undo', '删除': 'trash',
+        '收藏为贴纸': 'star', '禁言 TA': 'mute', '禁言': 'mute', '举报': 'flag',
+        '屏蔽此人': 'userX', '取消屏蔽': 'user', '拉黑': 'userX', '取消拉黑': 'user',
+        '群文件操作': 'file', '创建群聊': 'plus', '设置': 'gear', '管理后台': 'monitor',
+        '退出登录': 'logout'
+    };
+    function ctxItemsHtml(items) {
+        var h = '', i, ic;
+        for (i = 0; i < items.length; i++) {
+            ic = items[i].icon || OW_CTX_ICONS[items[i].t] || '';
+            h += '<a class="ow-ctx-item" href="javascript:;" data-i="' + i + '">'
+               + (ic ? owIco(ic, 14, 'ow-ctx-ico') : '') + esc(items[i].t) + '</a>';
+        }
+        return h;
     }
 
     /**
@@ -1184,7 +1233,7 @@
             this.renderMe();
             this.buildEmojiPanel();
             this.bindEvents();
-            this.renderRoomPanel();      // v1.1.1：初始化右侧栏群聊设置区
+            this.renderRoomPanel();      // v1.1.1：初始化右侧栏群聊信息区
             this.syncMembersSearchBtn(); // v1.3.24：成员搜索按钮显隐（游客/私聊隐藏）
             // v1.3.25：主题已在 <head> 的内联脚本里预置好（防首屏闪一下浅色），
             // 这里只补「监听系统主题变化」。再次 applyTheme 是幂等的，不会闪。
@@ -1349,7 +1398,7 @@
                 setSide($('owSidebar').className.indexOf('open') < 0);
             };
             // 群聊信息面板：宽屏用 hidden 收起（常驻侧栏），窄屏用 open 浮层（默认收起）
-            // v1.1.1：侧栏内容改为「上方群聊设置 + 下方所有成员」，开关时需重渲染设置区
+            // v1.1.1：侧栏内容改为「上方群聊信息 + 下方所有成员」，开关时需重渲染设置区
             var isNarrow = function () { return (document.documentElement.clientWidth || w.innerWidth || 1024) <= 960; };
             var setPanel = function (open) {
                 var o = $('owOnline');
@@ -2477,7 +2526,9 @@
             this.dm = {
                 peer: peer, kind: m[1], id: parseInt(m[2], 10),
                 pinned: !!(conv && conv.pinned),
-                is_friend: !!(conv && conv.is_friend)
+                is_friend: !!(conv && conv.is_friend),
+                // 右侧栏第一行的头像位要用它（会话列表里本来就带着，不必再查一次接口）
+                avatar: (conv && conv.avatar) || ''
             };
             this.pollGen = (this.pollGen || 0) + 1;          // 作废在途的群聊轮询回调
             this._roomPollRunning = false;                  // 群聊长轮询就此停摆
@@ -2645,7 +2696,7 @@
          * 可往 #owREExtras 追加入口。
          * v1.1.10：群资料表单已搬回弹窗，#owREExtras 现在是**入口行容器**
          * （不再是表单里的一行），插件入口不再与表单耦合；请用 .ow-panel-entry
-         * 类保持与「群聊设置」行一致的外观。#owREExtras 必定存在，
+         * 类保持与「群聊信息」行一致的外观。#owREExtras 必定存在，
          * 但插件应按 ctx.isOwner || ctx.isAdmin 自行决定是否填充。
          */
         onRoomEdit: function (fn) { if (typeof fn === 'function') this._roomEditHooks.push(fn); },
@@ -2751,7 +2802,7 @@
                 });
             };
             load();
-            this.renderRoomPanel();     // v1.1.1：右侧栏群聊设置区跟随切群刷新
+            this.renderRoomPanel();     // v1.1.1：右侧栏群聊信息区跟随切群刷新
             this._fireRoomSwitch();   // 插件钩子：切换群聊（公告等按群拉取）
             this._fireViewChange();   // v1.1.0：回到群聊视图 → 插件按 roomId 复原群级装饰
             // v1.2.27：立即渲染「所有成员」并校准发言闸门，不等首次 poll 返回（最长 20 秒）
@@ -2988,7 +3039,7 @@
                 }
                 pubNote.innerHTML = pubBox.checked
                     ? '<span style="color:var(--ow-text-sub)">群聊将出现在左侧列表，所有人（含游客）都能看到并进入。</span>'
-                    : '<span style="color:var(--ow-red)">仅邀请：群聊不会出现在列表里。创建后只有你能进，其他人需要你或群成员在群聊设置里按用户 ID 邀请。</span>';
+                    : '<span style="color:var(--ow-red)">仅邀请：群聊不会出现在列表里。创建后只有你能进，其他人需要你或群成员在群聊信息里按用户 ID 邀请。</span>';
             };
             pubBox.onchange = refreshPub;
             refreshPub();
@@ -3075,7 +3126,7 @@
                     self.closeModal();
                     toast('群聊「' + r.name + '」已创建'
                         + (r.cost > 0 ? '，扣除 ' + r.cost + ' 积分' : '')
-                        + (pubBox.checked ? '' : '（仅邀请，可在群聊设置里邀请成员）'));
+                        + (pubBox.checked ? '' : '（仅邀请，可在群聊信息里邀请成员）'));
                     self.refreshRooms(r.id, r.name);
                 });
             };
@@ -3577,12 +3628,7 @@
             this._ctxItems = items;
             var menu = $('owCtxMenu');
             menu._from = 'member-search';
-            var html = '', k;
-            for (k = 0; k < items.length; k++) {
-                html += '<a class="ow-ctx-item" href="javascript:;" data-i="' + k + '">'
-                      + esc(items[k].t) + '</a>';
-            }
-            menu.innerHTML = html;
+            menu.innerHTML = ctxItemsHtml(items);
             // 没有触发源（不是右键），按视口水平居中、固定在偏上位置
             var w2 = w.innerWidth || 900, mw = menu.offsetWidth || 150;
             menu.style.left = Math.max(8, Math.round(w2 / 2 - mw / 2)) + 'px';
@@ -3636,11 +3682,7 @@
             this._ctxItems = items;
             var menu = $('owCtxMenu');
             menu._from = 'msg';
-            var html = '', i;
-            for (i = 0; i < items.length; i++) {
-                html += '<a href="javascript:;" data-i="' + i + '">' + esc(items[i].t) + '</a>';
-            }
-            menu.innerHTML = html;
+            menu.innerHTML = ctxItemsHtml(items);
             menu.style.display = 'block';
             // 视口边界：菜单放不下时往回挪
             var vw = w.innerWidth || document.documentElement.clientWidth;
@@ -4204,7 +4246,7 @@
          *   v1.1.0  群资料是**弹窗**，入口在会话列表行内三点菜单。
          *   v1.1.1  改为**常驻侧栏内联表单**（本区块直接渲染可编辑表单）。
          *   v1.1.10 按需求回退到**弹窗**，侧栏只留两行入口：
-         *     第 1 行「群聊设置」→ openRoomEdit() 打开模态框
+         *     第 1 行「群聊信息」→ openRoomEdit() 打开模态框
          *     第 2 行「群公告」  → announcements 插件经 onRoomEdit 钩子填进 #owREExtras
          *     两行同款样式（.ow-panel-entry），群公告因此位于「所有成员」区块上方，
          *     **不再与群资料表单耦合**——插件不必关心表单是弹窗还是内联。
@@ -4244,13 +4286,23 @@
                 return;
             }
             if (!r) {
+                /* v1.3.85 自愈：刚被邀请/新加入的群只出现在会话轮询里，而 cfg.rooms 还是进页时
+                   的快照 —— 于是点进群看不到「群聊信息」入口，必须刷新页面才出现（用户报的现象）。
+                   这里按当前群补拉一次群列表再重渲染；**每个群只补拉一次**，
+                   免得「确实不在我列表里的群」（已删除/被移出）每次都打接口。 */
+                if (this.room > 0 && this._roomsHealed !== this.room) {
+                    this._roomsHealed = this.room;
+                    this.reloadRooms();
+                    return;
+                }
                 box.innerHTML = '<div class="ow-panel-hint">请先选择一个群聊</div>';
                 return;
             }
             var meId = me.id || 0;
             var isOwner = !!meId && meId === (r.owner_id || 0);
 
-            box.innerHTML = entryRow('群聊设置', 'gear', 'OwChat.openRoomEdit()')
+            // 图标位放**群头像**：这一行代表的就是这个会话，头像比一枚通用齿轮更能说明「我在看哪个群」
+            box.innerHTML = entryRow('群聊信息', 'gear', 'OwChat.openRoomEdit()', r.avatar)
                 + '<div class="ow-panel-entry-row" id="owREExtras"></div>';
 
             // 插件扩展钩子（v0.0.102 起）：群公告等入口往 #owREExtras 追加
@@ -4261,7 +4313,7 @@
         },
 
         /**
-         * 私聊右侧栏的四个入口（v1.2.28）。样式与群聊的「群聊设置」**完全同款**
+         * 私聊右侧栏的四个入口（v1.2.28）。样式与群聊的「群聊信息」**完全同款**
          * （同一个 entryRow + .ow-panel-entry-row）。
          *
          * ⚠️ 结构不能拍平：分隔线画在 .ow-panel-entry-row 的 border-top 上，
@@ -4281,9 +4333,9 @@
             var isGuest = this.cfg.actor.kind !== 'user';   // 游客无置顶/好友概念
 
             var first = isGuest || !peerKey
-                ? entryRow('私聊会话', 'gear', '')       // 游客/异常态：静态行，只作占位保住首行结构
+                ? entryRow('私聊会话', 'gear', '', d.avatar)       // 游客/异常态：静态行，只作占位保住首行结构
                 : entryRow(d.pinned ? '取消置顶' : '设为置顶', d.pinned ? 'pinOff' : 'pin',
-                    'OwChat.toggleDmPin()');
+                    'OwChat.toggleDmPin()', d.avatar);
 
             var rest = entryRow('删除聊天记录', 'trash', 'OwChat.clearDmHistory()');
             // 「删除好友」只在对方确实是好友时给：否则点了必然报错（服务端会拒）
@@ -4356,7 +4408,7 @@
         },
 
         /**
-         * 群聊设置弹窗（v1.1.10 恢复弹窗形态，v1.1.1~v1.1.9 曾内联常驻在侧栏）。
+         * 群聊信息弹窗（v1.1.10 恢复弹窗形态，v1.1.1~v1.1.9 曾内联常驻在侧栏）。
          *
          * 与 v1.1.0 弹窗版的差异：
          *  - 群头像尺寸统一走 avatarHtml 的 'lg' 档（64px），与资料卡/个人设置一致；
@@ -4368,7 +4420,7 @@
             var me = this.cfg.me || {}, isAdmin = this.cfg.actor.role === 'admin';
             var r = null, list = this.cfg.rooms || [], i;
             for (i = 0; i < list.length; i++) { if (list[i].id === this.room) { r = list[i]; break; } }
-            if (this.room === 0 || !r) { toast('私聊会话没有群聊设置'); return; }
+            if (this.room === 0 || !r) { toast('私聊会话没有群聊信息'); return; }
 
             var canEdit = !!r.can_edit;   // 服务端下发：群主 + 超管（口径唯一，前端不自行判身份）
             var meId = me.id || 0;
@@ -4389,7 +4441,7 @@
             }
 
             this.openModal(
-                '<h3>群聊设置</h3>'
+                '<h3>群聊信息</h3>'
                 + '<div class="ow-card-head">'
                 + '<span class="ow-set-avatar-btn" id="owRoomAvatarPreview"'
                 + (canEdit ? ' title="点击更换群头像" onclick="OwChat.roomAvatarPick()"' : '') + '>'
@@ -5095,9 +5147,7 @@
             } });
             this._ctxItems = items;
             menu._from = 'me';
-            var html = '';
-            for (var i = 0; i < items.length; i++) html += '<a href="javascript:;" data-i="' + i + '">' + esc(items[i].t) + '</a>';
-            menu.innerHTML = html;
+            menu.innerHTML = ctxItemsHtml(items);
             menu.style.display = 'block';
             // 定位：贴着资料区上缘，左边对齐侧栏
             var r = $('owMe').getBoundingClientRect();
@@ -5468,10 +5518,9 @@
             }
             this._ctxItems = items;
             if (!items.length) return;
-            var menu = $('owCtxMenu'), html = '', i2;
+            var menu = $('owCtxMenu');
             menu._from = 'msg';
-            for (i2 = 0; i2 < items.length; i2++) html += '<a href="javascript:;" data-i="' + i2 + '">' + esc(items[i2].t) + '</a>';
-            menu.innerHTML = html;
+            menu.innerHTML = ctxItemsHtml(items);
             menu.style.display = 'block';
             var vw = w.innerWidth || document.documentElement.clientWidth, vh = w.innerHeight || document.documentElement.clientHeight;
             var mw = menu.offsetWidth || 140, mh = menu.offsetHeight || items.length * 32;
@@ -5540,7 +5589,7 @@
         clearQuote: function () { this.quote = null; this.renderQuote(); },
 
         /**
-         * 触发群头像文件选择（群聊设置弹窗内的隐藏 input，v1.1.10）
+         * 触发群头像文件选择（群聊信息弹窗内的隐藏 input，v1.1.10）
          */
         /** 群头像点击：v1.3.11 起不再直接选文件，改走头像设置弹窗（上传 / 浏览插图 / 恢复默认） */
         roomAvatarPick: function () { this.openAvatarDialog({ room: this.room, name: this.roomName }); },
@@ -5740,7 +5789,7 @@
 
 
         /**
-         * 保存群聊设置（群聊设置弹窗内的表单，v1.1.10）
+         * 保存群聊信息（群聊信息弹窗内的表单，v1.1.10）
          *
          * v1.1.1~v1.1.9 表单内联在侧栏，保存后不关任何浮层；v1.1.10 恢复弹窗形态，
          * 因此保存成功必须 closeModal()，否则弹窗会盖在已更新的界面上继续显示旧数据。
@@ -5748,7 +5797,7 @@
         roomEditSave: function (id) {
             var self = this;
             var nameEl = $('owRoomEditName'), descEl = $('owRoomEditDesc');
-            if (!nameEl || !descEl) { toast('请先打开群聊设置弹窗'); return; }
+            if (!nameEl || !descEl) { toast('请先打开群聊信息弹窗'); return; }
             OwApi.post('room_update', {
                 id: id,
                 name: nameEl.value,

@@ -62,7 +62,7 @@ Plugin::adminPage('room-embed', '群聊嵌入', function () {
         . '<h3 style="margin-top:0">使用方法</h3>'
         . '<ol style="line-height:2;color:var(--ow-text,#333)">'
         . '<li>群主或超级管理员进入任意群聊，点击右上角「⋮」打开群聊信息面板</li>'
-        . '<li>在「群聊设置」下方点击「嵌入代码」</li>'
+        . '<li>在「群聊信息」下方点击「嵌入代码」</li>'
         . '<li>复制生成的 iframe 代码，粘贴到目标网站的 HTML 中即可</li>'
         . '</ol>'
         . '<h3>嵌入效果</h3>'

@@ -54,7 +54,6 @@
         '所有成员': 'Members',
         '还没有成员': 'No members yet',
         '搜索成员': 'Search members',
-        '群聊设置': 'Room settings',
         '群公告': 'Announcements',
         '消息': 'Messages',
         '联系人': 'Contacts',
@@ -192,7 +191,7 @@
         '游客暂不支持搜索': 'Guests cannot search yet',
         '私聊对象不合法': 'Invalid direct-message target',
         '无法确定私聊对象': 'Cannot resolve the direct-message target',
-        '私聊会话没有群聊设置': 'Direct chats have no room settings',
+        '私聊会话没有群聊信息': 'Direct chats have no room info',
         '该群聊当前不可进入': 'This room is currently unavailable',
         '该消息所在的群聊已不可进入': 'The room of this message is no longer available',
         '裁剪弹窗已关闭': 'Crop dialog closed',
@@ -424,7 +423,7 @@
 
         /* ---------- remaining front-end toasts ---------- */
         '举报功能不可用': 'Reporting is unavailable',
-        '请先打开群聊设置弹窗': 'Open the room settings first',
+        '请先打开群聊信息弹窗': 'Open the room info dialog first',
         '上传头像需要启用「附件上传」插件；也可以在头像设置里选「浏览插图」': 'Uploading an avatar needs the Attachments plugin — or pick a Browse illustration in the avatar settings',
         '上传群头像需要启用「附件上传」插件；也可以选「浏览插图」': 'Uploading a room avatar needs the Attachments plugin — or pick a Browse illustration',
 

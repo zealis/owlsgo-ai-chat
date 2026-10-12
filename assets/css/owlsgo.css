@@ -1698,6 +1698,16 @@ input[type=range] {
     min-width: 136px;
 }
 .ow-ctx-menu a { display: block; padding: 6px 14px; font-size: 13px; color: var(--ow-text); white-space: nowrap; }
+/* v1.3.85：菜单条目左侧图标。四处菜单（消息右键 / 点头像昵称 / 右键头像 / 成员搜索）
+   现在共用 ctxItemsHtml()，图标由这一条排版。
+   flex 而不是给 svg 加 vertical-align：文字与图标基线对齐在 13px 中文上怎么调都会差 1–2px，
+   flex 直接按行高居中，图标也不会把行高顶开。 */
+.ow-ctx-menu a.ow-ctx-item {
+    display: -webkit-flex; display: flex;
+    -webkit-align-items: center; align-items: center; -webkit-gap: 7px; gap: 7px;
+}
+.ow-ctx-item .ow-ctx-ico { flex-shrink: 0; -webkit-flex-shrink: 0; color: var(--ow-text-sub); }
+.ow-ctx-item:hover .ow-ctx-ico { color: inherit; }
 .ow-ctx-menu a:hover { background: var(--ow-hover-bg); color: var(--ow-primary-dark); }
 
 /* ---------- v1.1.15 品牌区（站点名右侧竖三点）菜单 ----------
@@ -1892,6 +1902,10 @@ input[type=range] {
     -webkit-tap-highlight-color: transparent;
 }
 .ow-panel-entry-ico { flex-shrink: 0; -webkit-flex-shrink: 0; color: var(--ow-text-sub); }
+/* v1.3.85：图标位也可以放**会话头像**（群聊→群头像、私聊→对方头像）。
+   头像档最小是 xs=20px，比这一行的 16px 图标大，会把行高顶开、与下面的「所有成员」错位，
+   所以按元素+双类提权锁回 16px（.ow-avatar-xs 只有一个类，压不住）。 */
+span.ow-panel-entry-ico.ow-avatar { width: 16px; height: 16px; line-height: 16px; font-size: 9px; }
 .ow-panel-entry-t { flex: 1; -webkit-flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ow-panel-entry-arrow { flex-shrink: 0; -webkit-flex-shrink: 0; font-size: 16px; line-height: 1; color: var(--ow-text-sub); }
 .ow-panel-entry:hover, .ow-panel-entry:focus { color: var(--ow-primary-dark); outline: none; }
