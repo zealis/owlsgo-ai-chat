@@ -1,6 +1,6 @@
 <?php
 /**
- * 群聊嵌入插件（room-embed）v1.3.1
+ * 群聊嵌入插件（room-embed）v1.4.0
  *
  * 功能：
  *   - 群主/管理员可在「群聊信息」面板获取该群的嵌入代码（默认浮动手机按钮，
@@ -11,6 +11,8 @@
  *   - **域名白名单**：只有名单内的域名才能加载（服务端 + 前端双重校验）
  *   - 嵌入代码内含**嵌入令牌**：跨站 iframe 被浏览器拦下会话 Cookie 时，
  *     令牌经核心 sign.fallback 钩子顶替签名门禁，聊天全功能可用（不依赖 Cookie）
+ *   - **令牌导航保活**（v1.4.0）：iframe 内整页导航（等级页链接、「返回聊天」等）
+ *     不再丢令牌——window.name 载体 + 加载恢复 + 点击/改地址时补全参数
  *
  * 不修改主程序的依据（v1.2.0 起有一处最小核心增量，其余仍为零修改）：
  *   - 页面入口用现有 ?page=chat&room=ID 直达群聊（核心已支持，renderChat 内 directHit）
@@ -43,6 +45,16 @@
  *   8. 修后台说明页文档列表：核心全局 reset 清零了 ol 左内边距（序号挂到卡片左界外，
  *      「数字超出标题」）且 ul 被 list-style:none 吃掉的符号——在本页作用域
  *      （.ow-re-doc）内补回 padding-left 与 disc 符号，不影响其它页面。
+ * v1.4.0（2026-10-12）：
+ *   9. 修「从 level 页返回聊天，全站 403 签名验证失败」：iframe 内整页导航
+ *      （level-trust 用户卡片链接 href="?page=level"、插件页顶栏「返回聊天」
+ *      href="?page=chat"）把 embed_token/visitor/origin 全部冲掉，iframe 回到
+ *      无 cookie + 无令牌状态，每请求新会话 → 签名 key 永远对不上，刷新无用。
+ *      保活三件套（page.head 每页注入，主程序零改动）：window.name 载体
+ *      （令牌+房间随 iframe 导航存活，跨站父页面读不到）；加载即恢复
+ *      （replaceState 写回 URL）；导航即携带（capture 拦同站 <a> 补参数，
+ *      聊天目标同时补回上次房间——否则访客卡在「请选择一个群聊」选不了群；
+ *      pushState/replaceState 兜底 + 跨站链接先抹令牌防外泄）。
  */
 if (!defined('OWLSGO_VERSION')) exit;
 
@@ -292,8 +304,10 @@ Plugin::route('plugin_room_embed_token_list', function (array $ctx) {
 // 目标形态：顶栏（群名，44px）+ 消息区 + 输入栏，其余框架全部隐藏。
 // 颜色一律引用核心 --ow-* 变量（带回落值仅作核心样式表未加载时的兜底，不参与正常渲染）。
 Plugin::on('page.head', function (): void {
-    if (!isset($_GET['embed']) || $_GET['embed'] !== '1') return;
-    echo <<<'CSS'
+    $uri = (string)($_SERVER['REQUEST_URI'] ?? '');
+    $hasTok = preg_match('/[?&]embed_token=[a-f0-9]{32}/', $uri) === 1;
+    if (isset($_GET['embed']) && $_GET['embed'] === '1') {
+        echo <<<'CSS'
 <style>
 /* ===== 嵌入模式：把聊天页压成右下角小窗 ===== */
 /* 品牌条 / 图标 rail / 会话列表 / 右侧群信息栏 / 浮层遮罩：小窗里全部是占地方的框架 */
@@ -341,59 +355,167 @@ body.ow-chat-body{background:var(--ow-bg,#fff)!important}
 .ow-embed-deny span{color:var(--ow-text-sub,#999);font-size:12.5px;max-width:280px}
 </style>
 CSS;
-        /* ---------- 嵌入令牌的 XHR 预打包（v1.2.0） ----------
-           核心 OwChat.init() 的首批请求发生在**本插件的 chat.js 加载之前**，那时 OwApi
-           还没被包上令牌——首波请求会全灭，且 poll 循环一死不再重试（实测 10/11 个 403）。
-           这里在 <head> 里先做 XHR 原型级注入，保证首波请求也带令牌与访客标识。
-           只在嵌入态且 URL 带合法令牌时生效；老嵌入码（无令牌）行为不变，走恢复引导兜底。
-           令牌/访客标识**不从地址栏抹除**：第三方 iframe 里 localStorage 可能被浏览器一并拦掉，
-           URL 是重载后唯一可靠的来源（跨站 referrer 默认只传 origin，查询串不外泄）。 */
-        if (preg_match('/[?&]embed_token=[a-f0-9]{32}/', (string)($_SERVER['REQUEST_URI'] ?? ''))) {
-            // v1.3.0：把该令牌的域名白名单下发给前端（chat.js 的 domainGuard 用），
-            // 未授权域名进来自我了断给一句人话，而不是留一个半死的聊天窗。
-            $embTokHash = null;
-            if (preg_match('/[?&]embed_token=([a-f0-9]{32})/', (string)($_SERVER['REQUEST_URI'] ?? ''), $mm)) {
-                $embRow = DB::one('SELECT domains FROM plugin_room_embed_tokens WHERE token_hash=? AND revoked=0', [hash('sha256', $mm[1])]);
-                $embTokHash = $embRow ? owReDomainList((string)$embRow['domains']) : [];
-            }
-            echo '<script>window.OW_EMBED_DOMAINS=' . json_encode($embTokHash ?: [], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . ';</script>';
-            echo <<<'JS'
+    }
+    /* ---------- 域名白名单下发（v1.3.0） ----------
+       仅当 URL 带令牌时注入：chat.js 的 domainGuard 用它做客户端预判。
+       注意：经 v1.4.0「导航保活」从 window.name 恢复令牌的页面，服务端渲染时
+       URL 还没有令牌参数，名单未注入——此时客户端守卫跳过（返回 true），
+       由服务端 sign.fallback 权威校验（配了白名单且来源不符 → 拒）。 */
+    if ($hasTok) {
+        $embDomains = [];
+        if (preg_match('/[?&]embed_token=([a-f0-9]{32})/', $uri, $mm)) {
+            $embRow = DB::one('SELECT domains FROM plugin_room_embed_tokens WHERE token_hash=? AND revoked=0', [hash('sha256', $mm[1])]);
+            $embDomains = $embRow ? owReDomainList((string)$embRow['domains']) : [];
+        }
+        echo '<script>window.OW_EMBED_DOMAINS=' . json_encode($embDomains, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . ';</script>';
+    }
+    /* ---------- 嵌入令牌保活（v1.4.0，每页注入） ----------
+       解决的真问题：iframe 内**整页导航**会把 embed_token 冲掉——
+       level-trust 的用户卡片链接（href="?page=level"）、插件页顶栏的
+       「返回聊天」（href="?page=chat"）都是裸相对链接。令牌一丢，
+       iframe 回到「无 cookie（第三方上下文被拦）+ 无令牌」状态，
+       每个请求都是新会话 → 签名 key 永远对不上 → 全站 action 403
+       「签名验证失败，请刷新页面」，且刷新无用（实测复现）。
+       保活三件套（全部在插件内，主程序零改动）：
+         ① window.name 载体：令牌随 iframe 导航存活（不受第三方
+            Cookie/localStorage 拦截影响；跨站父页面读不到 iframe 的 window.name）；
+         ② 加载即恢复：iframe 内且 URL 无令牌时，从 window.name 取回并
+            replaceState 写回 URL（不产生历史记录），再装 XHR 预打包；
+ *         ③ 导航即携带：capture 阶段拦同站 <a> 点击补全参数（含上次房间——
+ *            「返回聊天」是 href="?page=chat" 裸链接，不补房间访客会卡在
+ *            「请选择一个群聊」——嵌入态侧栏被隐藏，永远选不了群）；
+ *            pushState/replaceState 也补；点跨站链接先抹 window.name（不外泄令牌）。
+       XHR 预打包为什么必须有：核心 OwChat.init() 的首批请求发生在插件
+       chat.js 加载之前，不预打包首波全灭（实测 10/11 个 403）。 */
+    echo <<<'JS'
 <script>
 (function () {
-    var m = /[?&]embed_token=([a-f0-9]{32})/.exec(location.search);
-    if (!m) return;
-    var tok = m[1];
-    var v = /[?&]embed_visitor=([a-z0-9]{4,16})/.exec(location.search);
-    var vis = v ? v[1] : '';
-    var o = /[?&]embed_origin=([a-z0-9.-]+)/.exec(location.search);
-    var org = o ? o[1] : '';
-    try { localStorage.setItem('ow_embed_token', tok); } catch (e) {}
-    var extra = 'embed_token=' + tok + (vis ? '&embed_visitor=' + vis : '') + (org ? '&embed_origin=' + org : '');
-    var oo = XMLHttpRequest.prototype.open, os = XMLHttpRequest.prototype.send;
-    XMLHttpRequest.prototype.open = function (meth, url) {
-        this._owUrl = String(url || '');
-        return oo.apply(this, arguments);
-    };
-    XMLHttpRequest.prototype.send = function (body) {
+    var KEY = 'owEmbedCtx';
+    var RE_TOK = /[?&]embed_token=([a-f0-9]{32})/;
+    var RE_VIS = /[?&]embed_visitor=([a-z0-9]{4,16})/;
+    var RE_ORG = /[?&]embed_origin=([a-z0-9.-]+)/;
+    var RE_ROOM = /[?&]room=(\d{1,9})/;
+    function inFrame() { try { return window.top !== window.self; } catch (e) { return true; } }
+    function ctxUrl() {
+        var q = location.search || '';
+        var t = RE_TOK.exec(q), v = RE_VIS.exec(q), o = RE_ORG.exec(q), r = RE_ROOM.exec(q);
+        return { tok: t ? t[1] : '', vis: v ? v[1] : '', org: o ? o[1] : '', room: r ? r[1] : '' };
+    }
+    function nameGet() {
         try {
-            if (this._owUrl && this._owUrl.indexOf('action=') >= 0) {
-                if (typeof body === 'string' && body.indexOf('embed_token=') < 0) {
-                    body += (body ? '&' : '') + extra;
-                } else if (typeof FormData !== 'undefined' && body instanceof FormData
-                           && (!body.has || !body.has('embed_token'))) {
-                    body.append('embed_token', tok);
-                    if (vis) body.append('embed_visitor', vis);
-                    if (org) body.append('embed_origin', org);
-                }
-            }
+            var n = window.name || '';
+            if (n.indexOf(KEY + '=') !== 0) return null;
+            var p = n.slice(KEY.length + 1).split('|');
+            if ((p[0] || '').length !== 32 || !RE_TOK.test('?embed_token=' + (p[0] || ''))) return null;
+            return { tok: p[0], vis: p[1] || '', org: p[2] || '', room: /^\d{1,9}$/.test(p[3] || '') ? p[3] : '' };
+        } catch (e) { return null; }
+    }
+    function nameSet(c) {
+        try { window.name = KEY + '=' + c.tok + '|' + c.vis + '|' + c.org + '|' + (c.room || ''); } catch (e) {}
+    }
+    function nameClear() {
+        try { if ((window.name || '').indexOf(KEY + '=') === 0) window.name = ''; } catch (e) {}
+    }
+    function sameOrigin(u) { return u.indexOf(location.protocol + '//' + location.host) === 0; }
+    function qs(c) {
+        return 'embed=1&embed_token=' + c.tok
+            + (c.vis ? '&embed_visitor=' + c.vis : '')
+            + (c.org ? '&embed_origin=' + c.org : '');
+    }
+    function restoreUrl(c) {
+        try {
+            var kept = [];
+            (location.search || '').replace(/^\?/, '').split('&').forEach(function (kv) {
+                if (kv && kv.indexOf('embed_') !== 0) kept.push(kv);
+            });
+            history.replaceState(null, '', location.pathname + '?' + (kept.length ? kept.join('&') + '&' + qs(c) : qs(c)));
         } catch (e) {}
-        return os.call(this, body);
-    };
+    }
+    function packXhr(c) {
+        var extra = 'embed_token=' + c.tok + (c.vis ? '&embed_visitor=' + c.vis : '') + (c.org ? '&embed_origin=' + c.org : '');
+        var oo = XMLHttpRequest.prototype.open, os = XMLHttpRequest.prototype.send;
+        XMLHttpRequest.prototype.open = function (meth, url) {
+            this._owUrl = String(url || '');
+            return oo.apply(this, arguments);
+        };
+        XMLHttpRequest.prototype.send = function (body) {
+            try {
+                if (this._owUrl && this._owUrl.indexOf('action=') >= 0) {
+                    if (typeof body === 'string' && body.indexOf('embed_token=') < 0) {
+                        body += (body ? '&' : '') + extra;
+                    } else if (typeof FormData !== 'undefined' && body instanceof FormData
+                               && (!body.has || !body.has('embed_token'))) {
+                        body.append('embed_token', c.tok);
+                        if (c.vis) body.append('embed_visitor', c.vis);
+                        if (c.org) body.append('embed_origin', c.org);
+                    }
+                }
+            } catch (e) {}
+            return os.call(this, body);
+        };
+    }
+    function hookNav(c) {
+        // ① 同站链接点击补全参数（capture 阶段：核心与插件渲染的链接都拦得到）。
+        //    只拦无 target 的链接——target=_blank/_top 会离开 iframe 上下文，
+        //    新标签页是第一方，靠 cookie 即可，带令牌反而会套上嵌入态 UI。
+        document.addEventListener('click', function (e) {
+            e = e || window.event;
+            var t = e.target || e.srcElement, a = null;
+            while (t && t.getAttribute) {
+                if (t.getAttribute('href')) { a = t; break; }
+                t = t.parentNode;
+            }
+            if (!a || a.getAttribute('target')) return;
+            var href = a.getAttribute('href') || '';
+            if (!href || href.charAt(0) === '#' || /^(javascript|mailto|tel):/i.test(href)) return;
+            var url = a.href;
+            if (!sameOrigin(url)) { nameClear(); return; }
+            if (url.indexOf('embed_token=') >= 0) return;
+            var qi = url.indexOf('?');
+            var q = qi >= 0 ? url.slice(qi + 1) : '';
+            var add = qs(c);
+            // 聊天目标（page=chat 或无 page 参数的默认页）且没带房间时，补回上次的房间——
+            // 插件页顶栏「返回聊天」是 href="?page=chat" 的裸链接，不补房间的话
+            // 嵌入态侧栏被隐藏，访客卡在「请选择一个群聊」永远选不了群。
+            var isChat = /(^|&)page=chat(&|$)/.test(q) || !/(^|&)page=/.test(q);
+            if (isChat && c.room && !/(^|&)room=/.test(q)) add += '&room=' + c.room;
+            a.setAttribute('href', url + (qi >= 0 ? '&' : '?') + add);
+        }, true);
+        // ② SPA 改地址后参数被冲掉时补回（核心 setRoomUrl 本就保留其他参数，这里兜插件/未来改动）
+        ['pushState', 'replaceState'].forEach(function (fn) {
+            var orig = history[fn];
+            if (!orig) return;
+            history[fn] = function () {
+                try {
+                    var u = arguments[2];
+                    if (typeof u === 'string' && u.indexOf('embed_token=') < 0 && u.indexOf('action=') < 0
+                        && sameOrigin(location.protocol + '//' + location.host + u)) {
+                        arguments[2] = u + (u.indexOf('?') >= 0 ? '&' : '?') + qs(c);
+                    }
+                } catch (e) {}
+                return orig.apply(history, arguments);
+            };
+        });
+    }
+
+    var framed = inFrame();
+    var c = ctxUrl();
+    if (c.tok) {
+        nameSet(c);          // URL 带令牌：入册（后续 iframe 内导航靠它续命）
+        packXhr(c);
+        if (framed) hookNav(c);
+    } else if (framed) {
+        var n = nameGet();   // URL 没令牌但还在嵌入 iframe 里：从 window.name 续上
+        if (n) {
+            restoreUrl(n);
+            packXhr(n);
+            hookNav(n);
+        }
+    }
 })();
 </script>
 JS;
-        }
-    });
+});
 
 /* ===================== 前端交互脚本 ===================== */
 Plugin::asset('js', 'room-embed/chat.js');
