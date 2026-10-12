@@ -1,6 +1,6 @@
 <?php
 /**
- * 群聊嵌入插件（room-embed）v1.4.0
+ * 群聊嵌入插件（room-embed）v1.4.1
  *
  * 功能：
  *   - 群主/管理员可在「群聊信息」面板获取该群的嵌入代码（默认浮动手机按钮，
@@ -55,6 +55,10 @@
  *      （replaceState 写回 URL）；导航即携带（capture 拦同站 <a> 补参数，
  *      聊天目标同时补回上次房间——否则访客卡在「请选择一个群聊」选不了群；
  *      pushState/replaceState 兜底 + 跨站链接先抹令牌防外泄）。
+ * v1.4.1（2026-10-12）：
+ *   10. 修 v1.4.0 的漏网路径：**点击**等级链接时钩子会给等级页 URL 补上令牌，
+ *      等级页走「URL 带令牌」分支，nameSet 把房间覆盖成空 → 返回聊天仍补不回
+ *      room（用户实测复现）。改为合并语义：当前页 URL 没带房间时保留上次记住的。
  */
 if (!defined('OWLSGO_VERSION')) exit;
 
@@ -501,6 +505,13 @@ CSS;
     var framed = inFrame();
     var c = ctxUrl();
     if (c.tok) {
+        // ⚠️ 房间要合并而不是覆盖：等级页等非聊天页的 URL 带令牌但不带房间，
+        // 直接 nameSet 会把上次记住的房间抹掉→「返回聊天」补不回 room，
+        // 访客卡在「请选择一个群聊」（嵌入态侧栏隐藏，永远选不了群）。
+        if (!c.room) {
+            var prev = nameGet();
+            if (prev && prev.room) c.room = prev.room;
+        }
         nameSet(c);          // URL 带令牌：入册（后续 iframe 内导航靠它续命）
         packXhr(c);
         if (framed) hookNav(c);
