@@ -3724,7 +3724,8 @@
         showUserMenu: function (x, y, m) {
             var self = this, admin = this.cfg.actor.role === 'admin', items = [];
             if (!m.recalled && !m.deleted) {
-                items.push({ t: '@ ' + m.nickname, icon: 'at', run: function () { self.mention(m.nickname); } });
+                // 行首的 @ 图标已经表示「提及」，标签里不要再写一个 @（v1.3.90：两个 @ 叠着很怪）
+                items.push({ t: m.nickname, icon: 'at', run: function () { self.mention(m.nickname); } });
                 // v1.1.2：**只有对方也是注册用户才给「私信」**（m.uid 为空即游客）。
                 // 原先只判自己是不是注册用户，于是「注册用户 → 游客」的入口一直挂着，
                 // 而服务端已彻底关闭跨身份私聊 —— 前端不收口就会变成点进去必然报错的死按钮。
