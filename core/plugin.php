@@ -88,8 +88,11 @@ class Plugin
             $r = Upgrade::check($err);
             Upgrade::saveInfo($r, $err);
             if ($r === null) return '检查失败：' . $err;
+            // 三态分开写：以前「有差异」和「有新版」共用一个 has_update，
+            // 本地还没推的提交也会被写成「（有更新）」，看日志的人以为仓库动了。
+            $stLabel = ['update' => '有更新', 'local_changes' => '本地与仓库有差异（多为未推送的提交）', 'latest' => '已最新'];
             return 'v' . $r['local_version'] . ' → v' . $r['remote_version']
-                . ($r['has_update'] ? '（有更新）' : '（已最新）') . '；' . Upgrade::notifyAdmins($r);
+                . '（' . ($stLabel[$r['status']] ?? $r['status']) . '）；' . Upgrade::notifyAdmins($r);
         }, '检查 GitHub 仓库更新（每 12 小时一次，后台「系统升级」处显示红点；有新版则通知超级管理员）');
         self::$loading = '';
 

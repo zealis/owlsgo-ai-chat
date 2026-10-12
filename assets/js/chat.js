@@ -6490,7 +6490,9 @@
         upgrade: {
             info: null,
 
-            /** 红点显隐：raw = settings.update_info（JSON 字符串）。有更新才亮。
+            /** 红点显隐：raw = settings.update_info（JSON 字符串）。
+             *  只有「仓库确有新版」才亮 —— has_update 在 v1.3.102 起就是这个口径（见 Upgrade::saveInfo），
+             *  本地改了还没推不再点它。
              *  点亮的是**所有** .ow-upd-dot（分组标题 + 组内「系统升级」那条），
              *  所以用 class 全量取而不是一句 $('owUpdDot')——收起时只见标题那颗。 */
             paintDot: function (raw) {
@@ -6526,10 +6528,22 @@
                 OwAdmin.upgrade.info = r;
                 var h = '<b>本地 v' + esc(r.local_version || '?') + ' → 远端 v' + esc(r.remote_version || '?') + '</b>'
                     + '<span style="font-size:12px;color:var(--ow-text-sub)">（' + esc(r.repo) + '）</span>';
-                if (!r.has_update) {
+                // status 三态（判据在 core/upgrade.php 的 statusOf）：
+                //   latest=一致 / update=仓库确有新版 / local_changes=本地改了或还没推。
+                // 老数据没有 status 字段时按差异兜底成 update，不会白屏。
+                var st = r.status || (r.has_update ? 'update' : 'latest');
+                if (st === 'latest') {
                     h += '<br><span style="color:#1a7f37">✓ 与远端一致，没有需要更新的文件。</span>';
                 } else {
-                    h += '<br>有更新：' + r.modified.length + ' 个文件将覆盖，' + r.added.length + ' 个文件新增。';
+                    if (st === 'local_changes') {
+                        // 这一态点「升级」是拿仓库版覆盖自己的新代码，说人话拦住它。
+                        // 句子里不掺数字：语言包按整句匹配，掺进去就永远翻译不到（数量看清单）。
+                        h += '<br><span style="color:#8a5a00">⚠ 本地版本没有落后于远端，却有文件与仓库不同 —— '
+                            + '通常是你本地改了还没推送。这时升级会用仓库里的版本覆盖它们（等于回退），'
+                            + '请先把本地提交推上去。</span>';
+                    } else {
+                        h += '<br>有更新：' + r.modified.length + ' 个文件将覆盖，' + r.added.length + ' 个文件新增。';
+                    }
                     var names = r.modified.slice(0, 50).concat(r.added.slice(0, 50).map(function (p) { return p + '（新）'; }));
                     h += '<details style="margin:4px 0"><summary style="cursor:pointer;font-size:12px;color:var(--ow-text-sub)">文件清单</summary>'
                         + '<div style="font-size:12px;max-height:200px;overflow:auto;font-family:Consolas,monospace;margin-top:4px">'
@@ -6538,26 +6552,40 @@
                         h += '<label style="display:block;margin:6px 0;font-size:13px;color:#8a5a00">'
                             + '<input type="checkbox" id="owUpdDown"> 远端版本低于本地，允许降级（一般应该用「恢复备份」而不是降级）</label>';
                     }
+                    if (st === 'local_changes' && !r.downgrade) {
+                        h += '<label style="display:block;margin:6px 0;font-size:13px;color:#8a5a00">'
+                            + '<input type="checkbox" id="owUpdOver"> 我确认要用仓库版本覆盖这些本地差异文件</label>';
+                    }
                     h += '<button class="ow-btn ow-btn-primary" style="margin-top:6px" onclick="OwAdmin.upgrade.apply()">升级</button>';
                 }
                 h += '<div id="owUpdResult" style="margin-top:8px;font-size:13px"></div>'
                     + '<div id="owUpdBak" style="margin-top:8px;font-size:12px;color:var(--ow-text-sub)"></div>';
                 panel.innerHTML = h;
                 OwAdmin.upgrade.loadBackups();
-                OwAdmin.upgrade.dotOn(!!r.has_update);   // 手动检查后红点即时同步（含分组标题那颗）
+                // 红点只跟「仓库确有新版」走（与 settings.update_info.has_update 同口径），
+                // 手动检查后即时同步；本地差异那一态不点亮——那是我自己的事。
+                OwAdmin.upgrade.dotOn(st === 'update');
             },
 
             apply: function () {
                 var r = OwAdmin.upgrade.info;
                 if (!r || !r.has_update) return;
-                var down = $('owUpdDown');
+                var down = $('owUpdDown'), over = $('owUpdOver');
                 var msg = '即将升级：覆盖 ' + r.modified.length + ' 个文件、新增 ' + r.added.length + ' 个。\n'
                     + '被覆盖的文件会先备份到 data/backup/，可一键恢复；'
                     + 'core/config.php、data/、uploads/ 永不受影响。\n确认执行？';
+                if (over && over.checked) {
+                    msg = '注意：这些差异来自你**本地还没推送**的改动。\n'
+                        + '继续执行会用仓库里的版本覆盖它们（等于回退本地代码），'
+                        + '覆盖前的原件会备份到 data/backup/。\n确认执行？';
+                }
                 OwAdmin.confirm(msg, function () {
                     var out = $('owUpdResult');
                     if (out) out.innerHTML = '下载并校验中…（站点尚未改动，全部就绪才会一次性搬入）';
-                    OwApi.secure('admin_upgrade_apply', { allow_downgrade: down && down.checked ? '1' : '0' }, function (rr) {
+                    OwApi.secure('admin_upgrade_apply', {
+                        allow_downgrade: down && down.checked ? '1' : '0',
+                        allow_overwrite_local: over && over.checked ? '1' : '0'
+                    }, function (rr) {
                         if (!rr || !rr.ok) {
                             if (out) out.innerHTML = '<span style="color:#C41D1F">✗ ' + esc((rr && rr.msg) || '升级失败') + '</span>';
                             return;
@@ -7066,6 +7094,8 @@
                             + '</div>'
                             // v1.3.42 系统升级：入口按钮 + 内联模块面板（检查/升级/恢复备份）。
                             // 红点 = settings.update_info.has_update（每 12h 计划任务 + 手动检查都会刷）。
+                            // v1.3.102 起它只表示「仓库确有新版可拿」= 本地 VERSION 落后；
+                            // 「本地改了还没推」不再点亮红点（那是常驻状态，点久了只会把红点关掉）。
                             // v1.3.42：原「版本号」展示行已删（升级面板里本地/远端版本对比更全）。
                             + '<div class="ow-form-item"><label>系统升级'
                             + '<span id="owUpdDot" class="ow-dot ow-upd-dot" title="有新版本可用" aria-hidden="true" style="display:none"></span></label>'

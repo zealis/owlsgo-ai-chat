@@ -416,8 +416,10 @@ class Admin
                 Api::json($r === null ? ['ok' => false, 'msg' => $errUpd] : ['ok' => true] + $r);
 
             case 'admin_upgrade_apply':
-                // 敏感路由：POST + 一次性票据（index.php $SENSITIVE），且只认字符串 '1' 的降级授权
-                [$okUA, $resUA] = Upgrade::apply($p('allow_downgrade') === '1');
+                // 敏感路由：POST + 一次性票据（index.php $SENSITIVE）。
+                // 两个授权位都只认字符串 '1'：降级 = 拿更旧的代码覆盖，
+                // 覆盖本地差异 = 拿仓库版覆盖我还没推的新代码（v1.3.102 新增）。
+                [$okUA, $resUA] = Upgrade::apply($p('allow_downgrade') === '1', $p('allow_overwrite_local') === '1');
                 if ($okUA) {
                     Sec::log('upgrade_apply', (string)($actor['nickname'] ?? ''), is_array($resUA) ? $resUA : ['msg' => (string)$resUA]);
                     Upgrade::saveInfo(Upgrade::check($eUa));   // 升级后重比一次，红点即时熄灭

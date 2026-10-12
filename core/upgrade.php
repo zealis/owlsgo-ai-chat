@@ -4,18 +4,23 @@
  *
  * 工作方式（入口在后台「系统设置 → 系统与维护 → 在线升级」）：
  *   1. check   —— 拉远端分支的文件树（api.github.com git/trees?recursive=1，
- *      公开仓库免 token），逐文件与本地算同款 git blob sha 比对，得出
- *      「新增/修改」差异清单 + 远端 VERSION 对比；
+ *      公开仓库免 token），逐文件与本地算同款 git blob sha 比对（本地先按 git 口径
+ *      做 CRLF→LF 归一，见 toLf），得出「新增/修改」差异清单 + 远端 VERSION 对比；
  *   2. apply   —— 差异文件**全部**先下载到 data/upgrade/tmp/ 并逐个复核 blob sha，
  *      齐了才统一搬入 —— 中途断网只会留下临时目录，绝不出现半新半旧的站点；
  *      搬入前把将被覆盖的文件备份到 data/backup/upgrade-<时间>/（含 manifest.json）；
  *   3. rollback —— 按 manifest 恢复被覆盖的文件、删除升级新增的文件。
  *
- * 安全边界（三道闸，一条不能省）：
+ * 安全边界（四道闸，一条不能省）：
  *   · 保护名单 PROTECT 内的路径永不覆盖、永不删除：
  *     core/config.php（真实密钥）、data/（数据库与运行数据）、uploads/、.git/；
  *   · 仅 admin + 一次性票据（$SENSITIVE）可触发 apply / rollback；
- *   · 远端版本低于本地 = 降级，默认拒绝，需显式勾选「允许降级」。
+ *   · 远端版本低于本地 = 降级，默认拒绝，需显式勾选「允许降级」；
+ *   · 版本不落后却有文件差异（= 本地改了/还没推）默认拒绝，需显式勾选
+ *     「用仓库版本覆盖本地差异」——这一条防的是**自己覆盖自己**：
+ *     比对的是「部署副本 vs 仓库」，本地领先时清单上列的全是新代码，
+ *     点一下就把刚写的插件退回旧版，而同一个版本号让降级闸完全放行（v1.3.102）。
+ *   闸门判定集中在 Upgrade::blocked()，apply 只负责执行。
  *   ⚠️ 信任前提：升级源就是仓库写权限 —— GitHub 账号被盗即等于代码被投毒。
  *      因此不做任何自动更新，只在管理员手点时执行；blob sha 校验防的是
  *      传输截断/缓存不一致，防不了恶意仓库本身。
@@ -119,12 +124,31 @@ class Upgrade
         return $out;
     }
 
-    /** 本地文件的 git blob sha（与 GitHub tree 的 sha 同算法）；文件不存在返回 null */
+    /**
+     * 与 git 的行尾规范化对齐：仓库里存的 blob 是 LF，`core.autocrlf=true` 检出到
+     * Windows 工作区会变成 CRLF —— 而 GitHub 树给的 sha 始终是 LF 那份。
+     * 不归一的话，这些文件**永远**被判为「有差异」：升级把它们刷成 LF，
+     * 下一次 git 检出又变回 CRLF，红点怎么点都灭不掉（v1.3.102 修的就是这个）。
+     *
+     * 只处理文本：含 NUL 一律按二进制原样返回，与 git 的文本探测同口径。
+     * 图片/字体这类文件内部恰好出现 \r\n 时，跟着改会把内容改出第三个 sha，
+     * 反而制造假差异。
+     */
+    public static function toLf(string $data): string
+    {
+        return strpos($data, "\0") === false ? str_replace("\r\n", "\n", $data) : $data;
+    }
+
+    /**
+     * 本地文件的 git blob sha（与 GitHub tree 的 sha 同算法）；文件不存在返回 null。
+     * ⚠️ 长度也要用**归一后**的字节数 —— blob 头里的长度属于被哈希的内容的一部分。
+     */
     public static function localBlobSha(string $absPath): ?string
     {
         if (!is_file($absPath)) return null;
         $data = @file_get_contents($absPath);
         if ($data === false) return null;
+        $data = self::toLf($data);
         return sha1('blob ' . strlen($data) . "\0" . $data);
     }
 
@@ -175,15 +199,21 @@ class Upgrade
     }
 
     /**
-     * 把检查结果落到 settings.update_info —— 后台「系统升级」红点的唯一数据源。
+     * 把检查结果落到 settings.update_info —— 后台红点的唯一数据源。
      * 三个写入点：12 小时计划任务（Plugin::cron check_update）、手动 check、apply/rollback 后。
+     *
+     * ⚠️ 这里的 has_update **不等于** check() 里的同名字段：红点要回答的是
+     * 「仓库有没有我还没拿到的新版」= status==='update'（VERSION 落后），
+     * 而不是「本地与仓库有没有差异」。后者在开发机上是常态（先改后推），
+     * 拿它点红点就变成常驻红点。count 仍记差异文件数，供面板显示「本地未推送」用。
      */
     public static function saveInfo(?array $chk, ?string $err = null): void
     {
         $v = $chk === null
             ? json_encode(['error' => mb_substr((string)$err, 0, 140), 'ts' => time()], JSON_UNESCAPED_UNICODE)
             : json_encode([
-                'has_update'     => $chk['has_update'] ? 1 : 0,
+                'has_update'     => (($chk['status'] ?? '') === 'update') ? 1 : 0,
+                'status'         => $chk['status'] ?? 'latest',
                 'local_version'  => $chk['local_version'],
                 'remote_version' => $chk['remote_version'],
                 'count'          => count($chk['added']) + count($chk['modified']),
@@ -210,6 +240,9 @@ class Upgrade
             'remote_version' => $remoteVer,
             'repo'           => self::REPO . '@' . self::BRANCH,
             'has_update'     => $n > 0,
+            // status 是面板与红点真正看的字段；has_update 只表示「有差异文件可搬」，
+            // 两件事别再混用同一个布尔（v1.3.102）。
+            'status'         => self::statusOf($localVer, $remoteVer, $n),
             'behind'         => $remoteVer !== null && $localVer !== '' && version_compare($localVer, $remoteVer, '<'),
             // downgrade：本地版本明确高于远端（apply 默认拒绝，需前端显式授权）
             'downgrade'      => $remoteVer !== null && $localVer !== '' && version_compare($localVer, $remoteVer, '>'),
@@ -220,19 +253,62 @@ class Upgrade
     }
 
     /**
+     * 升级面板与红点共用的三态判据（抽成纯函数是为了能**逐条测**：
+     * 真跑 check() 要联网，而开发机上远端永远不比本地新，另外两态根本走不到）。
+     *
+     *   latest        —— 与仓库逐文件一致
+     *   update        —— 远端 VERSION 更高：这才是「有新版可升」，红点/通知只认它
+     *   local_changes —— VERSION 不落后却有差异：本地改了或提交还没推。
+     *                    此时点「升级」= 用仓库版本覆盖自己的新代码，必须另设闸门（见 blocked）
+     *
+     * 为什么不用「有差异」当红点判据：开发机的工作节奏就是「先改后推」，
+     * 拿差异点亮红点等于每小时提醒我一次「你有 40 个文件不一样」，
+     * 提醒多了只会把红点关掉。v1.3.99 的通知已经按 behind 收过一遍口径，这里补齐。
+     */
+    public static function statusOf(string $localVer, ?string $remoteVer, int $diffCount): string
+    {
+        if ($diffCount === 0) return 'latest';
+        // 本地 VERSION 读不到（文件缺失/被改坏）时不判成「本地改动」：那样会把一次正常升级
+        // 拦在勾选后面，而这道闸门的意义是「保护我自己没推的代码」——对说不清自己版本的环境不适用。
+        if ($localVer === '') return 'update';
+        return ($remoteVer !== null && version_compare($localVer, $remoteVer, '<'))
+            ? 'update' : 'local_changes';
+    }
+
+    /**
+     * apply 前的闸门（纯函数，返回 null = 放行，返回字符串 = 拒绝理由）。
+     * 四道闸，顺序有意义：先讲「远端更旧」这种最危险的，再讲「本地差异」这种最容易误点的。
+     */
+    public static function blocked(array $chk, bool $allowDowngrade, bool $allowOverwriteLocal): ?string
+    {
+        $lv = (string)($chk['local_version'] ?? '');
+        $rv = isset($chk['remote_version']) ? (string)$chk['remote_version'] : '';
+        $n = count((array)($chk['modified'] ?? []));
+        if (($chk['downgrade'] ?? false) && !$allowDowngrade) {
+            return '远端版本（' . $rv . '）低于本地（' . $lv . '），已拒绝降级。确需回退请勾选「允许降级」，或用「恢复备份」。';
+        }
+        // 降级勾选本身已经是「我知道仓库那份更旧」的显式授权，不再重复要第二个勾。
+        if (($chk['status'] ?? '') === 'local_changes' && !($chk['downgrade'] ?? false) && !$allowOverwriteLocal) {
+            return '本地版本（' . $lv . '）不低于远端（' . $rv . '），却有 ' . $n . ' 个文件与仓库不同 —— '
+                . '这些差异通常来自你**本地改了还没推送的提交**。这时升级会用仓库里的旧版覆盖它们（等于回退），已拒绝。'
+                . '请先推本地提交；确要用仓库版覆盖，请勾选「用仓库版本覆盖本地差异」。';
+        }
+        return null;
+    }
+
+    /**
      * 执行升级：下载全部差异 → 逐个校验 → 备份 → 原子搬入。
      * 任何一步失败即中止（tmp 已清），此时站点**尚未被改动**。
      * @return array [bool, array|string] 成功时 data 含 applied/backup/version
      */
-    public static function apply(bool $allowDowngrade = false): array
+    public static function apply(bool $allowDowngrade = false, bool $allowOverwriteLocal = false): array
     {
         $chk = self::check($err);
         if ($chk === null) return [false, '获取更新信息失败：' . $err];
         if (!$chk['has_update']) return [true, ['msg' => '已是最新，无需更新', 'applied' => 0]];
         $lv = $chk['local_version']; $rv = $chk['remote_version'];
-        if (!$allowDowngrade && $lv !== '' && $rv !== '' && version_compare($lv, $rv, '>')) {
-            return [false, '远端版本（' . $rv . '）低于本地（' . $lv . '），已拒绝降级。确需回退请勾选「允许降级」，或用「恢复备份」。'];
-        }
+        $stop = self::blocked($chk, $allowDowngrade, $allowOverwriteLocal);
+        if ($stop !== null) return [false, $stop];
         $tree = self::fetchTree($err);
         if ($tree === null) return [false, '重新获取文件树失败：' . $err];
         $files = array_merge($chk['added'], $chk['modified']);
