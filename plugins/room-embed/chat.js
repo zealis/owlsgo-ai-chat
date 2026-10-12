@@ -1,23 +1,23 @@
 /**
- * 群聊嵌入插件（room-embed）前端脚本 v1.2.0
+ * 群聊嵌入插件（room-embed）前端脚本 v1.3.0
  *
  * 职责：
- *   1. 嵌入模式（?embed=1）：UI 微调（隐藏音效按钮/拖拽手柄）+ 嵌入令牌引导
- *      + Cookie 不到场的「恢复连接」兜底
+ *   1. 嵌入模式（?embed=1）：域名白名单守卫 + UI 微调（隐藏音效按钮/拖拽手柄）
+ *      + 嵌入令牌引导 + Cookie 不到场的「恢复连接」兜底
  *   2. 普通模式：通过 OwChat.onRoomEdit 在群聊信息面板追加「嵌入代码」入口
- *      —— 仅群主/超级管理员可见，点击签发令牌并弹出 iframe 代码
+ *      —— 仅群主/超级管理员可见，点击填参数（域名白名单/启动方式）→ 签发令牌 → 出代码
  *
  * 兼容约束：仅用 var / function，无箭头函数、const、let、fetch。
  *
- * v1.1.0（2026-10-12）：iframe 代码响应式（max-width/max-height + dvh 渐进增强）；
- *   幂等标记统一为 __owRoomEmbedLoaded；iframe 投影色属外部站点装饰（就地注释例外）。
+ * v1.1.0：嵌入代码响应式（max-width/max-height + dvh 渐进增强）；幂等标记统一。
  * v1.1.1：跨站嵌入的 Cookie 不到场检测与 Storage Access 恢复引导。
- * v1.2.0（2026-10-12）：嵌入令牌——跨站 iframe 无 cookie 时的完全修复：
- *   - 嵌入码带 embed_token；核心 init 首波请求由 main.php 在 <head> 注入的 XHR 预打包
- *     脚本带令牌（本脚本加载太晚，赶不上首波），本脚本再包一层 OwApi 双保险；
- *   - 令牌不从地址栏抹除（第三方 iframe 的 localStorage 可能被拦，URL 是重载后唯一可靠来源）；
- *   - 「嵌入代码」点击改为先签发令牌（OwApi.secure，敏感操作）再展示代码；
- *   - 探测请求同样带令牌：令牌有效则无提示条；失效/缺失才走 v1.1.1 的恢复引导。
+ * v1.2.0：嵌入令牌——跨站 iframe 无 cookie 时的完全修复（<head> XHR 预打包 +
+ *   OwApi 双保险；签发走 OwApi.secure；探测带令牌）。
+ * v1.3.0（2026-10-12）：
+ *   - 域名白名单：page.head 下发 OW_EMBED_DOMAINS，嵌入页按 document.referrer 自检，
+ *     不在名单内直接替换页面为「未授权」提示（服务端 sign.fallback 同步校验，双保险）；
+ *   - 启动方式默认改浮动手机按钮：点击展开聊天、点聊天室外部/Esc 自动收回；
+ *     保留「直接展开」；生成前先出参数面板（白名单 + 启动方式）。
  */
 (function () {
     var w = window;
@@ -29,6 +29,15 @@
 
     /* ---------- 嵌入模式：隐藏音效按钮、隐藏输入框拖拽手柄 ---------- */
     if (isEmbed) {
+        // v1.3.0：域名白名单守卫。未授权域名进来只留一句人话（服务端同步拒令牌，
+        // 双保险），不留半死的聊天窗。名单为空 = 不限制；referrer 取不到不拦（服务端兜底）。
+        if (!domainGuard()) {
+            document.body.innerHTML = '<div class="ow-embed-deny">'
+                + '<b>该网站未获授权使用此聊天窗</b>'
+                + '<span>请联系网站管理员，在生成嵌入代码时把本域名加入白名单。</span>'
+                + '</div>';
+            return;
+        }
         function trimEmbedUI() {
             var sound = document.getElementById('owBtnSound');
             if (sound) sound.style.display = 'none';
@@ -43,6 +52,27 @@
         embedTokenBoot();   // v1.2.0：令牌引导（跨站无 cookie 时顶替签名门禁）
         embedGuard();       // 兜底：无令牌/令牌失效时的恢复引导
         return;
+    }
+
+    /* ---------- 嵌入模式：域名白名单守卫（v1.3.0） ----------
+       page.head 已把该令牌的白名单注入 window.OW_EMBED_DOMAINS；
+       这里按 document.referrer 的主机名比对：精确匹配或以 ".域名" 结尾的子域名放行。
+       服务端 sign.fallback 用 Origin/Referer 做同样校验（权威），前端只为友好提示。 */
+    function domainGuard() {
+        var allowed = w.OW_EMBED_DOMAINS;
+        if (!allowed || !allowed.length) return true;
+        var ref = document.referrer || '';
+        if (!ref) return true;
+        var m = /^https?:\/\/([^\/:]+)/i.exec(ref);
+        var host = m ? m[1].toLowerCase() : '';
+        if (!host) return true;
+        for (var i = 0; i < allowed.length; i++) {
+            var d = allowed[i];
+            if (d === '*' || host === d) return true;
+            var suffix = '.' + d;
+            if (host.length > suffix.length && host.slice(-suffix.length) === suffix) return true;
+        }
+        return false;
     }
 
     /* ---------- 嵌入模式：嵌入令牌（v1.2.0） ----------
@@ -173,49 +203,111 @@
 
     /* ---------- 普通模式：群聊信息面板追加「嵌入代码」入口 ---------- */
     w.OwRoomEmbed = {
-        /** 先签发嵌入令牌（敏感操作，一次性票据），成功再展示代码 */
-        ensureToken: function (roomId, roomName) {
-            OwApi.secure('plugin_room_embed_token', { room_id: roomId }, function (r) {
+        /** 第一步：参数面板（域名白名单 + 启动方式） */
+        showSetup: function (roomId, roomName) {
+            w.OwChat._owEmbedRoomName = roomName;
+            var html = '<h3>嵌入代码</h3>'
+                + '<p style="color:var(--ow-text-sub,#999);font-size:13px;margin:0 0 10px">生成该群的嵌入代码。每次生成都会重新签发嵌入令牌，旧代码立即失效。</p>'
+                + '<div class="ow-form-item"><label>允许加载的域名（每行一个，留空 = 不限制）</label>'
+                + '<textarea id="owEmbedDomains" class="ow-input" rows="3" placeholder="example.com&#10;www.example.com" '
+                + 'style="width:100%;resize:vertical;font-size:13px"></textarea>'
+                + '<p style="font-size:12px;color:var(--ow-text-sub);margin-top:4px">填 example.com 同时覆盖其子域名；填 * 表示任意域名。只有名单内的域名才能加载聊天（服务端与前端双重校验）。</p></div>'
+                + '<div class="ow-form-item"><label>启动方式</label>'
+                + '<select class="ow-input" id="owEmbedMode">'
+                + '<option value="launcher">浮动手机按钮（点击展开，点外部收回）</option>'
+                + '<option value="direct">直接展开聊天</option></select></div>'
+                + '<div class="ow-form-row" style="gap:8px">'
+                + '<button class="ow-btn ow-btn-primary" onclick="OwRoomEmbed.generate(' + roomId + ')">生成代码</button>'
+                + '<button class="ow-btn ow-btn-ghost" onclick="OwChat.closeModal()">取消</button>'
+                + '</div>';
+            w.OwChat.openModal(html, 460);
+        },
+
+        /** 第二步：签发令牌（敏感操作，一次性票据）并出代码 */
+        generate: function (roomId) {
+            var dEl = document.getElementById('owEmbedDomains');
+            var mEl = document.getElementById('owEmbedMode');
+            var domains = dEl ? dEl.value : '';
+            var mode = mEl ? mEl.value : 'launcher';
+            OwApi.secure('plugin_room_embed_token', { room_id: roomId, domains: domains }, function (r) {
                 if (!r.ok) { toast(r.msg || '签发嵌入令牌失败'); return; }
-                w.OwRoomEmbed.showCode(roomId, roomName, r.token, r.expires_at);
+                w.OwRoomEmbed.showCode(roomId, w.OwChat._owEmbedRoomName || '', r.token, r.expires_at, mode);
             });
         },
 
-        /** 生成并展示嵌入代码 */
-        showCode: function (roomId, roomName, token, expiresAt) {
+        /** 生成并展示嵌入代码（v1.3.0：默认浮动手机按钮启动器） */
+        showCode: function (roomId, roomName, token, expiresAt, mode) {
             var base = (w.OwChat.cfg && w.OwChat.cfg.site_url) ? w.OwChat.cfg.site_url : '';
+            if (!base) base = w.location.origin;   // 未配「固定网站地址」时退回当前源
+            var direct = mode === 'direct';
             var src = base + '/?page=chat&room=' + roomId + '&embed=1'
                 + (token ? '&embed_token=' + token + '&embed_visitor=' : '');
             // ⚠️ 例外（PLUGIN.md「图像像素」类）：本串是粘贴到**外部站点**运行的代码，
-            // 外部页面没有 --ow-* 变量体系，投影/圆角按外部站点装饰写死，不随本站主题变化。
+            // 外部页面没有 --ow-* 变量体系，按钮底色/投影按外部站点装饰写死（可用
+            // --owlsgo-launcher-bg 覆盖），不随本站主题变化。
             // 访客标识在**父页面**（第一方）localStorage 铸造后随 iframe URL 带上——
             // 第三方 iframe 自己的存储可能被浏览器拦掉，父页面不会；每个访客因此有稳定身份。
-            var style = 'position:fixed;bottom:20px;right:20px;z-index:99999;overflow:hidden;'
+            var frameStyle = 'position:fixed;bottom:84px;right:20px;z-index:99998;overflow:hidden;'
                 + 'width:380px;max-width:calc(100vw - 24px);'
-                + 'height:560px;max-height:calc(100vh - 40px);max-height:calc(100dvh - 40px);'
-                + 'border:none;border-radius:10px;box-shadow:0 4px 24px rgba(0,0,0,.18)';
-            var code = '<div id="owlsgo-chat"></div>\n'
+                + 'height:560px;max-height:calc(100vh - 128px);max-height:calc(100dvh - 128px);'
+                + 'border:none;border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,.18)';
+            var phoneSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" '
+                + 'stroke-linecap="round" stroke-linejoin="round">'
+                + '<rect x="7" y="3" width="10" height="18" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/></svg>';
+            var code = '<style>\n'
+                + '#owlsgo-launcher{position:fixed;bottom:20px;right:20px;z-index:99999;width:52px;height:52px;\n'
+                + 'border-radius:50%;cursor:pointer;border:none;padding:0;font-size:0;line-height:0;\n'
+                + 'display:-webkit-flex;display:flex;align-items:center;justify-content:center;\n'
+                + 'background:var(--owlsgo-launcher-bg,#8a7a68);color:#fff;box-shadow:0 4px 16px rgba(0,0,0,.22);\n'
+                + '-webkit-transition:transform .15s;transition:transform .15s;}\n'
+                + '#owlsgo-launcher:hover{transform:scale(1.06);}\n'
+                + '#owlsgo-launcher svg{width:24px;height:24px;}\n'
+                + '</style>\n'
+                + '<div id="owlsgo-chat"></div>\n'
                 + '<script>\n'
                 + '(function(){var k="owlsgo_embed_visitor",v="";\n'
                 + 'try{v=window.localStorage.getItem(k)||"";}catch(e){}\n'
                 + 'if(!/^[a-z0-9]{4,16}$/.test(v)){v=Math.random().toString(16).slice(2,10);'
                 + 'try{window.localStorage.setItem(k,v);}catch(e){}}\n'
-                + 'var f=document.createElement("iframe");\n'
-                + 'f.src="' + src + '"+v;\n'
-                + 'f.width="380";f.height="560";f.frameBorder="0";f.title="聊天室";f.allow="storage-access";\n'
-                + 'f.style.cssText="' + style + '";\n'
-                + 'document.getElementById("owlsgo-chat").appendChild(f);})();\n'
+                + 'var SITE=' + JSON.stringify(base) + ',ROOM=' + roomId + ',TOKEN=' + JSON.stringify(token || '')
+                + ',DIRECT=' + (direct ? 'true' : 'false') + ';\n'
+                + 'var launcher=document.createElement("button");\n'
+                + 'launcher.id="owlsgo-launcher";launcher.type="button";launcher.title="在线聊天";\n'
+                + 'launcher.innerHTML=' + JSON.stringify(phoneSvg) + ';\n'
+                + 'var frame=null;\n'
+                + 'function ensureFrame(){\n'
+                + 'if(frame)return frame;\n'
+                + 'frame=document.createElement("iframe");\n'
+                + 'frame.src=SITE+"/?page=chat&room="+ROOM+"&embed=1&embed_token="+TOKEN+"&embed_visitor="+v;\n'
+                + 'frame.allow="storage-access";frame.title="聊天室";\n'
+                + 'frame.style.cssText=' + JSON.stringify(frameStyle) + '+"display:none;";\n'
+                + 'document.body.appendChild(frame);return frame;}\n'
+                + 'function openChat(){ensureFrame().style.display="block";launcher.style.display="none";}\n'
+                + 'function closeChat(){if(frame)frame.style.display="none";launcher.style.display="flex";}\n'
+                + 'if(DIRECT){openChat();launcher.style.display="none";}\n'
+                + 'else{\n'
+                + 'launcher.onclick=function(e){e.stopPropagation();openChat();};\n'
+                + 'document.addEventListener("click",function(e){\n'
+                + 'if(!frame||frame.style.display==="none")return;\n'
+                + 'if(frame.contains(e.target)||launcher.contains(e.target))return;\n'
+                + 'closeChat();});\n'
+                + 'document.addEventListener("keydown",function(e){if(e.keyCode===27)closeChat();});\n'
+                + 'document.body.appendChild(launcher);}\n'
+                + '})();\n'
                 + '<\/script>';
 
             var html = '<h3>嵌入代码</h3>'
-                + '<p style="color:var(--ow-text-sub,#999);font-size:13px;margin:0 0 10px">将以下代码粘贴到网站 HTML 的合适位置，右下角即出现聊天室。</p>'
+                + '<p style="color:var(--ow-text-sub,#999);font-size:13px;margin:0 0 10px">'
+                + (direct ? '将以下代码粘贴到网站 HTML 的合适位置，聊天室将直接展开。'
+                    : '将以下代码粘贴到网站 HTML 的合适位置，右下角即出现手机图标，访客点击展开聊天、点外部自动收回。')
+                + '</p>'
                 + '<div class="ow-form-item">'
                 + '<label>群聊：' + escHtml(roomName || ('#' + roomId)) + '</label>'
-                + '<textarea id="owEmbedCode" class="ow-input" rows="8" readonly style="width:100%;resize:vertical;font-family:var(--ow-mono,Consolas,monospace);font-size:12px">' + escHtml(code) + '</textarea>'
+                + '<textarea id="owEmbedCode" class="ow-input" rows="10" readonly style="width:100%;resize:vertical;font-family:var(--ow-mono,Consolas,monospace);font-size:12px">' + escHtml(code) + '</textarea>'
                 + '</div>'
                 + (token
                     ? '<p style="color:var(--ow-text-sub,#999);font-size:12px;margin:0 0 10px">代码内含嵌入令牌（有效期至 '
-                      + fmtDate(expiresAt) + '）：浏览器拦截第三方 Cookie 的跨站场景下靠它维持连接，每位访客会自动获得独立身份（可单独禁言），权力等同该群访客。请勿公开粘贴完整代码，怀疑泄露可到后台「群聊嵌入」页吊销；再次点击「嵌入代码」会换发新令牌，旧代码立即失效。</p>'
+                      + fmtDate(expiresAt) + '）：浏览器拦截第三方 Cookie 的跨站场景下靠它维持连接，每位访客会自动获得独立身份（可单独禁言），权力等同该群访客。请勿公开粘贴完整代码，怀疑泄露可到后台「群聊嵌入」页吊销；再次生成会换发新令牌，旧代码立即失效。</p>'
                     : '')
                 + '<div class="ow-form-row" style="gap:8px">'
                 + '<button class="ow-btn ow-btn-primary" onclick="OwRoomEmbed.copy()">复制代码</button>'
@@ -274,7 +366,7 @@
             + '<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>'
             + '</svg><span class="ow-panel-entry-t">嵌入代码</span>'
             + '<span class="ow-panel-entry-arrow">›</span>';
-        row.onclick = function () { w.OwRoomEmbed.ensureToken(ctx.roomId, name); };
+        row.onclick = function () { w.OwRoomEmbed.showSetup(ctx.roomId, name); };
         row.onkeydown = function (e) {
             e = e || w.event;
             if (e.keyCode === 13 || e.keyCode === 32) { e.preventDefault ? e.preventDefault() : (e.returnValue = false); row.onclick(); }

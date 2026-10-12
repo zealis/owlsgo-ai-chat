@@ -1,12 +1,14 @@
 <?php
 /**
- * 群聊嵌入插件（room-embed）v1.2.0
+ * 群聊嵌入插件（room-embed）v1.3.0
  *
  * 功能：
- *   - 群主/管理员可在「群聊信息」面板获取该群的 iframe 嵌入代码
- *   - 外部网站（博客等）将代码贴入页面，右下角即出现一个内置聊天室
+ *   - 群主/管理员可在「群聊信息」面板获取该群的嵌入代码（默认浮动手机按钮，
+ *     点击展开聊天室、点外部自动收回；也可选直接展开）
+ *   - 外部网站（博客等）将代码贴入页面，即获得一个内置聊天室
  *   - 嵌入页复用主程序聊天页（?page=chat&room=ID&embed=1），不修改主程序
  *   - 嵌入模式下通过 page.head 注入精简 CSS，仅保留「群名顶栏 + 消息 + 输入」
+ *   - **域名白名单**：只有名单内的域名才能加载（服务端 + 前端双重校验）
  *   - 嵌入代码内含**嵌入令牌**：跨站 iframe 被浏览器拦下会话 Cookie 时，
  *     令牌经核心 sign.fallback 钩子顶替签名门禁，聊天全功能可用（不依赖 Cookie）
  *
@@ -15,14 +17,14 @@
  *   - UI 精简走 page.head 钩子注入 CSS（核心已提供）
  *   - 「嵌入代码」入口走 OwChat.onRoomEdit 前端扩展点（核心已提供，v1.1.10 起契约稳定）
  *   - 消息收发/轮询全部复用核心 API（rooms/history/poll/send）
- *   - v1.3.96 核心签名门禁新增 sign.fallback 钩子咨询（~6 行，纯增量、fail-closed），
+ *   - v1.3.97 核心签名门禁新增 sign.fallback 钩子咨询（~6 行，纯增量、fail-closed），
  *     嵌入令牌的签发/校验/吊销全部在本插件内，核心不持有任何嵌入逻辑
  *
  * v1.1.0 修复记录（2026-10-12）：
  *   1. .ow-msg-bubble 在核心不存在（真类是 .ow-msg-content）——原「气泡紧凑」规则是死代码。
  *   2. .ow-layout{display:block} 切断 flex 高度链 → 历史消息一长输入栏被 overflow:hidden 裁出视口。
  *   3. 漏隐藏 .ow-brand / .ow-rail / .ow-mask，380×560 小窗被框架白吃 100+px。顶栏压至 44px。
- *   4. 生成的 iframe 代码改响应式（max-width/max-height + dvh 渐进增强）。
+ *   4. 生成的嵌入代码改响应式（max-width/max-height + dvh 渐进增强）。
  * v1.1.1：跨站嵌入的 Cookie 不到场检测与「恢复连接」引导（Storage Access，Safari 路径）。
  * v1.2.0（2026-10-12）：
  *   5. 嵌入令牌（跨站完全修复）：每个公开群一条有效令牌，随嵌入码下发；
@@ -31,12 +33,19 @@
  *      带 room_id 的请求必须与令牌房间一致；动作白名单（聊天面 + plugin_ 前缀）。
  *      权力边界 = 该公开群的**访客**：游客浏览/发言开关、禁言、限流、IP 封禁全部照生效，
  *      令牌不映射任何用户身份，无提权路径。
+ * v1.3.0（2026-10-12）：
+ *   6. 域名白名单：签发时每行一个域名（example.com 覆盖子域，* = 任意，空 = 不限制）；
+ *      服务端在 sign.fallback 校验来源主机（Origin → Referer，配了白名单却取不到来源即拒），
+ *      前端由 page.head 下发名单，document.referrer 不符时自显示了断；
+ *   7. 启动方式默认改「浮动手机按钮」：点击展开、点聊天室外部/Esc 自动收回；
+ *      保留「直接展开」选项；后台令牌管理改通用列表轮子（搜索/状态筛选/批量吊销/分页）。
  */
 if (!defined('OWLSGO_VERSION')) exit;
 
 /* ===================== 数据库表 ===================== */
 // 嵌入令牌：一群一条有效记录（revoked=0），重新生成 = 吊销旧的 + 插新的。
 // token_hash 存 sha256（库泄漏也拿不到明文）；created_by 留签发人便于审计。
+// domains：域名白名单（每行一个，example.com 覆盖其子域名；* = 任意；空 = 不限制）。
 function owReEnsureTable(): void
 {
     static $done = false;
@@ -58,8 +67,51 @@ function owReEnsureTable(): void
         revoked $int NOT NULL DEFAULT 0
     )");
     DB::run("CREATE INDEX IF NOT EXISTS idx_ow_re_tok_room ON plugin_room_embed_tokens (room_id)");
+    // v1.3.0：域名白名单列（存量行空值 = 不限制，向后兼容）
+    DB::ensureColumn('plugin_room_embed_tokens', 'domains', 'text', "''");
 }
 owReEnsureTable();
+
+/* ===================== 域名白名单 ===================== */
+/** 解析白名单原文为规范数组（小写、去重、限量） */
+function owReDomainList(string $raw): array
+{
+    $out = [];
+    foreach (preg_split('/[\r\n,，;；\s]+/', strtolower($raw)) ?: [] as $d) {
+        $d = trim($d, ". \t");
+        if ($d === '') continue;
+        if ($d !== '*' && !preg_match('/^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+$/', $d)) continue;
+        if (!in_array($d, $out, true)) $out[] = $d;
+        if (count($out) >= 20) break;
+    }
+    return $out;
+}
+
+/** 请求来源主机：优先 Origin（跨站 XHR 必带），回落 Referer（iframe 导航带） */
+function owReReqHost(): string
+{
+    $o = (string)($_SERVER['HTTP_ORIGIN'] ?? '');
+    if ($o === '') $o = (string)($_SERVER['HTTP_REFERER'] ?? '');
+    if ($o === '') return '';
+    $host = parse_url($o, PHP_URL_HOST);
+    return strtolower((string)$host);
+}
+
+/** 白名单校验：未配置 = 放行；配置了却取不到来源 = fail-closed */
+function owReDomainOk(array $row): bool
+{
+    $list = owReDomainList((string)($row['domains'] ?? ''));
+    if (!$list) return true;
+    $host = owReReqHost();
+    if ($host === '') return false;
+    foreach ($list as $d) {
+        if ($d === '*') return true;
+        // 精确匹配或子域名匹配：host === $d，或 host 以 ".$d" 结尾
+        $suffix = '.' . $d;
+        if ($host === $d || substr($host, -strlen($suffix)) === $suffix) return true;
+    }
+    return false;
+}
 
 /* ===================== 令牌校验（sign.fallback 处理器） ===================== */
 // 核心验签失败后咨询本钩子，返回 '1' 放行。边界（与 PLUGIN.md 的 sign.fallback 约定一致）：
@@ -78,6 +130,7 @@ function owReTokenOk(string $tok, string $action): bool
         [hash('sha256', $tok)]);
     if (!$row) return false;
     if ((int)$row['expires_at'] < time()) return false;
+    if (!owReDomainOk($row)) return false;   // v1.3.0：域名白名单（配了且来源不符 → 拒）
 
     $room = DB::one('SELECT id, type, is_public, status FROM rooms WHERE id=?', [(int)$row['room_id']]);
     if (!$room || (int)$room['status'] !== 1 || $room['type'] !== 'public' || (int)($room['is_public'] ?? 0) !== 1) {
@@ -116,12 +169,14 @@ $owReRoomGuard = function (array $ctx, int $roomId): array {
 /**
  * 签发（= 重新生成）嵌入令牌。敏感操作：每次调用都作废该群旧令牌并换发新的，
  * 明文只在本响应里返回一次（库里只有 sha256 哈希）。
+ * v1.3.0： domains 域名白名单（每行一个；example.com 覆盖子域；* = 任意；空 = 不限制）。
  */
 Plugin::route('plugin_room_embed_token', function (array $ctx) use ($owReRoomGuard) {
     $actor = $ctx['actor'];
     $roomId = (int)($ctx['post']['room_id'] ?? 0);
     $room = $owReRoomGuard($ctx, $roomId);
 
+    $domains = owReDomainList((string)($ctx['post']['domains'] ?? ''));
     $tok = bin2hex(random_bytes(16));
     $now = time();
     DB::run('UPDATE plugin_room_embed_tokens SET revoked=1 WHERE room_id=? AND revoked=0', [$roomId]);
@@ -134,31 +189,74 @@ Plugin::route('plugin_room_embed_token', function (array $ctx) use ($owReRoomGua
         'expires_at' => $now + 365 * 86400,
         'last_used_at' => 0,
         'revoked' => 0,
+        'domains' => implode("\n", $domains),
     ]);
-    Sec::log('plugin_room_embed_token', (string)($actor['nickname'] ?? ''), ['room' => $roomId, 'room_name' => $room['name']]);
-    Api::json(['ok' => true, 'token' => $tok, 'expires_at' => $now + 365 * 86400]);
+    Sec::log('plugin_room_embed_token', (string)($actor['nickname'] ?? ''),
+        ['room' => $roomId, 'room_name' => $room['name'], 'domains' => $domains ?: '不限制']);
+    Api::json(['ok' => true, 'token' => $tok, 'expires_at' => $now + 365 * 86400, 'domains' => $domains]);
 });
 Plugin::sensitive('plugin_room_embed_token');
 
-/** 吊销令牌（后台用，管理员）。吊销后使用该令牌的嵌入代码立即失效。 */
+/** 吊销令牌（后台用，管理员）。支持单个 id 或批量 ids（逗号分隔）。吊销后嵌入代码立即失效。 */
 Plugin::route('plugin_room_embed_token_revoke', function (array $ctx) {
     if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);
-    $id = (int)($ctx['post']['id'] ?? 0);
-    $row = DB::one('SELECT id, room_id FROM plugin_room_embed_tokens WHERE id=?', [$id]);
-    if (!$row) Api::json(['ok' => false, 'msg' => '令牌不存在']);
-    DB::run('UPDATE plugin_room_embed_tokens SET revoked=1 WHERE id=?', [$id]);
-    Sec::log('plugin_room_embed_token_revoke', (string)($ctx['actor']['nickname'] ?? ''), ['room' => (int)$row['room_id']]);
-    Api::json(['ok' => true, 'msg' => '已吊销，对应嵌入代码立即失效']);
+    $ids = [];
+    foreach (explode(',', (string)($ctx['post']['ids'] ?? '')) as $v) {
+        $v = (int)trim($v);
+        if ($v > 0) $ids[] = $v;
+    }
+    if (!$ids && ($ctx['post']['id'] ?? '') !== '') {   // 兼容单条调用
+        $ids = [(int)$ctx['post']['id']];
+    }
+    if (!$ids) Api::json(['ok' => false, 'msg' => '请先选择要吊销的令牌']);
+    $ids = array_slice(array_unique($ids), 0, 100);
+    $ph = implode(',', array_fill(0, count($ids), '?'));
+    $rooms = array_column(DB::all("SELECT id, room_id FROM plugin_room_embed_tokens WHERE id IN ($ph)", $ids), 'room_id', 'id');
+    $n = DB::run("UPDATE plugin_room_embed_tokens SET revoked=1 WHERE id IN ($ph) AND revoked=0", $ids)->rowCount();
+    Sec::log('plugin_room_embed_token_revoke', (string)($ctx['actor']['nickname'] ?? ''),
+        ['ids' => implode(',', $ids), 'rooms' => implode(',', array_unique($rooms))]);
+    Api::json(['ok' => true, 'msg' => '已吊销 ' . (int)$n . ' 个令牌，对应嵌入代码立即失效']);
 });
 Plugin::sensitive('plugin_room_embed_token_revoke');
 
-/** 令牌列表（后台用，管理员）。不回传哈希全值，只给前 8 位供识别。 */
+/** 令牌列表（后台用，管理员）。通用列表轮子：搜索 + 状态筛选 + 分页；不回传哈希全值。 */
 Plugin::route('plugin_room_embed_token_list', function (array $ctx) {
     if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);
-    $rows = DB::all('SELECT t.*, r.name AS room_name FROM plugin_room_embed_tokens t '
-        . 'LEFT JOIN rooms r ON r.id = t.room_id ORDER BY t.revoked ASC, t.id DESC LIMIT 200');
+    $q = trim((string)($ctx['post']['q'] ?? ''));
+    $state = (string)($ctx['post']['state'] ?? '');          // ''=全部 / '1'=有效 / '0'=已吊销
+    $page = max(1, (int)($ctx['post']['page'] ?? 1));
+    $psize = min(50, max(5, (int)($ctx['post']['psize'] ?? 15)));
+
+    $where = ['1=1'];
+    $args = [];
+    if ($q !== '') {
+        $where[] = '(r.name LIKE ? OR t.token_hash LIKE ? OR t.created_by_name LIKE ? OR t.room_id = ?)';
+        $args[] = '%' . $q . '%';
+        $args[] = '%' . $q . '%';
+        $args[] = '%' . $q . '%';
+        $args[] = (int)preg_replace('/\D/', '', $q) ?: 0;   // 纯数字按房间 ID 精确匹配
+    }
+    if ($state === '1' || $state === '0') {
+        $now = time();
+        if ($state === '1') {
+            $where[] = 't.revoked=0 AND t.expires_at>?';
+            $args[] = $now;
+        } else {
+            $where[] = '(t.revoked=1 OR t.expires_at<=?)';
+            $args[] = $now;
+        }
+    }
+    $wsql = implode(' AND ', $where);
+
+    $total = (int)DB::val("SELECT COUNT(*) FROM plugin_room_embed_tokens t LEFT JOIN rooms r ON r.id=t.room_id WHERE $wsql", $args);
+    $pages = max(1, (int)ceil($total / $psize));
+    if ($page > $pages) $page = $pages;
+    $rows = DB::all("SELECT t.*, r.name AS room_name FROM plugin_room_embed_tokens t "
+        . "LEFT JOIN rooms r ON r.id = t.room_id WHERE $wsql ORDER BY t.revoked ASC, t.id DESC LIMIT $psize OFFSET " . (($page - 1) * $psize), $args);
     $out = [];
+    $now = time();
     foreach ($rows as $r) {
+        $domains = owReDomainList((string)($r['domains'] ?? ''));
         $out[] = [
             'id' => (int)$r['id'],
             'room_id' => (int)$r['room_id'],
@@ -169,9 +267,11 @@ Plugin::route('plugin_room_embed_token_list', function (array $ctx) {
             'expires_at' => (int)$r['expires_at'],
             'last_used_at' => (int)$r['last_used_at'],
             'revoked' => (int)$r['revoked'],
+            'expired' => (int)$r['expires_at'] < $now,
+            'domains' => $domains,
         ];
     }
-    Api::json(['ok' => true, 'data' => $out]);
+    Api::json(['ok' => true, 'data' => $out, 'total' => $total, 'pages' => $pages, 'page' => $page, 'psize' => $psize]);
 });
 
 /* ===================== 嵌入模式 CSS ===================== */
@@ -219,6 +319,13 @@ Plugin::on('page.head', function (): void {
 .ow-embed-guard-b{flex-shrink:0;-webkit-flex-shrink:0;font-size:12px;padding:5px 12px;text-decoration:none}
 /* 嵌入页背景与外层站点融合 */
 body.ow-chat-body{background:var(--ow-bg,#fff)!important}
+/* 域名未授权提示（v1.3.0）：整页替换为一句人话，样式走核心令牌 */
+.ow-embed-deny{position:fixed;left:0;top:0;right:0;bottom:0;display:flex;display:-webkit-flex;
+  flex-direction:column;-webkit-flex-direction:column;align-items:center;-webkit-align-items:center;
+  justify-content:center;-webkit-justify-content:center;gap:10px;padding:24px;text-align:center;
+  background:var(--ow-bg,#fff);color:var(--ow-text,#333);font-size:14px;line-height:1.7}
+.ow-embed-deny b{font-size:15px;color:var(--ow-text-title,#333)}
+.ow-embed-deny span{color:var(--ow-text-sub,#999);font-size:12.5px;max-width:280px}
 </style>
 CSS;
         /* ---------- 嵌入令牌的 XHR 预打包（v1.2.0） ----------
@@ -229,6 +336,14 @@ CSS;
            令牌/访客标识**不从地址栏抹除**：第三方 iframe 里 localStorage 可能被浏览器一并拦掉，
            URL 是重载后唯一可靠的来源（跨站 referrer 默认只传 origin，查询串不外泄）。 */
         if (preg_match('/[?&]embed_token=[a-f0-9]{32}/', (string)($_SERVER['REQUEST_URI'] ?? ''))) {
+            // v1.3.0：把该令牌的域名白名单下发给前端（chat.js 的 domainGuard 用），
+            // 未授权域名进来自我了断给一句人话，而不是留一个半死的聊天窗。
+            $embTokHash = null;
+            if (preg_match('/[?&]embed_token=([a-f0-9]{32})/', (string)($_SERVER['REQUEST_URI'] ?? ''), $mm)) {
+                $embRow = DB::one('SELECT domains FROM plugin_room_embed_tokens WHERE token_hash=? AND revoked=0', [hash('sha256', $mm[1])]);
+                $embTokHash = $embRow ? owReDomainList((string)$embRow['domains']) : [];
+            }
+            echo '<script>window.OW_EMBED_DOMAINS=' . json_encode($embTokHash ?: [], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . ';</script>';
             echo <<<'JS'
 <script>
 (function () {
@@ -271,18 +386,20 @@ Plugin::asset('js', 'room-embed/admin.js');
 /* ===================== 后台说明页 ===================== */
 Plugin::adminPage('room-embed', '群聊嵌入', function () {
     return '<h2>群聊嵌入</h2>'
-        . '<p class="ow-admin-desc">允许用户将自己创建的群聊以 iframe 方式嵌入到博客等网站，作为右下角内置聊天室。本插件不修改主程序（仅 v1.3.96 起核心签名门禁多咨询一次 sign.fallback 钩子），完全复用核心聊天能力。</p>'
+        . '<p class="ow-admin-desc">允许用户将自己创建的群聊以 iframe 方式嵌入到博客等网站，作为右下角内置聊天室。本插件不修改主程序（仅 v1.3.97 起核心签名门禁多咨询一次 sign.fallback 钩子），完全复用核心聊天能力。</p>'
         . '<div class="ow-card">'
         . '<h3 style="margin-top:0">使用方法</h3>'
         . '<ol style="line-height:2;color:var(--ow-text,#333)">'
         . '<li>群主或超级管理员进入任意公开群聊，点击右上角「⋮」打开群聊信息面板</li>'
-        . '<li>在「群聊信息」下方点击「嵌入代码」——每次点击会重新签发嵌入令牌</li>'
-        . '<li>复制生成的 iframe 代码，粘贴到目标网站的 HTML 中即可</li>'
+        . '<li>在「群聊信息」下方点击「嵌入代码」——填写域名白名单、选择启动方式，每次点击会重新签发嵌入令牌</li>'
+        . '<li>复制生成的代码，粘贴到目标网站的 HTML 中即可</li>'
         . '</ol>'
-        . '<h3>嵌入效果</h3>'
-        . '<p style="color:var(--ow-text,#333)">嵌入后，网站右下角会出现一个聊天小窗，访客可直接在其中发言（受站点「游客发言」开关限制）。所有消息、禁言、敏感词等规则与主站完全一致。小窗只保留群名、消息与输入框，站点品牌条与侧栏不进入嵌入页。</p>'
+        . '<h3>嵌入效果（v1.3.0）</h3>'
+        . '<p style="color:var(--ow-text,#333)">默认在网站右下角显示一个圆形手机图标，访客点击才展开聊天室，点聊天室外部自动收回；也可在生成时选择「直接展开」。小窗只保留群名、消息与输入框，站点品牌条与侧栏不进入嵌入页。</p>'
+        . '<h3>域名白名单（v1.3.0）</h3>'
+        . '<p style="color:var(--ow-text,#333)">生成嵌入代码时可填写允许加载的域名（每行一个）：只有名单内的域名才能加载聊天，其他网站即使拿到代码也只会看到「未授权」提示。填 <code>example.com</code> 同时覆盖其子域名；填 <code>*</code> 表示不限制；留空同样不限制（兼容旧代码）。校验在服务端与前端双重生效。</p>'
         . '<h3>嵌入令牌（v1.2.0）</h3>'
-        . '<p style="color:var(--ow-text,#333)">嵌入代码内含一枚绑定该群的令牌，用于在浏览器拦截第三方 Cookie 的跨站场景下顶替会话——这是嵌入聊天在 Safari / 严格模式 Chrome 里可用的关键。令牌默认一年过期，权力等同于该群的<strong>访客</strong>（不携带任何用户身份）。重新点击「嵌入代码」会换发新令牌，旧代码立即失效；在本页底部可查看与吊销全部令牌。</p>'
+        . '<p style="color:var(--ow-text,#333)">嵌入代码内含一枚绑定该群的令牌，用于在浏览器拦截第三方 Cookie 的跨站场景下顶替会话——这是嵌入聊天在 Safari / 严格模式 Chrome 里可用的关键。令牌默认一年过期，权力等同于该群的<strong>访客</strong>（不携带任何用户身份）。重新点击「嵌入代码」会换发新令牌，旧代码立即失效；在本页底部可搜索与批量吊销全部令牌。</p>'
         . '<h3>注意事项</h3>'
         . '<ul style="line-height:2;color:var(--ow-text,#333)">'
         . '<li>仅<strong>公开群聊</strong>可被嵌入；密码群/角色限定群/不公开群嵌入后访客无法进入，改为非公开后令牌自动失效</li>'
@@ -291,6 +408,23 @@ Plugin::adminPage('room-embed', '群聊嵌入', function () {
         . '</ul>'
         . '</div>'
         . '<div class="ow-card"><h3 style="margin-top:0">令牌管理</h3>'
-        . '<p class="ow-admin-desc">吊销后，使用该令牌的嵌入代码立即失效（对应网站右下角的聊天窗将提示无法连接）。重新生成请在群聊信息面板再次点击「嵌入代码」。</p>'
-        . '<div id="owREList"></div></div>';
+        . '<p class="ow-admin-desc">吊销后，使用该令牌的嵌入代码立即失效（对应网站的聊天窗将提示无法连接）。重新生成请在群聊信息面板再次点击「嵌入代码」。</p>'
+        // 通用列表轮子：搜索栏 + 状态筛选 + 批量操作 + 表格 + 分页（与附件管理等后台页同款）
+        . '<div class="ow-form-row">'
+        . '<div class="ow-form-item" style="min-width:220px;flex:1"><label>搜索</label>'
+        . '<input class="ow-input" id="owREQ" placeholder="房间名 / 令牌前缀 / 签发人 / 房间ID" onkeydown="if(event.key===\'Enter\')OwRE.load(1)"></div>'
+        . '<div class="ow-form-item" style="min-width:110px"><label>状态</label>'
+        . '<select class="ow-input" id="owREState"><option value="">全部</option><option value="1">有效</option><option value="0">已吊销/已过期</option></select></div>'
+        . '<button class="ow-btn ow-btn-primary" onclick="OwRE.load(1)">搜索</button>'
+        . '<button class="ow-btn ow-btn-ghost" onclick="OwRE.reset()">重置</button>'
+        . '</div></div>'
+        . '<div class="ow-card">'
+        . '<div style="margin-bottom:10px">'
+        . '<button class="ow-btn ow-btn-danger" id="owREBatchRevoke" onclick="OwRE.batchRevoke()" disabled>批量吊销</button>'
+        . '<span id="owREStat" style="margin-left:12px;color:var(--ow-text-sub,#999);font-size:12px"></span>'
+        . '</div>'
+        . '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">'
+        . '<table class="ow-table" id="owRETable"></table></div>'
+        . '<div id="owREPager" style="margin-top:12px"></div>'
+        . '</div>';
 });
