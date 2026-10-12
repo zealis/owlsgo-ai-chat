@@ -5095,17 +5095,18 @@
             // 后面的批次就永远加载不出来。
             if (to < total && box.scrollHeight <= box.clientHeight + 8) this.appendSrBatch();
 
-            // 首次绑定点击委托（只绑一次，重渲染不叠加）
-            if (!this._srClickBound) {
-                this._srClickBound = true;
-                box.onclick = function (e) {
-                    var t = e.target;
-                    while (t && t !== box && !(t.getAttribute && t.getAttribute('data-i'))) t = t.parentNode;
-                    if (!t || t === box) return;
-                    var idx = parseInt(t.getAttribute('data-i'), 10);
-                    if (self._srData && self._srData[idx]) self.pickSearchResult(self._srData[idx]);
-                };
-            }
+            // 点击委托：每次渲染都**赋值**给当前这个 box。
+            // ⚠️ 不能用「绑过一次就跳过」的标记 —— openSearch 每次打开都会重建 #owSrList 节点，
+            //    标记还留在 OwChat 上，于是第二次起的每一个新节点都没人绑，点结果完全没反应
+            //    （实测：第二次打开后 box.onclick === null 而 _srClickBound === true）。
+            //    用 onclick = fn 赋值而不是 addEventListener：赋值天然不叠加，正是这里要的语义。
+            box.onclick = function (e) {
+                var t = e.target;
+                while (t && t !== box && !(t.getAttribute && t.getAttribute('data-i'))) t = t.parentNode;
+                if (!t || t === box) return;
+                var idx = parseInt(t.getAttribute('data-i'), 10);
+                if (self._srData && self._srData[idx]) self.pickSearchResult(self._srData[idx]);
+            };
         },
 
         /** 点击搜索结果的分发：人 → 私聊，群 → 进群，消息 → 跳到所在会话 */
