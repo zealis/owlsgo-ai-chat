@@ -1,6 +1,6 @@
 <?php
 /**
- * 群聊嵌入插件（room-embed）v1.3.0
+ * 群聊嵌入插件（room-embed）v1.3.1
  *
  * 功能：
  *   - 群主/管理员可在「群聊信息」面板获取该群的嵌入代码（默认浮动手机按钮，
@@ -39,6 +39,10 @@
  *      前端由 page.head 下发名单，document.referrer 不符时自显示了断；
  *   7. 启动方式默认改「浮动手机按钮」：点击展开、点聊天室外部/Esc 自动收回；
  *      保留「直接展开」选项；后台令牌管理改通用列表轮子（搜索/状态筛选/批量吊销/分页）。
+ * v1.3.1（2026-10-12）：
+ *   8. 修后台说明页文档列表：核心全局 reset 清零了 ol 左内边距（序号挂到卡片左界外，
+ *      「数字超出标题」）且 ul 被 list-style:none 吃掉的符号——在本页作用域
+ *      （.ow-re-doc）内补回 padding-left 与 disc 符号，不影响其它页面。
  */
 if (!defined('OWLSGO_VERSION')) exit;
 
@@ -395,11 +399,23 @@ JS;
 Plugin::asset('js', 'room-embed/chat.js');
 Plugin::asset('js', 'room-embed/admin.js');
 
+/* ===================== 后台说明页的文档列表样式 ===================== */
+// 核心全局 reset（* { margin:0; padding:0 }）把 ol 默认左内边距清零，而序号 marker 是
+// outside 定位——数字会挂到卡片内容区左界外（用户报「数字超出标题」）；ul 又被核心的
+// list-style:none 吃掉项目符号。这里只在本插件后台页作用域内补回，不污染别处。
+Plugin::on('page.head', function (): void {
+    if (($_GET['page'] ?? '') !== 'admin') return;
+    echo '<style>'
+        . '.ow-re-doc ol{padding-left:24px}'
+        . '.ow-re-doc ul{padding-left:24px;list-style:disc}'
+        . '</style>';
+});
+
 /* ===================== 后台说明页 ===================== */
 Plugin::adminPage('room-embed', '群聊嵌入', function () {
     return '<h2>群聊嵌入</h2>'
         . '<p class="ow-admin-desc">允许用户将自己创建的群聊以 iframe 方式嵌入到博客等网站，作为右下角内置聊天室。本插件不修改主程序（仅 v1.3.97 起核心签名门禁多咨询一次 sign.fallback 钩子），完全复用核心聊天能力。</p>'
-        . '<div class="ow-card">'
+        . '<div class="ow-card ow-re-doc">'
         . '<h3 style="margin-top:0">使用方法</h3>'
         . '<ol style="line-height:2;color:var(--ow-text,#333)">'
         . '<li>群主或超级管理员进入任意公开群聊，点击右上角「⋮」打开群聊信息面板</li>'
