@@ -150,8 +150,16 @@
 .ow-lv-stage-item.is-cur .ow-lv-stage-name { font-weight: 700; color: var(--ow-text-title); }
 .ow-lv-stage-range { font-size: 11px; color: var(--ow-text-sub); margin-top: 2px; }
 @media (max-width: 640px) {
-    /* 窄屏表格横向滚动，不硬压列宽（压了中文会挤成两行更难读） */
+    /* 窄屏表格横向滚动，不硬压列宽（压了中文会挤成两行更难读）。
+       .ow-lv-card-scroll 外层已在 level-trust/main.php 的能力解锁对比表上加上；
+       width 必须从 100% 放开成 auto，否则表格仍被父宽锁死，滚动条永远不出现。 */
     .ow-lv-card-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .ow-lv-card-scroll .ow-lv-table { width: auto; min-width: 100%; }
+    /* 单元格一律不折行：表头「阶段」两字定的列宽装不下「新手阶段」，
+       不锁死就会滚成两行（实测 Lv.3 行 35px → 56px）。这一张表全是短值，
+       nowrap 让每列按内容展开、整表横向滚，行高回到一行。
+       只作用于 .ow-lv-card-scroll 内的表，「各阶段任务一览」那种长文字表照常折行。 */
+    .ow-lv-card-scroll .ow-lv-table th, .ow-lv-card-scroll .ow-lv-table td { white-space: nowrap; }
     .ow-lv-task-k { width: 96px; }
     .ow-lv-stage-connector { top: 13px; left: 4%; right: 4%; }
     .ow-lv-stage-dot-wrap { height: 26px; }

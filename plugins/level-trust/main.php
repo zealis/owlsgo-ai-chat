@@ -1124,7 +1124,10 @@ Plugin::page('level', '等级', function (array $actor, $user = null) {
     $h .= '</table></div>';
 
     /* ---------- 能力解锁对比 ---------- */
-    $h .= '<div class="ow-card"><h3 class="ow-lv-h3">能力解锁对比</h3><table class="ow-lv-table">'
+    // 9 列，窄屏上压进卡片会把每列挤成一竖溜换行（表头是中文双/三字词，一换行就错位）。
+    // 外层 .ow-lv-card-scroll 在 ≤640px 时开横向滚动，配合 style.css 里的 width:auto，
+    // 让表格按内容自然展开、超出部分横向滑。
+    $h .= '<div class="ow-card"><h3 class="ow-lv-h3">能力解锁对比</h3><div class="ow-lv-card-scroll"><table class="ow-lv-table">'
         . '<tr><th>等级</th><th>阶段</th><th>建群名额</th><th>头像</th><th>贴纸上限</th>'
         . '<th>加好友</th><th>单文件上限</th><th>管理候选</th><th>荣誉</th></tr>';
     foreach (owLTUnlockMatrix() as $r) {
@@ -1141,7 +1144,7 @@ Plugin::page('level', '等级', function (array $actor, $user = null) {
             . '<td>' . ($r['mod'] ? $y : $n) . '</td>'
             . '<td>' . ($r['honor'] ? $y : $n) . '</td></tr>';
     }
-    $h .= '</table>'
+    $h .= '</table></div>'
         . '<div class="ow-lv-tip">建群名额用完、或等级未到 '
         . owLTInt('room_min_level') . ' 级时，可消耗 <b>' . owLTInt('room_point_cost')
         . '</b> 积分创建群聊（每个群一次）。把该单价设为 0 即为「不允许用积分绕过」。</div>'

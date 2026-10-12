@@ -600,7 +600,7 @@
             h += '</span>';
         }
         // 文字在媒体下方：与输入框里的待发区（图在上、输入在下）保持同一视觉顺序
-        if (p.text !== '') h += '<span class="ow-rich-text">' + esc(p.text) + '</span>';
+        if (p.text !== '') h += '<span class="ow-rich-text">' + linkifyHtml(esc(p.text)) + '</span>';
         return h;
     }
 
@@ -716,6 +716,40 @@
         if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
         return (n / 1048576).toFixed(1) + ' MB';
     }
+
+    /**
+     * 把**已经 esc() 过的**文本里的 http(s) 链接变成可点（v1.3.101）。
+     *
+     * ⚠️ 顺序只能是「先 esc、再 linkify」：esc 之后文本里不可能再有真标签，
+     *    生成的 href 直接沿用转义后的串（`&amp;` 写在属性里本来就是合法写法，浏览器会还原成 &）。
+     *    反过来先链接化再 esc，会把我们刚生成的 <a> 一起转义成文字，等于没做。
+     * ⚠️ 只认 http(s):// 开头。裸域名与 www 开头的字符串在聊天里更多是「地址」而不是链接，
+     *    误判会把普通文字变成可点区域；javascript: / data: 这类协议根本不在匹配范围内。
+     * ⚠️ URL 字符集里排掉中日韩汉字与全角标点（　-〿 / 一-鿿 / ＀-￯）：
+     *    中文打字习惯是「详见 https://x.com/a，很好用」——链接和下文之间常常没有空格，
+     *    不排除就会把后面整句中文吞进 href。代价是极少见的中文原样路径链接（百科类）会截断，
+     *    而 RFC 3986 本来要求这类字符百分号编码，截断后的地址浏览器也能补全。
+     * ⚠️ rel 必须带 noopener：target=_blank 打开的页面能靠 window.opener 反向改原页面。
+     */
+    function linkifyHtml(s) {
+        return String(s || '').replace(/https?:\/\/[^\s<　-〿一-鿿＀-￯]+/g, function (raw) {
+            // 句尾标点是句子的一部分，不是 URL 的一部分，剥下来放回正文。
+            // &quot;/&#039; 要显式写：源文本里的引号经 esc() 后就是这两串。
+            var m = raw.match(/(?:&quot;|&#039;|[)\]},.;:!?])+$/);
+            var tail = m ? m[0] : '';
+            var u = tail ? raw.slice(0, raw.length - tail.length) : raw;
+            // 但分号不能无脑剥：`?x=<b>` esc 后是 `?x=&lt;b&gt;`，剥掉收尾那个 ; 实体就散了。
+            // 链接末尾刚好断在 `&字母` 上时，把 ; 还给链接。
+            if (tail.charAt(0) === ';' && /&[a-z][a-z0-9]{1,5}$/i.test(u)) {
+                u += ';'; tail = tail.slice(1);
+            }
+            // 去掉协议后必须还剩一个带点的 host，否则只是「https://」这种残链（点了什么也不会发生）
+            if (u.replace(/^https?:\/\//, '').indexOf('.') < 0) return raw;
+            return '<a class="ow-msg-link" href="' + u + '" target="_blank"'
+                + ' rel="noopener noreferrer nofollow" title="' + u + '">' + u + '</a>' + tail;
+        });
+    }
+
     /** 生成 ow 线性 SVG 图标（与服务端 ow_icon 保持一致的描边风格） */
     var OW_SVG_PATHS = {
         'file': '<path d="M13 3.5H7a1.5 1.5 0 0 0-1.5 1.5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V9z"/><path d="M13 3.5V9h5.5"/>',
@@ -3012,7 +3046,7 @@
                       + (m.quote.id ? ' title="点击查看原消息" onclick="OwChat.jumpToQuote(' + (m.quote.id | 0) + ')"' : '')
                       + '><b>' + esc(m.quote.nick || '') + '</b>'
                       + (m.quote.nick ? '：' : '') + esc(m.quote.text || '') + '</span>'
-                    : '') + esc(m.content) + '</span>';
+                    : '') + linkifyHtml(esc(m.content)) + '</span>';
 
             var isSys = m.type === 'system';
             // meta 行：头像一侧依次是「用户组标签、昵称」；时间不直接显示，
@@ -6456,13 +6490,18 @@
         upgrade: {
             info: null,
 
-            /** 红点显隐：raw = settings.update_info（JSON 字符串）。有更新才亮。 */
+            /** 红点显隐：raw = settings.update_info（JSON 字符串）。有更新才亮。
+             *  点亮的是**所有** .ow-upd-dot（分组标题 + 组内「系统升级」那条），
+             *  所以用 class 全量取而不是一句 $('owUpdDot')——收起时只见标题那颗。 */
             paintDot: function (raw) {
-                var dot = $('owUpdDot');
-                if (!dot) return;
                 var ui = null;
                 try { ui = JSON.parse(raw || '{}'); } catch (e) { ui = null; }
-                dot.style.display = (ui && ui.has_update) ? '' : 'none';
+                OwAdmin.upgrade.dotOn(ui && ui.has_update);
+            },
+
+            dotOn: function (on) {
+                var els = document.querySelectorAll('.ow-upd-dot');
+                for (var i = 0; i < els.length; i++) els[i].style.display = on ? '' : 'none';
             },
 
             check: function () {
@@ -6505,8 +6544,7 @@
                     + '<div id="owUpdBak" style="margin-top:8px;font-size:12px;color:var(--ow-text-sub)"></div>';
                 panel.innerHTML = h;
                 OwAdmin.upgrade.loadBackups();
-                var dot = $('owUpdDot');
-                if (dot) dot.style.display = r.has_update ? '' : 'none';   // 手动检查后红点即时同步
+                OwAdmin.upgrade.dotOn(!!r.has_update);   // 手动检查后红点即时同步（含分组标题那颗）
             },
 
             apply: function () {
@@ -6937,9 +6975,13 @@
                        v1.2.54：**默认全部收起**（用户定版）——先给分组目录，点哪个看哪个，
                        不用在一长条表单里找。收起时输入框仍在 DOM 里，settingsSave 照常提交
                        **全部分组**的值，不存在「收起就没保存」。 */
-                    function sec(title, body) {
+                    function sec(title, body, dotCls) {
                         return '<div class="ow-fold">'
                             + '<div class="ow-fold-hd" onclick="OwAdmin.foldToggle(this)">' + esc(title)
+                            // 分组标题的红点与组内那条设置的红点同源（同一个 class，一起点亮）：
+                            // 分组默认全收起，光有组内红点等于要先进去才知道有没有事。
+                            // 位置在标题之后、箭头之前——箭头靠 margin-left:auto 自己顶到最右。
+                            + (dotCls ? '<span class="ow-dot ' + dotCls + '" title="有新版本可用" aria-hidden="true" style="display:none"></span>' : '')
                             + '<span class="ow-fold-arrow">&#9656;</span></div>'
                             + '<div class="ow-fold-bd">' + body + '</div></div>';
                     }
@@ -7026,12 +7068,13 @@
                             // 红点 = settings.update_info.has_update（每 12h 计划任务 + 手动检查都会刷）。
                             // v1.3.42：原「版本号」展示行已删（升级面板里本地/远端版本对比更全）。
                             + '<div class="ow-form-item"><label>系统升级'
-                            + '<span id="owUpdDot" class="ow-dot" title="有新版本可用" aria-hidden="true" style="display:none"></span></label>'
+                            + '<span id="owUpdDot" class="ow-dot ow-upd-dot" title="有新版本可用" aria-hidden="true" style="display:none"></span></label>'
                             + '<button type="button" class="ow-btn ow-btn-ghost" id="owUpdBtn" onclick="OwAdmin.upgrade.check()">检查更新</button>'
                             + '<p style="font-size:12px;color:var(--ow-text-sub);margin-top:4px">按 GitHub 仓库逐文件比对，只更新有差异的代码文件。'
                             + '保护路径永不动：core/config.php、data/、uploads/；覆盖前自动备份到 data/backup/，可一键恢复。'
                             + '需服务器能访问 api.github.com；搬入阶段文件瞬时替换，避开高峰操作。</p></div>'
-                            + '<div id="owUpdPanel" class="ow-card" style="display:none;margin:6px 0 12px"></div>')
+                            + '<div id="owUpdPanel" class="ow-card" style="display:none;margin:6px 0 12px"></div>',
+                            'ow-upd-dot')
 
                         /* ---------- ⑥ 语言（v1.3.44）----------
                            选项来自 OwI18n.list()（语言包插件 register 注入），

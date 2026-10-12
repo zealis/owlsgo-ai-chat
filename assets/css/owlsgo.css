@@ -1544,6 +1544,21 @@ input[type=range] {
 }
 .ow-msg.mine { flex-direction: row-reverse; -webkit-flex-direction: row-reverse; }
 .ow-msg.mine .ow-msg-body { text-align: right; }
+/* v1.3.101：消息正文里的链接（chat.js linkifyHtml 生成）。
+   颜色用 --ow-primary-dark 而不是全局 a 的 --ow-primary-strong(#0099FF)：
+   后者在白气泡上只有约 3.1:1，达不到正文文字的 4.5:1；链接是**正文**，
+   和 .ow-mem-link a 同档（#00558F，白底 7.79:1、浅蓝底 7.09:1）。
+   下划线常亮不能省：URL 与周围文字同为 --ow-text 时，它是「这是链接」的唯一信号。
+   hover 不改色（再深就没有可用令牌、变浅反而对比更差），改为垫一档底色。 */
+.ow-msg-link {
+    color: var(--ow-primary-dark);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    border-radius: 3px;
+    padding: 0 2px;
+    margin: 0 -2px;
+}
+.ow-msg-link:hover { color: var(--ow-primary-dark); background: var(--ow-hover-bg); }
 /* v1.2.7：自己消息的气泡也改为 #FFFFFF。原先是 --ow-blue-light(#E6F7FF 浅蓝)，
    靠色相区分左右；改白后左右气泡同为白底，改由**位置（左右分栏）+ 头像**区分。
    v1.3.88 回退这个决定（两侧同白，扫一眼分不出谁说的）→ 先试了实心品牌蓝 + 白字；
