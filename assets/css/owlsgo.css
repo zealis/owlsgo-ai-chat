@@ -1477,6 +1477,11 @@ input[type=range] {
     margin-bottom: 14px;
 }
 .ow-msg-body { min-width: 0; max-width: 78%; }
+/* v1.3.89：宽屏下再加一道绝对上限 —— 78% 是按消息区宽度算的，窗口越宽气泡越宽，
+   实测 1440 窗口下一条长链接消息的气泡宽到 857px（约 60 个汉字一行），读起来不像聊天。
+   560px ≈ 40 个汉字/行。窄屏（手机）时 78% 更小、由它决定，min() 不会把气泡撑破。
+   ⚠ 顺序不能反：老内核不认 min() 会**丢掉整条声明**，必须先留 78% 兜底。 */
+.ow-msg-body { max-width: min(560px, 78%); }
 /* 消息头像可点（v1.1.8）：与昵称同行为——左击打开该用户资料卡。
    align-self:flex-start 必须写 —— .ow-msg 是 flex 容器，子项默认 align-self:stretch，
    而本元素是 inline-block，被拉伸后高度会跟着消息行一起变高（实测 278px），
