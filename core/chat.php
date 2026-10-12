@@ -1522,6 +1522,21 @@ class Chat
     }
 
     /**
+     * 可被搜索的消息形态（v1.3.93）。
+     *
+     * 为什么 file / rich 也进来：这两类的**文件名**就存在 content 的 JSON 里，
+     * 而用户搜的正是「上周那份 xxx 报告」—— 只搜正文等于搜不到。
+     * rich 顺带补上了混排消息的文字段（v1.3.86 起它一直是搜索盲区）。
+     * image 不进：它的 content 是哈希命名的 URL，按关键词永远搜不出来。
+     *
+     * ⚠️ file/rich 是拿整段 content 做 LIKE，所以路径里的哈希也可能命中。
+     *    这是有意的取舍：宁可多算，也不为了精确取 `$.name` 去按驱动分支 ——
+     *    MySQL 的 JSON_EXTRACT 支持 `[*]` 通配、SQLite 的 json_extract 不支持、
+     *    PostgreSQL 又是一套 `->>`，为一个字段换三份 SQL 不值。
+     */
+    const SEARCH_TYPES = "type IN ('text','mention','file','rich')";
+
+    /**
      * 统一搜索入口，四个范围：
      *   current  当前会话内的消息（群聊传 room_id，私聊传 peer）
      *   people   按昵称/ID 找人 + 按名称/ID 找群
@@ -1603,7 +1618,7 @@ class Chat
                     $args = array_merge($roomIds, [$like]);
                     $rows = DB::all(
                         "SELECT id, room_id, user_id, guest_id, nickname, type, content, created_at
-                         FROM messages WHERE room_id IN ($in) AND type IN ('text','mention')
+                         FROM messages WHERE room_id IN ($in) AND " . self::SEARCH_TYPES . "
                          AND content LIKE ? ORDER BY id DESC LIMIT 40", $args);
                     $hidden = self::hiddenIds($actor);
                     $avs = self::avatarMap($rows);
@@ -1617,7 +1632,7 @@ class Chat
                     $me = (int)$actor['id'];
                     $rows = DB::all(
                         "SELECT id, room_id, user_id, guest_id, to_user_id, nickname, type, content, created_at
-                         FROM messages WHERE room_id=0 AND to_user_id>0 AND type IN ('text','mention')
+                         FROM messages WHERE room_id=0 AND to_user_id>0 AND " . self::SEARCH_TYPES . "
                          AND (user_id=? OR to_user_id=?) AND content LIKE ?
                          ORDER BY id DESC LIMIT 40", [$me, $me, $like]);
                     $hidden = self::hiddenIds($actor);
@@ -1643,7 +1658,7 @@ class Chat
                     if (!$room || !self::canEnter($room, $actor)) return [];
                     $rows = DB::all(
                         "SELECT id, room_id, user_id, guest_id, nickname, type, content, created_at
-                         FROM messages WHERE room_id=? AND type IN ('text','mention')
+                         FROM messages WHERE room_id=? AND " . self::SEARCH_TYPES . "
                          AND content LIKE ? ORDER BY id DESC LIMIT 50", [$roomId, $like]);
                 } elseif ($peer !== '') {
                     $pk = self::dmPeerKey($actor, $peer);
@@ -1652,7 +1667,7 @@ class Chat
                     $rows = DB::all(
                         "SELECT id, room_id, user_id, guest_id, nickname, type, content, created_at
                          FROM messages WHERE room_id=0 AND to_user_id>0 AND $cond
-                         AND type IN ('text','mention') AND content LIKE ?
+                         AND " . self::SEARCH_TYPES . " AND content LIKE ?
                          ORDER BY id DESC LIMIT 50", array_merge($args, [$like]));
                 } else {
                     return [];   // 没有任何会话上下文（切到联系人标签后中间是空白的）
@@ -1671,7 +1686,20 @@ class Chat
     private static function srMsg(array $m, int $roomId, string $peer, array $avatars = []): array
     {
         $text = (string)($m['content'] ?? '');
-        // 文件/图片类不进搜索（type 已限定 text/mention，这里只是兜底）
+        $ty = (string)($m['type'] ?? '');
+        // v1.3.93：file / rich 进了搜索，结果行就不能再抖 JSON 给用户看。
+        // 摘要口径与「引用条 / 会话列表」保持一致：文件是「[文件] 名字」，
+        // 混排是「文字 + [图片]」（没有文字就只剩 [图片]）。
+        if ($ty === 'file' || $ty === 'rich') {
+            $j = json_decode($text, true);
+            if ($ty === 'file') {
+                $text = '[文件] ' . (is_array($j) ? trim((string)($j['name'] ?? '')) : '');
+            } else {
+                $t = is_array($j) ? trim((string)($j['text'] ?? '')) : '';
+                $n = is_array($j) && is_array($j['media'] ?? null) ? count($j['media']) : 0;
+                $text = $t !== '' ? $t . ($n > 0 ? ' [图片]' : '') : ($n > 0 ? '[图片]' : '');
+            }
+        }
         $snippet = mb_strlen($text) > 80 ? mb_substr($text, 0, 80) . '…' : $text;
         $uid = (int)($m['user_id'] ?? 0);
         return [
