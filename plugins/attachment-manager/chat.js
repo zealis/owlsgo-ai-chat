@@ -147,7 +147,9 @@
         if (pend.length >= MAX_PEND) { toast('一次最多 9 个图片/视频'); return; }
         var item = {
             id: 'p' + (++seq), kind: kind, busy: true, url: '', thumb: '',
-            name: (file && file.name) || (kind === 'video' ? 'video.mp4' : 'image.png')
+            name: (file && file.name) || (kind === 'video' ? 'video.mp4' : 'image.png'),
+            // 本地就知道的字节数（上传前），用来在视频下方显示「名字 · 大小」
+            size: Math.max(0, parseInt((file && file.size) || 0, 10) || 0)
         };
         if (w.URL && w.URL.createObjectURL) {
             try { item.thumb = w.URL.createObjectURL(file); } catch (e) {}
@@ -193,7 +195,7 @@
         var media = [], i;
         for (i = 0; i < pend.length; i++) {
             if (pend[i].busy) { toast('还有文件在上传，请稍候'); return true; }
-            if (pend[i].url) media.push({ url: pend[i].url, kind: pend[i].kind, name: pend[i].name || '' });
+            if (pend[i].url) media.push({ url: pend[i].url, kind: pend[i].kind, name: pend[i].name || '', size: pend[i].size || 0 });
         }
         if (!media.length) return false;
         var input = $('owInput');

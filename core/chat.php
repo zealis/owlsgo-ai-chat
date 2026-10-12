@@ -694,8 +694,11 @@ class Chat
             // 文件名只是展示用的标题（视频气泡下面那行字），不参与寻址：
             // 换行与引号一律去掉，长度截到 120，别让它变成注入 JSON 的入口。
             $name = mb_substr(str_replace(["\r", "\n", '"'], '', trim((string)($m['name'] ?? ''))), 0, 120);
+            // 字节数：前端报的是本地 File.size（上传前就知道），只当展示用，
+            // 一律夹成非负整数 —— 负数与字符串都会原样进 JSON，渲染时很难看。
+            $size = max(0, (int)($m['size'] ?? 0));
             // 存相对路径（uploads/ 下）：换域名 / 换协议时，历史消息不会跟着一起失效
-            $media[] = ['url' => 'uploads/' . $rel, 'kind' => $kind, 'name' => $name];
+            $media[] = ['url' => 'uploads/' . $rel, 'kind' => $kind, 'name' => $name, 'size' => $size];
         }
         if ($text === '' && !$media) return [false, '消息不能为空', '', []];
         return [true, '', $text, $media];

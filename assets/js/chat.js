@@ -566,27 +566,34 @@
                 k = String((j.media[i] || {}).kind || '');
                 if (!/^uploads\/[a-z0-9_.\/-]+$/i.test(u)) continue;
                 if (k !== 'image' && k !== 'video') continue;
-                out.media.push({ url: u, kind: k, name: String((j.media[i] || {}).name || '').slice(0, 120) });
+                out.media.push({
+                    url: u, kind: k,
+                    name: String((j.media[i] || {}).name || '').slice(0, 120),
+                    size: parseInt((j.media[i] || {}).size, 10) || 0
+                });
             }
         }
         return out;
     }
     function richHtml(m) {
-        var p = richParts(m), h = '', i;
+        var p = richParts(m), h = '', i, cap;
         if (p.media.length) {
             h += '<span class="ow-rich-media">';
             for (i = 0; i < p.media.length; i++) {
+                // 视频下方那行是「名字 · 大小」。两个都可能缺（v1.3.88 之前的老消息没存过），
+                // 所以按有什么拼什么 —— 不能留一条光秃秃的「 · 」。
+                cap = p.media[i].name
+                    + (p.media[i].size > 0 ? (p.media[i].name ? ' · ' : '') + sizeText(p.media[i].size) : '');
                 h += p.media[i].kind === 'video'
                     // 视频直接放进来播，不给「下载」——这是用户要的「和图片一样直接展示」。
                     // ⚠️ preload=none：**没点播放就一个字节都不下**。一屏滚过十条视频消息时，
                     //    metadata 也会把每条的头部拉下来；而本站消息区里视频多数是「先看标题再说」。
                     //    代价是黑块 + 原生 ▶，看不到首帧画面（要预览得等用户点）。
-                    // 标题跟着走：播放器本身没有任何文字信息，不看文件名就只知道「这里有个视频」。
                     // ⚠️ muted：**默认静音，必须手动开声**。消息区里的视频不是「点开看的播放器」，
                     //    而是随手滚到的内容 —— 不静音就会有人被突然外放吓到，也打扰旁人。
                     ? '<span class="ow-rich-vid"><video class="ow-rich-video" src="' + esc(p.media[i].url)
                       + '" controls muted preload="none" playsinline></video>'
-                      + (p.media[i].name ? '<span class="ow-rich-name">' + esc(p.media[i].name) + '</span>' : '') + '</span>'
+                      + (cap ? '<span class="ow-rich-name">' + esc(cap) + '</span>' : '') + '</span>'
                     : '<img class="ow-rich-img" src="' + esc(p.media[i].url) + '" data-url="' + esc(p.media[i].url)
                       + '" loading="lazy" alt="图片" onclick="OwChat.viewImg(this.src)">';
             }
