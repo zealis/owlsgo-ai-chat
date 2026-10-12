@@ -357,6 +357,8 @@
         '你的账号被全站禁言 {hours} 小时。': 'Your account was muted site-wide for {hours} hour(s).',
         '你的账号被全站永久禁言。': 'Your account was permanently muted site-wide.',
         '{nick} 已通过你的好友请求，你们现在是联系人了，可以互发私信。': '{nick} accepted your friend request — you are contacts now and can message each other.',
+        /* 在线升级的定时检查（v1.3.99，只发给超级管理员） */
+        '仓库有新版本 {v}（{n} 个文件有变更），可到「后台 → 系统与维护 → 在线升级」查看并应用。': 'A new version {v} is available ({n} changed files) — review and apply it under Admin → System & Maintenance → Online upgrade.',
 
         /* ---------- server API messages (routed through OwI18n.t in the toast) ---------- */
         '需要管理员权限': 'Admin permission required',

@@ -455,7 +455,11 @@ class Plugin
                 $message = '处理器未注册（插件可能已停用）';
             } else {
                 try {
-                    self::callCronHandler($handlers[$key]);
+                    // 处理器返回的字符串就是本次的日志消息：不记的话「检查了，没更新」
+                    // 和「检查了，通知了 2 位管理员」在后台长得一模一样，只能看到一片 ok。
+                    // 返回 null/空串的任务（多数清理类）行为不变。
+                    $msg = self::callCronHandler($handlers[$key]);
+                    if (is_string($msg) && $msg !== '') $message = mb_substr($msg, 0, 400);
                 } catch (Throwable $e) {
                     $status = 'error';
                     $message = $e->getMessage();

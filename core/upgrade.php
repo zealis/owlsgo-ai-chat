@@ -349,4 +349,63 @@ class Upgrade
         }
         @rmdir($dir);
     }
+
+    /**
+     * 计划任务：定时比对 GitHub 仓库，**有新版就给超级管理员推前台通知**。
+     *
+     * 判据用 `behind`（本地 VERSION < 远端 VERSION），不用 `has_update`：
+     * 后者是「仓库与本地文件有差异」，而开发机上本地总是先于仓库改（改完还没提交），
+     * 拿它当条件会变成「每 6 小时通知一次我有 40 个文件不一样」——那不是更新，是自扰。
+     *
+     * 去重记的是**远端版本号**（settings.update_notice_ver）：仓库一旦有更新就是持续状态，
+     * 不记「为哪个版本报过」的话，同一条通知一天四遍，管理员只会把通知入口关掉。
+     * 版本号没变就不重复；仓库又推了提交但没升版本号也不骚扰 ——
+     * 那种情况后台「在线升级」页仍然看得见文件差异。
+     *
+     * @return string 这次的结果（写进 cron_logs 的 message，后台「维护任务」里看得见）
+     */
+    public static function cronCheck(): string
+    {
+        $chk = self::check($err);
+        if ($chk === null) {
+            self::saveInfo(null, $err);
+            // 抛异常而不是返回字符串：runCron 会据此把这次记成 error 并留下消息，
+            // 「检查失败」和「检查了没更新」在后台必须分得开。
+            throw new RuntimeException('检查更新失败：' . mb_substr((string)$err, 0, 120));
+        }
+        self::saveInfo($chk);
+        return self::notifyAdmins($chk);
+    }
+
+    /**
+     * 拿到比对结果后决定要不要通知、通知谁。单独成方法只为**可测**：
+     * 开发机上远端永远不比自己新（推送的就是自己），真跑一次 cronCheck 只能走到「无新版」，
+     * 通知那条分支就永远没被验证过。这里喂一个合成的 $chk 就能测到底。
+     */
+    public static function notifyAdmins(array $chk): string
+    {
+        $lv = (string)($chk['local_version'] ?? '');
+        $rv = (string)($chk['remote_version'] ?? '');
+        if (empty($chk['behind'])) return '无新版（本地 ' . ($lv !== '' ? $lv : '?')
+            . '，远端 ' . ($rv !== '' ? $rv : '?') . '）';
+        if ((string)DB::setting('update_notice_ver', '') === $rv) return '已通知过 ' . $rv . '，不重复推送';
+        $n = count((array)($chk['added'] ?? [])) + count((array)($chk['modified'] ?? []));
+        $ids = DB::all("SELECT id FROM users WHERE role='admin'");
+        foreach ($ids as $r) Notice::push((int)$r['id'], 'update_available', ['v' => $rv, 'n' => $n]);
+        DB::setSetting('update_notice_ver', $rv);
+        return '已通知 ' . count($ids) . ' 位超级管理员：新版本 ' . $rv . '（' . $n . ' 个文件）';
+    }
+}
+
+/**
+ * 注册计划任务（每 6 小时）。GitHub 未认证 API 限 60 次/小时，一次检查最多打 2 个请求
+ * （tree + VERSION blob），4 次/天毫无压力；间隔要改就在后台「维护任务」里改，
+ * 但注意 syncCronTasks 会按这里声明的值覆盖回 interval_sec。
+ *
+ * 核心任务的 plugin 列是空串（Plugin::$loading 此刻还没进任何插件），
+ * 后台与 runCron 都按「::任务名」这条约定认它（见 Admin::admin_cron_list 的注释）。
+ */
+if (class_exists('Plugin')) {
+    Plugin::cron('update_check', 21600, 'Upgrade@cronCheck',
+        '比对 GitHub 仓库；有新版则给超级管理员发前台通知（在线升级模块）');
 }
