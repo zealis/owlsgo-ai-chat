@@ -1319,7 +1319,12 @@
                 var p = $('owEmojiPanel');
                 setEmoji(getComputedStyle(p).display === 'none');
             };
-            $('owBtnSound').onclick = function () {
+            var sndBtn = $('owBtnSound');
+            /* 首屏先把图标对到已存偏好上：服务端那一枚恒按「开」渲染，
+               而 this.sound 取自用户偏好（cfg.settings.sound）。偏好是「关」时，
+               图标显示成有声、实际不出声 —— 点了才纠正过来，等于让用户先信错一次。 */
+            if (sndBtn && !self.sound) sndBtn.innerHTML = sndBtn.getAttribute('data-off');
+            sndBtn.onclick = function () {
                 self.sound = !self.sound;
                 this.innerHTML = this.getAttribute(self.sound ? 'data-on' : 'data-off');
                 toast(self.sound ? '提示音已开启' : '提示音已关闭');

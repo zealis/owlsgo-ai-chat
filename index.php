@@ -1198,7 +1198,11 @@ function ow_icon(string $name, int $size = 18): string
         'smile'  => '<circle cx="12" cy="12" r="9"/><path d="M8.5 14.5c1 1.5 2.2 2.2 3.5 2.2s2.5-.7 3.5-2.2"/><line x1="9" y1="9.5" x2="9" y2="10.5"/><line x1="15" y1="9.5" x2="15" y2="10.5"/>',
         'image'  => '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="M4 17l4.5-4.5 3.5 3.5 3-3 5 5"/>',
         'bell'   => '<path d="M6 10a6 6 0 0 1 12 0c0 4 1.5 5.5 2 6H4c.5-.5 2-2 2-6z"/><path d="M10 19a2.2 2.2 0 0 0 4 0"/>',
-        'bell-off' => '<path d="M8 6.5A6 6 0 0 1 18 10c0 4 1.5 5.5 2 6h-3"/><path d="M6.2 8.5C6.1 9 6 9.5 6 10c0 4-1.5 5.5-2 6h11"/><path d="M10 19a2.2 2.2 0 0 0 4 0"/><line x1="4" y1="4" x2="20" y2="20"/>',
+        // v1.3.83：铃铛只表示「系统通知」（侧栏那枚 20px 的就是它）。
+        // 提示音开关原先也用 bell / bell-off，与通知栏同一形状，两个相邻区域里
+        // 一眼分不出「新消息提醒」和「声音开关」；改成喇叭，静音态用 ✕。
+        // 喇叭主体与 sound 完全一致，切换时只有右侧的声波 / ✕ 变，图标不会跳位。
+        'sound-off' => '<path d="M4 9.5v5h3.5L13 19V5L7.5 9.5z"/><line x1="16.5" y1="9.5" x2="21" y2="14"/><line x1="21" y1="9.5" x2="16.5" y2="14"/>',
         'user'   => '<circle cx="12" cy="8" r="4"/><path d="M4.5 20c1.2-4 4-6 7.5-6s6.3 2 7.5 6"/>',
         'chat'   => '<path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v8a2.5 2.5 0 0 1-2.5 2.5H9l-5 4z"/>',
         'mute'   => '<path d="M8 6.5A6 6 0 0 1 18 10c0 4 1.5 5.5 2 6h-3M6.2 8.5C6.1 9 6 9.5 6 10c0 4-1.5 5.5-2 6h11"/><line x1="4" y1="4" x2="20" y2="20"/>',
@@ -1225,6 +1229,14 @@ function ow_icon(string $name, int $size = 18): string
         'more-v' => '<circle cx="12" cy="5" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1.7" fill="currentColor" stroke="none"/>',
         // v1.2.31：品牌区搜索图标（替代原竖三点菜单）
         'search' => '<circle cx="11" cy="11" r="6.6"/><path d="M20.2 20.2l-4.5-4.5"/>',
+        // v1.3.25：时钟 —— 后台「维护任务」（计划任务的集中查看/启停/手动触发）。
+        // 原先与「系统设置」共用 gear，两个相邻菜单项图标完全相同，用户无法凭图标区分。
+        // r=9（直径 18）与 chevron/puzzle 同规格，16px 下不会挤成一团。
+        'clock'  => '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/>',
+        // v1.3.25：圆圈勾 —— 后台「群聊审核」（审核待批准的群聊）。
+        // 原先用 chat 气泡，但气泡表达的是「聊天」而非「审核」；
+        // shield（盾+勾）已被「安全日志」占用，两者并排时又是一对重复。
+        'check-circle' => '<circle cx="12" cy="12" r="9"/><polyline points="8 12.2 11 15.2 16.5 9.5"/>',
     ];
     $d = $paths[$name] ?? $paths['chat'];
     return '<svg class="ow-ico" width="' . $size . '" height="' . $size . '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' . $d . '</svg>';
@@ -1622,7 +1634,7 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
        //   插件启用时由其 chat.js 往这里注入按钮（含 file input）；插件停用则按钮不出现 ——
        //   核心因此不需要任何「插件是否启用」的判断。
        . '<span id="owAttachTools"></span>'
-       . '<button class="ow-icon-btn" id="owBtnSound" title="提示音" data-on="' . Sec::e(ow_icon('bell', 16)) . '" data-off="' . Sec::e(ow_icon('bell-off', 16)) . '">' . ow_icon('bell', 16) . '</button>'
+       . '<button class="ow-icon-btn" id="owBtnSound" title="提示音" data-on="' . Sec::e(ow_icon('sound', 16)) . '" data-off="' . Sec::e(ow_icon('sound-off', 16)) . '">' . ow_icon('sound', 16) . '</button>'
        . '</div>'
        . '<div class="ow-input-row">'
        // 引用条（v1.0.69）：出现在输入框上方，点 ✕ 取消；默认隐藏，由 OwChat.renderQuote 填充
@@ -1796,13 +1808,18 @@ function renderAdmin(array $actor): void
        . '<aside class="ow-admin-side" id="owAdminSide">'
        . '<div class="ow-admin-brand">ADMIN CONSOLE<br><strong>管理后台</strong></div>'
        . '<ul class="ow-admin-menu" id="owAdminMenu">'
-       . '<li data-apage="rooms" class="active"><span class="ow-admin-ico">' . ow_icon('chat', 16) . '</span>群聊审核</li>'
+       // v1.3.25：群聊审核改用 check-circle（圆圈勾）——原用 chat 气泡，
+       // 但气泡表达「聊天」而非「审核」；shield 已被安全日志占用。
+       . '<li data-apage="rooms" class="active"><span class="ow-admin-ico">' . ow_icon('check-circle', 16) . '</span>群聊审核</li>'
        // 敏感词过滤（v1.0.104）、群聊公告（v1.0.102）已剥离为插件，菜单由插件 adminPage 自动挂载
        . '<li data-apage="logs"><span class="ow-admin-ico">' . ow_icon('shield', 16) . '</span>安全日志</li>'
        // 注：系统日志（PHP 报错文件日志，v1.2.60）**不进侧栏**——只在「安全日志」页
        // 右上角提供入口。它是排错时才用的抽屉内容，常驻菜单会占位又几乎点不到。
        // 计划任务（v1.1.13）：插件通过 Plugin::cron() 注册的任务在此集中查看 / 启停 / 手动触发
-       . '<li data-apage="cron"><span class="ow-admin-ico">' . ow_icon('gear', 16) . '</span>维护任务</li>'
+       // v1.3.25：维护任务改用 clock —— 原先与「系统设置」共用 gear，
+       // 两个相邻菜单图标完全一样，用户无法凭图标区分（齿轮是「设置」的公认符号，
+       // 应留给系统设置；计划任务用时钟更贴切）。
+       . '<li data-apage="cron"><span class="ow-admin-ico">' . ow_icon('clock', 16) . '</span>维护任务</li>'
        . '<li data-apage="settings"><span class="ow-admin-ico">' . ow_icon('gear', 16) . '</span>系统设置</li>'
        // 插件管理置于系统设置之下，作为分类，其下挂载各插件自己的设置页面
        . $pluginMenu
