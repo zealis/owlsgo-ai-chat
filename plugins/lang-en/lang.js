@@ -245,6 +245,35 @@
         '检查中…': 'Checking…',
         '清理 OPcache': 'Clear OPcache',
         '刷新页面': 'Reload',
+        /* ---------- 在线升级面板（v1.3.103）----------
+           带数字的句子一律写成 {占位} 模板：引擎按整个文本节点精确匹配，
+           中文原文一旦掺进具体数字就永远翻不到（chat.js 的 owTr 先翻整句再填参数）。 */
+        '本地 v{lv} → 远端 v{rv}': 'Local v{lv} → remote v{rv}',
+        '与远端一致，没有需要更新的文件。': 'In sync with the remote — no files to update.',
+        '本地版本没有落后于远端，却有文件与仓库不同 —— 通常是你本地改了还没推送。这时升级会用仓库里的版本覆盖它们（等于回退），请先把本地提交推上去。':
+            'Your version is not behind the remote, yet some files differ from the repository — usually that means local edits you have not pushed. Upgrading now would overwrite them with the repository copy (a rollback). Push your commits first.',
+        '有更新：{m} 个文件将覆盖，{a} 个文件新增。': 'Update available: {m} file(s) to overwrite, {a} new file(s).',
+        '文件清单': 'File list',
+        '（新）': '(new)',
+        '远端版本低于本地，允许降级（一般应该用「恢复备份」而不是降级）':
+            'The remote version is older than local — allow downgrade (usually you want "Restore backup" instead)',
+        '我确认要用仓库版本覆盖这些本地差异文件': 'I really want the repository version to overwrite these locally changed files',
+        '升级': 'Upgrade',
+        '即将升级：覆盖 {m} 个文件、新增 {a} 个。\n被覆盖的文件会先备份到 data/backup/，可一键恢复；core/config.php、data/、uploads/ 永不受影响。\n确认执行？':
+            'About to upgrade: overwrite {m} file(s), add {a}.\nOverwritten files are backed up to data/backup/ first and can be restored in one click; core/config.php, data/ and uploads/ are never touched.\nContinue?',
+        '注意：这些差异来自你**本地还没推送**的改动。\n继续执行会用仓库里的版本覆盖它们（等于回退本地代码），覆盖前的原件会备份到 data/backup/。\n确认执行？':
+            'Heads up: these differences come from **local changes you have not pushed**.\nContinuing replaces them with the repository version (a rollback of your code); the originals are backed up to data/backup/ first.\nContinue?',
+        '下载并校验中…（站点尚未改动，全部就绪才会一次性搬入）':
+            'Downloading and verifying… (nothing on the site changes until every file is ready, then they move in at once)',
+        '检查失败': 'Check failed',
+        '升级失败': 'Upgrade failed',
+        '升级完成': 'Upgrade complete',
+        '最近备份：{ts}（v{from} → v{to}，覆盖 {m} / 新增 {a}）':
+            'Latest backup: {ts} (v{from} → v{to}, {m} overwritten / {a} added)',
+        '恢复': 'Restore',
+        '恢复到最近一次升级之前的代码状态？\n当前代码文件会被备份替换（数据、配置、上传不受影响）。':
+            'Restore the code to its state before the last upgrade?\nCurrent code files are swapped for the backup (data, config and uploads are untouched).',
+        '恢复失败': 'Restore failed',
         '运行缓存': 'Runtime cache',
         '立即执行全部': 'Run all now',
         '启用': 'Enable',

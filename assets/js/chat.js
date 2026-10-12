@@ -1129,6 +1129,24 @@
         });
     }
 
+    /**
+     * 动态文案翻译（v1.3.103）：**先整句查语言包、再填参数**，与 owNoticeText 同一口径。
+     *
+     * 为什么不能直接拼：引擎按**整个文本节点**精确匹配，句子一掺进数字（版本号、文件数）
+     * 就永远匹配不上，英文界面会冒出半截中文。所以带数字的句子一律写成 `{m}` 占位模板。
+     * 纯静态的句子不用走这里 —— OwI18n 的 MutationObserver 会遍历新插入的元素子树，
+     * 只要字典里有整句键就会翻。这里管的是「observer 看不到」的两类：
+     * 拼了参数的整句、以及用 textContent 直接改写的已有节点（加的是纯文本节点，observer 不遍历）。
+     * 没命中键时原样返回中文，行为与改动前一致。
+     */
+    function owTr(tpl, params) {
+        var s = (w.OwI18n && w.OwI18n.t) ? w.OwI18n.t(tpl) : String(tpl);
+        if (!params) return s;
+        return String(s).replace(/\{([a-z_]+)\}/gi, function (m, key) {
+            return (params[key] === undefined || params[key] === null) ? '' : String(params[key]);
+        });
+    }
+
     /* ==========================================================================
        OwAuth：登录 / 注册 / 找回密码
        ========================================================================== */
@@ -1186,11 +1204,13 @@
                 OwApi.post(mode === 'login' ? 'login' : mode, data, function (r) {
                     if (r.ok) {
                         msg.innerHTML = '<span style="color:var(--ow-green)">' + esc(r.msg) + '</span>';
-                        // 注册成功不进入聊天（后端注册本就不建会话）：跳登录页由用户手动登录
+                        // 注册成功不进入聊天（后端注册本就不建会话）：跳登录页由用户手动登录。
+                        // v2.0.0 例外：嵌入授权弹窗（?embed_auth=1）里注册已自动登录，
+                        // 直接进聊天页——弹窗里的聊天页检测到授权标记后会完成「签发授权码」收尾。
                         setTimeout(function () {
                             location.href = mode === 'login' ? '?page=chat'
                                 : mode === 'reset' ? '?page=login'
-                                : '?page=login&registered=1';
+                                : (r.autologin ? '?page=chat' : '?page=login&registered=1');
                         }, 800);
                     } else {
                         msg.innerHTML = '<span style="color:var(--ow-red)">' + esc(r.msg) + '</span>';
@@ -6509,10 +6529,10 @@
             check: function () {
                 var btn = $('owUpdBtn'), panel = $('owUpdPanel');
                 if (!btn || !panel) return;
-                btn.disabled = true; btn.textContent = '检查中…';
+                btn.disabled = true; btn.textContent = owTr('检查中…');
                 panel.style.display = 'none';
                 OwApi.post('admin_upgrade_check', {}, function (r) {
-                    btn.disabled = false; btn.textContent = '检查更新';
+                    btn.disabled = false; btn.textContent = owTr('检查更新');
                     OwAdmin.upgrade.render(r);
                 });
             },
@@ -6522,32 +6542,38 @@
                 if (!panel) return;
                 panel.style.display = '';
                 if (!r || !r.ok) {
-                    panel.innerHTML = '<span style="color:#C41D1F">✗ ' + esc((r && r.msg) || '检查失败') + '</span>';
+                    panel.innerHTML = '<span style="color:#C41D1F">✗ ' + esc(owTr((r && r.msg) || '检查失败')) + '</span>';
                     return;
                 }
                 OwAdmin.upgrade.info = r;
-                var h = '<b>本地 v' + esc(r.local_version || '?') + ' → 远端 v' + esc(r.remote_version || '?') + '</b>'
+                var h = '<b>' + esc(owTr('本地 v{lv} → 远端 v{rv}',
+                        { lv: r.local_version || '?', rv: r.remote_version || '?' })) + '</b>'
                     + '<span style="font-size:12px;color:var(--ow-text-sub)">（' + esc(r.repo) + '）</span>';
                 // status 三态（判据在 core/upgrade.php 的 statusOf）：
                 //   latest=一致 / update=仓库确有新版 / local_changes=本地改了或还没推。
                 // 老数据没有 status 字段时按差异兜底成 update，不会白屏。
                 var st = r.status || (r.has_update ? 'update' : 'latest');
                 if (st === 'latest') {
-                    h += '<br><span style="color:#1a7f37">✓ 与远端一致，没有需要更新的文件。</span>';
+                    // 句首的 ✓/⚠ 与句子分家（✓ 留在外层文本节点、句子单独包 span）：
+                    // 引擎按整个文本节点精确匹配，粘上装饰符号就得连符号一起当字典键，
+                    // 换语言时那个键形同虚设。
+                    h += '<br><span style="color:#1a7f37">✓ <span>与远端一致，没有需要更新的文件。</span></span>';
                 } else {
                     if (st === 'local_changes') {
                         // 这一态点「升级」是拿仓库版覆盖自己的新代码，说人话拦住它。
-                        // 句子里不掺数字：语言包按整句匹配，掺进去就永远翻译不到（数量看清单）。
-                        h += '<br><span style="color:#8a5a00">⚠ 本地版本没有落后于远端，却有文件与仓库不同 —— '
-                            + '通常是你本地改了还没推送。这时升级会用仓库里的版本覆盖它们（等于回退），'
-                            + '请先把本地提交推上去。</span>';
+                        // 句子写成**一整块字面量**：拆成多段拼接，字典键稍有出入就匹配不上，
+                        // 而这种错只有在英文界面才看得见，等于埋雷。
+                        h += '<br><span style="color:#8a5a00">⚠ <span>本地版本没有落后于远端，却有文件与仓库不同 —— 通常是你本地改了还没推送。这时升级会用仓库里的版本覆盖它们（等于回退），请先把本地提交推上去。</span></span>';
                     } else {
-                        h += '<br>有更新：' + r.modified.length + ' 个文件将覆盖，' + r.added.length + ' 个文件新增。';
+                        h += '<br>' + esc(owTr('有更新：{m} 个文件将覆盖，{a} 个文件新增。',
+                                { m: r.modified.length, a: r.added.length }));
                     }
-                    var names = r.modified.slice(0, 50).concat(r.added.slice(0, 50).map(function (p) { return p + '（新）'; }));
+                    // 「（新）」只贴在新增项上，所以两段分开拼（各自先 esc 再进数组）
+                    var names = r.modified.slice(0, 50).map(esc).concat(
+                        r.added.slice(0, 50).map(function (p) { return esc(p) + ' ' + esc(owTr('（新）')); }));
                     h += '<details style="margin:4px 0"><summary style="cursor:pointer;font-size:12px;color:var(--ow-text-sub)">文件清单</summary>'
                         + '<div style="font-size:12px;max-height:200px;overflow:auto;font-family:Consolas,monospace;margin-top:4px">'
-                        + names.map(esc).join('<br>') + '</div></details>';
+                        + names.join('<br>') + '</div></details>';
                     if (r.downgrade) {
                         h += '<label style="display:block;margin:6px 0;font-size:13px;color:#8a5a00">'
                             + '<input type="checkbox" id="owUpdDown"> 远端版本低于本地，允许降级（一般应该用「恢复备份」而不是降级）</label>';
@@ -6571,26 +6597,25 @@
                 var r = OwAdmin.upgrade.info;
                 if (!r || !r.has_update) return;
                 var down = $('owUpdDown'), over = $('owUpdOver');
-                var msg = '即将升级：覆盖 ' + r.modified.length + ' 个文件、新增 ' + r.added.length + ' 个。\n'
-                    + '被覆盖的文件会先备份到 data/backup/，可一键恢复；'
-                    + 'core/config.php、data/、uploads/ 永不受影响。\n确认执行？';
+                var msg = owTr('即将升级：覆盖 {m} 个文件、新增 {a} 个。\n被覆盖的文件会先备份到 data/backup/，可一键恢复；core/config.php、data/、uploads/ 永不受影响。\n确认执行？',
+                    { m: r.modified.length, a: r.added.length });
                 if (over && over.checked) {
-                    msg = '注意：这些差异来自你**本地还没推送**的改动。\n'
-                        + '继续执行会用仓库里的版本覆盖它们（等于回退本地代码），'
-                        + '覆盖前的原件会备份到 data/backup/。\n确认执行？';
+                    msg = owTr('注意：这些差异来自你**本地还没推送**的改动。\n继续执行会用仓库里的版本覆盖它们（等于回退本地代码），覆盖前的原件会备份到 data/backup/。\n确认执行？');
                 }
                 OwAdmin.confirm(msg, function () {
                     var out = $('owUpdResult');
-                    if (out) out.innerHTML = '下载并校验中…（站点尚未改动，全部就绪才会一次性搬入）';
+                    // 这句是**裸文本**塞进已有节点：observer 只遍历新插入的元素子树，
+                    // 纯文本节点会被跳过，所以必须在这里就翻好（同理上面两句带数字的）。
+                    if (out) out.innerHTML = esc(owTr('下载并校验中…（站点尚未改动，全部就绪才会一次性搬入）'));
                     OwApi.secure('admin_upgrade_apply', {
                         allow_downgrade: down && down.checked ? '1' : '0',
                         allow_overwrite_local: over && over.checked ? '1' : '0'
                     }, function (rr) {
                         if (!rr || !rr.ok) {
-                            if (out) out.innerHTML = '<span style="color:#C41D1F">✗ ' + esc((rr && rr.msg) || '升级失败') + '</span>';
+                            if (out) out.innerHTML = '<span style="color:#C41D1F">✗ ' + esc(owTr((rr && rr.msg) || '升级失败')) + '</span>';
                             return;
                         }
-                        if (out) out.innerHTML = '<span style="color:#1a7f37">✓ ' + esc(rr.msg || '升级完成') + '</span>'
+                        if (out) out.innerHTML = '<span style="color:#1a7f37">✓ ' + esc(owTr(rr.msg || '升级完成')) + '</span>'
                             + ' <button class="ow-btn ow-btn-mini" onclick="OwAdmin.opcacheReset()">清理 OPcache</button>'
                             + ' <button class="ow-btn ow-btn-mini ow-btn-primary" onclick="location.reload()">刷新页面</button>';
                         OwAdmin.upgrade.loadBackups();
@@ -6599,9 +6624,9 @@
             },
 
             rollback: function () {
-                OwAdmin.confirm('恢复到最近一次升级之前的代码状态？\n当前代码文件会被备份替换（数据、配置、上传不受影响）。', function () {
+                OwAdmin.confirm(owTr('恢复到最近一次升级之前的代码状态？\n当前代码文件会被备份替换（数据、配置、上传不受影响）。'), function () {
                     OwApi.secure('admin_upgrade_rollback', {}, function (rr) {
-                        toast((rr && rr.msg) || '恢复失败');
+                        toast((rr && rr.msg) || '恢复失败');   // toast 内部已过一遍 OwI18n.t
                         if (rr && rr.ok) setTimeout(function () { location.reload(); }, 900);
                     });
                 });
@@ -6612,9 +6637,9 @@
                     var el = $('owUpdBak');
                     if (!el || !r || !r.ok || !r.data.length) return;
                     var b = r.data[0];
-                    el.innerHTML = '最近备份：' + esc(b.ts) + '（v' + esc(b.from_version) + ' → v' + esc(b.to_version)
-                        + '，覆盖 ' + b.modified + ' / 新增 ' + b.added + '） '
-                        + '<button type="button" class="ow-btn ow-btn-ghost ow-btn-mini" onclick="OwAdmin.upgrade.rollback()">恢复</button>';
+                    el.innerHTML = esc(owTr('最近备份：{ts}（v{from} → v{to}，覆盖 {m} / 新增 {a}）',
+                            { ts: b.ts, from: b.from_version, to: b.to_version, m: b.modified, a: b.added }))
+                        + ' <button type="button" class="ow-btn ow-btn-ghost ow-btn-mini" onclick="OwAdmin.upgrade.rollback()">恢复</button>';
                 });
             },
         },
