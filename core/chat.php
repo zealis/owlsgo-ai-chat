@@ -1696,8 +1696,21 @@ class Chat
                 $text = '[文件] ' . (is_array($j) ? trim((string)($j['name'] ?? '')) : '');
             } else {
                 $t = is_array($j) ? trim((string)($j['text'] ?? '')) : '';
-                $n = is_array($j) && is_array($j['media'] ?? null) ? count($j['media']) : 0;
-                $text = $t !== '' ? $t . ($n > 0 ? ' [图片]' : '') : ($n > 0 ? '[图片]' : '');
+                $md = is_array($j) && is_array($j['media'] ?? null) ? $j['media'] : [];
+                $n = count($md);
+                // 媒体文件名也要上这一行：搜「oceans.mp4」命中三条（一条当文件发、两条当混排发），
+                // 而混排行只显示「哈哈哈哈哈 [图片]」时，用户看不出它凭什么被搜出来。
+                $names = [];
+                foreach ($md as $one) {
+                    $nm = is_array($one) ? trim((string)($one['name'] ?? '')) : '';
+                    if ($nm !== '') $names[] = $nm;
+                }
+                $text = trim(($t !== '' ? $t : '') . ($n > 0 ? ' [图片]' : ''));
+                if ($names) {
+                    $head = array_slice($names, 0, 3);
+                    $text .= ' ' . implode('、', $head) . (count($names) > 3 ? ' 等' : '');
+                }
+                $text = trim($text);
             }
         }
         $snippet = mb_strlen($text) > 80 ? mb_substr($text, 0, 80) . '…' : $text;
