@@ -55,17 +55,25 @@
     }
 
     /* ---------- 嵌入模式：域名白名单守卫（v1.3.0） ----------
-       page.head 已把该令牌的白名单注入 window.OW_EMBED_DOMAINS；
-       这里按 document.referrer 的主机名比对：精确匹配或以 ".域名" 结尾的子域名放行。
-       服务端 sign.fallback 用 Origin/Referer 做同样校验（权威），前端只为友好提示。 */
+       page.head 已把该令牌的白名单注入 window.OW_EMBED_DOMAINS。
+       父域名取 URL 里的 embed_origin（父页面写入的 location.hostname，浏览器控制、
+       第三方伪造不了，且重载后仍在 URL 里——比 document.referrer 可靠，referrer 在
+       iframe 自动刷新后会变成聊天页自己）；老代码没有该参数时回落 referrer。
+       服务端 sign.fallback 用请求里的 embed_origin 做同样校验（权威），前端只为友好提示。 */
     function domainGuard() {
         var allowed = w.OW_EMBED_DOMAINS;
         if (!allowed || !allowed.length) return true;
-        var ref = document.referrer || '';
-        if (!ref) return true;
-        var m = /^https?:\/\/([^\/:]+)/i.exec(ref);
-        var host = m ? m[1].toLowerCase() : '';
-        if (!host) return true;
+        var host = '';
+        var mo = /[?&]embed_origin=([a-z0-9.-]+)/.exec(w.location.search);
+        if (mo) {
+            host = mo[1].toLowerCase();
+        } else {
+            var ref = document.referrer || '';
+            if (!ref) return true;
+            var m = /^https?:\/\/([^\/:]+)/i.exec(ref);
+            host = m ? m[1].toLowerCase() : '';
+            if (!host) return true;
+        }
         for (var i = 0; i < allowed.length; i++) {
             var d = allowed[i];
             if (d === '*' || host === d) return true;
@@ -87,9 +95,11 @@
     var OW_RE_TOK_KEY = 'ow_embed_token';
     var EMBED_TOKEN = '';
     var EMBED_VISITOR = '';
+    var EMBED_ORIGIN = '';
     function embedTokenBoot() {
         var m = /[?&]embed_token=([a-f0-9]{32})/.exec(w.location.search);
         var v = /[?&]embed_visitor=([a-z0-9]{4,16})/.exec(w.location.search);
+        var o = /[?&]embed_origin=([a-z0-9.-]+)/.exec(w.location.search);
         if (m) {
             EMBED_TOKEN = m[1];
             try { w.localStorage.setItem(OW_RE_TOK_KEY, EMBED_TOKEN); } catch (e) {}
@@ -97,13 +107,15 @@
             try { EMBED_TOKEN = w.localStorage.getItem(OW_RE_TOK_KEY) || ''; } catch (e) {}
         }
         EMBED_VISITOR = v ? v[1] : '';
-        if (EMBED_TOKEN) wrapOwApiToken(EMBED_TOKEN, EMBED_VISITOR);
+        EMBED_ORIGIN = o ? o[1] : '';
+        if (EMBED_TOKEN) wrapOwApiToken(EMBED_TOKEN, EMBED_VISITOR, EMBED_ORIGIN);
     }
-    function wrapOwApiToken(tok, vis) {
+    function wrapOwApiToken(tok, vis, org) {
         function inject(data) {
             data = data || {};
             if (!data.embed_token) data.embed_token = tok;
             if (vis && !data.embed_visitor) data.embed_visitor = vis;
+            if (org && !data.embed_origin) data.embed_origin = org;
             return data;
         }
         // ⚠️ 必须 .call(this, …)：原方法内部用 this.sign()/this.post()，裸调会把 this 丢成
@@ -150,6 +162,7 @@
             if (EMBED_TOKEN) {
                 body += '&embed_token=' + EMBED_TOKEN;
                 if (EMBED_VISITOR) body += '&embed_visitor=' + EMBED_VISITOR;
+                if (EMBED_ORIGIN) body += '&embed_origin=' + EMBED_ORIGIN;
             }
             x.send(body);
         }
@@ -278,7 +291,8 @@
                 + 'function ensureFrame(){\n'
                 + 'if(frame)return frame;\n'
                 + 'frame=document.createElement("iframe");\n'
-                + 'frame.src=SITE+"/?page=chat&room="+ROOM+"&embed=1&embed_token="+TOKEN+"&embed_visitor="+v;\n'
+                + 'frame.src=SITE+"/?page=chat&room="+ROOM+"&embed=1&embed_token="+TOKEN'
+                + '+ "&embed_visitor="+v+"&embed_origin="+location.hostname;\n'
                 + 'frame.allow="storage-access";frame.title="聊天室";\n'
                 + 'frame.style.cssText=' + JSON.stringify(frameStyle) + '+"display:none;";\n'
                 + 'document.body.appendChild(frame);return frame;}\n'

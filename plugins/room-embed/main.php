@@ -87,12 +87,21 @@ function owReDomainList(string $raw): array
     return $out;
 }
 
-/** 请求来源主机：优先 Origin（跨站 XHR 必带），回落 Referer（iframe 导航带） */
+/** 请求来源主机：优先客户端随请求携带的 embed_origin（父页面域名，见下），
+ *  再回落 Origin（跨站 XHR 必带）/ Referer（iframe 导航带）。
+ *  ⚠️ 为什么需要 embed_origin：iframe 里聊天页向**自己源**发的 XHR 是同源请求——
+ *  不带 Origin、Referer 是聊天页自己，服务端从协议层看不到父域名。父域名由父页面
+ *  写进 iframe URL（location.hostname，浏览器控制、第三方伪造不了），请求随身携带。 */
 function owReReqHost(): string
 {
-    $o = (string)($_SERVER['HTTP_ORIGIN'] ?? '');
+    $o = (string)($_POST['embed_origin'] ?? '');
+    if ($o === '') $o = (string)($_SERVER['HTTP_ORIGIN'] ?? '');
     if ($o === '') $o = (string)($_SERVER['HTTP_REFERER'] ?? '');
     if ($o === '') return '';
+    if (!preg_match('#^https?://#i', $o)) {
+        // embed_origin 是裸主机名（父页面 location.hostname），补齐 scheme 再取
+        if (preg_match('/^[a-z0-9.-]+$/i', $o)) $o = 'https://' . $o;
+    }
     $host = parse_url($o, PHP_URL_HOST);
     return strtolower((string)$host);
 }
@@ -352,8 +361,10 @@ CSS;
     var tok = m[1];
     var v = /[?&]embed_visitor=([a-z0-9]{4,16})/.exec(location.search);
     var vis = v ? v[1] : '';
+    var o = /[?&]embed_origin=([a-z0-9.-]+)/.exec(location.search);
+    var org = o ? o[1] : '';
     try { localStorage.setItem('ow_embed_token', tok); } catch (e) {}
-    var extra = 'embed_token=' + tok + (vis ? '&embed_visitor=' + vis : '');
+    var extra = 'embed_token=' + tok + (vis ? '&embed_visitor=' + vis : '') + (org ? '&embed_origin=' + org : '');
     var oo = XMLHttpRequest.prototype.open, os = XMLHttpRequest.prototype.send;
     XMLHttpRequest.prototype.open = function (meth, url) {
         this._owUrl = String(url || '');
@@ -368,6 +379,7 @@ CSS;
                            && (!body.has || !body.has('embed_token'))) {
                     body.append('embed_token', tok);
                     if (vis) body.append('embed_visitor', vis);
+                    if (org) body.append('embed_origin', org);
                 }
             }
         } catch (e) {}
