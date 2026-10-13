@@ -1,6 +1,6 @@
 <?php
 /**
- * 群聊嵌入插件（room-embed）v2.0.0
+ * 群聊嵌入插件（room-embed）v2.1.0
  *
  * 功能：
  *   - 群主/管理员可在「群聊信息」面板获取该群的嵌入代码（默认浮动手机按钮，
@@ -76,6 +76,11 @@
  *      localStorage 持久化，刷新嵌入页不掉线。顶栏显示昵称 + 「登出」。
  *      注册顺带自动登录：仅嵌入授权弹窗（?embed_auth=1）生效，主站注册流程不变。
  *      授权码兑换时校验嵌入令牌的域名白名单；会话令牌后台可查看/吊销。
+ * v2.1.0（2026-10-13）：
+ *   14. 修「我的贴纸恒为空」：令牌放行白名单漏了 stickers，嵌在窗口里的登录用户
+ *      点开贴纸页签恒 403（面板退回「暂无贴纸」）。放行 stickers（只读本人贴纸）。
+ *   15. 修「昵称与登出之间间隔太多」：昵称与登出按钮都带 margin-left:auto，
+ *      两个 auto 边距平分剩余空间。改为昵称承担唯一 auto，登出紧跟其后 8px。
  */
 if (!defined('OWLSGO_VERSION')) exit;
 
@@ -187,7 +192,12 @@ function owReTokenOk(string $tok, string $action): bool
 {
     if (!preg_match('/^[a-f0-9]{32}$/', $tok)) return false;
     $ok = ['rooms', 'conversations', 'history', 'poll', 'send', 'room_join',
-           'room_members', 'members_search', 'user_card'];
+           'room_members', 'members_search', 'user_card',
+           // v2.1.0：表情面板的「我的贴纸」。访客本来没有贴纸（Upload::stickers 按
+           // owner_key=kind+id 取），但登录态下嵌在窗口里的正是本人 —— 不放行的话
+           // 点开贴纸页签恒 403（实测 access.log 三条 403），面板显示「暂无贴纸」。
+           // 与已放行的 user_card 同性质：只读本人数据，不能越权操作他人。
+           'stickers'];
     if (!in_array($action, $ok, true) && strncmp($action, 'plugin_', 7) !== 0) return false;
 
     $row = DB::one('SELECT * FROM plugin_room_embed_tokens WHERE token_hash=? AND revoked=0',
@@ -539,12 +549,16 @@ Plugin::on('page.head', function (): void {
   color:var(--ow-primary,#00A0E9);border:1px solid var(--ow-primary,#00A0E9);
   text-decoration:none;background:transparent}
 .ow-embed-login:hover,.ow-embed-login:active{background:var(--ow-primary,#00A0E9);color:#fff}
-/* v2.0.0：登录态顶栏（昵称 + 登出）。昵称靠 margin-left:auto 推到右侧，
-   和未登录时的登录按钮占同一个位置，切换不跳布局。 */
+/* v2.0.0：登录态顶栏（昵称 + 登出）。
+   ⚠️ v2.1.0 修「昵称与登出之间间隔太多」：原来 .ow-embed-me 和 .ow-embed-login
+   **都**带 margin-left:auto——两个 auto 边距会平分顶栏剩余空间，把昵称推到中间、
+   登出推到最右。改为：昵称承担唯一的 auto（与未登录态的登录按钮同位置），
+   登出按钮跟随其后（margin-left:8px）。 */
 .ow-embed-me{margin-left:auto!important;flex-shrink:0!important;-webkit-flex-shrink:0!important;
-  font-size:12px;line-height:1;padding:6px 2px;white-space:nowrap;
-  max-width:40%;overflow:hidden;text-overflow:ellipsis;
+  font-size:12px;line-height:1;padding:6px 0 6px 2px;white-space:nowrap;
+  max-width:38%;overflow:hidden;text-overflow:ellipsis;
   color:var(--ow-text,#333);font-weight:500}
+#owEmbedLogout{margin-left:8px!important}
 .ow-latency{display:none!important}
 .ow-tag{display:none!important}
 .ow-main{border:none!important;min-width:0!important}
