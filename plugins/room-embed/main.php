@@ -1,6 +1,6 @@
 <?php
 /**
- * 群聊嵌入插件（room-embed）v1.5.0
+ * 群聊嵌入插件（room-embed）v2.0.0
  *
  * 功能：
  *   - 群主/管理员可在「群聊信息」面板获取该群的嵌入代码（默认浮动手机按钮，
@@ -67,6 +67,15 @@
  *      背景色算亮度，浅色页面出深底白图形、深色页面出白底深图形；站点主人可用
  *      --owlsgo-launcher-bg / --owlsgo-launcher-fg 覆盖（transparent = 透明图标）。
  *      替换掉原来写死的黄褐兜底色（用户报「不要这个黄色」）。
+ * v2.0.0（2026-10-13）：
+ *   13. 弹窗授权登录（OAuth 式，主程序仅 4 处小增量）：嵌入窗内点「登录/注册」→
+ *      弹出主站登录小窗（第一方上下文，cookie 正常）→ 登录/注册成功 → 小窗内
+ *      签发一次性授权码（120 秒）经 postMessage 回传 iframe → iframe 带码重载，
+ *      服务端在 page.head 消费授权码并换发 30 天长期会话令牌 → iframe 内身份
+ *      直接升级为该用户本人（发消息/头像/等级全是本人），会话令牌由父页面
+ *      localStorage 持久化，刷新嵌入页不掉线。顶栏显示昵称 + 「登出」。
+ *      注册顺带自动登录：仅嵌入授权弹窗（?embed_auth=1）生效，主站注册流程不变。
+ *      授权码兑换时校验嵌入令牌的域名白名单；会话令牌后台可查看/吊销。
  */
 if (!defined('OWLSGO_VERSION')) exit;
 
@@ -97,6 +106,24 @@ function owReEnsureTable(): void
     DB::run("CREATE INDEX IF NOT EXISTS idx_ow_re_tok_room ON plugin_room_embed_tokens (room_id)");
     // v1.3.0：域名白名单列（存量行空值 = 不限制，向后兼容）
     DB::ensureColumn('plugin_room_embed_tokens', 'domains', 'text', "''");
+    // v2.0.0：登录授权表（弹窗 OAuth 式登录）。一张表两种 kind：
+    //   code = 一次性授权码（小窗签发 → iframe 带码重载，120 秒过期，用后即焚）
+    //   sess = 长期会话令牌（兑换码时换发，默认 30 天，父页面 localStorage 持久化）
+    // secret_hash 存 sha256（库泄漏也拿不到明文）；token_id 绑定签发地那枚嵌入令牌——
+    // 令牌被吊销，会话一并失效（embed.sess_user 钩子校验）。
+    DB::run("CREATE TABLE IF NOT EXISTS plugin_room_embed_auth (
+        id " . ($drv === 'mysql' ? 'INT AUTO_INCREMENT PRIMARY KEY' : ($drv === 'pgsql' ? 'SERIAL PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT')) . ",
+        kind $str NOT NULL DEFAULT 'code',
+        token_id $int NOT NULL DEFAULT 0,
+        user_id $int NOT NULL DEFAULT 0,
+        secret_hash $h64 NOT NULL UNIQUE,
+        created_at $int NOT NULL DEFAULT 0,
+        expires_at $int NOT NULL DEFAULT 0,
+        last_used_at $int NOT NULL DEFAULT 0,
+        used_at $int NOT NULL DEFAULT 0,
+        revoked $int NOT NULL DEFAULT 0
+    )");
+    DB::run("CREATE INDEX IF NOT EXISTS idx_ow_re_auth_kind ON plugin_room_embed_auth (kind, revoked)");
 }
 owReEnsureTable();
 
@@ -185,6 +212,179 @@ Plugin::on('sign.fallback', function (array $ctx): string {
     $action = (string)($ctx['action'] ?? '');
     return owReTokenOk($tok, $action) ? '1' : '';
 });
+
+/* ===================== 登录授权（v2.0.0） ===================== */
+// 弹窗 OAuth 式登录：小窗（第一方，cookie 正常）签授权码 → iframe 带码重载 →
+// page.head 消费码换发 sess → 之后每个请求带 sess，核心经 embed.sess_user 钩子
+// 把身份解析成用户本人。详见文件头第 13 条。
+
+/** 按会话令牌解析用户（核心身份解析块咨询本钩子，&$user 回填 users 行）。
+ *  校验链：格式 → 存在/未吊销/未过期 → 绑定的嵌入令牌仍有效 → 用户仍可用。
+ *  任何一环不过都留空 $user，核心随之回落到访客身份（嵌入照常可用）。 */
+Plugin::on('embed.sess_user', function (&$user, $sess): void {
+    if (!empty($user)) return;
+    $sess = (string)$sess;
+    if (preg_match('/^[a-f0-9]{32}$/', $sess) !== 1) return;
+    $row = DB::one('SELECT * FROM plugin_room_embed_auth WHERE kind=? AND secret_hash=? AND revoked=0',
+        ['sess', hash('sha256', $sess)]);
+    if (!$row || (int)$row['expires_at'] < time()) return;
+    $tok = DB::one('SELECT revoked, expires_at FROM plugin_room_embed_tokens WHERE id=?', [(int)$row['token_id']]);
+    if (!$tok || (int)$tok['revoked'] !== 0 || (int)$tok['expires_at'] < time()) return;
+    $u = DB::one('SELECT * FROM users WHERE id=? AND status=1', [(int)$row['user_id']]);
+    if (!$u) return;
+    DB::run('UPDATE plugin_room_embed_auth SET last_used_at=? WHERE id=?', [time(), (int)$row['id']]);
+    $user = $u;
+});
+
+/** 嵌入授权小窗里签发一次性授权码（敏感操作：小窗第一方上下文走 OwApi.secure）。
+ *  调用方 = 主站聊天页（弹窗），actor 已由 cookie 会话解析为登录用户。 */
+Plugin::route('plugin_room_embed_auth_code', function (array $ctx) {
+    $actor = $ctx['actor'];
+    if (($actor['kind'] ?? '') !== 'user') Api::json(['ok' => false, 'msg' => '请先登录'], 403);
+    $tok = (string)($ctx['post']['embed_token'] ?? '');
+    if (preg_match('/^[a-f0-9]{32}$/', $tok) !== 1) Api::json(['ok' => false, 'msg' => '参数不完整'], 400);
+    $row = DB::one('SELECT * FROM plugin_room_embed_tokens WHERE token_hash=? AND revoked=0', [hash('sha256', $tok)]);
+    if (!$row || (int)$row['expires_at'] < time()) Api::json(['ok' => false, 'msg' => '嵌入令牌无效或已过期']);
+    // 房间须仍为公开群（与 sign.fallback 同口径）：房没了码也就没有意义
+    $room = DB::one('SELECT id, type, is_public, status FROM rooms WHERE id=?', [(int)$row['room_id']]);
+    if (!$room || (int)$room['status'] !== 1 || $room['type'] !== 'public' || (int)($room['is_public'] ?? 0) !== 1) {
+        Api::json(['ok' => false, 'msg' => '该群已不可嵌入']);
+    }
+    $code = bin2hex(random_bytes(16));
+    DB::insert('plugin_room_embed_auth', [
+        'kind' => 'code',
+        'token_id' => (int)$row['id'],
+        'user_id' => (int)$actor['id'],
+        'secret_hash' => hash('sha256', $code),
+        'created_at' => time(),
+        'expires_at' => time() + 120,   // 120 秒：弹窗回传 + iframe 重载够用，又不给重放留窗口
+        'used_at' => 0,
+        'revoked' => 0,
+    ]);
+    Sec::log('plugin_room_embed_auth_code', (string)($actor['nickname'] ?? ''), ['room' => (int)$row['room_id']]);
+    Api::json(['ok' => true, 'code' => $code, 'expires_in' => 120]);
+});
+Plugin::sensitive('plugin_room_embed_auth_code');
+
+/** 登出（吊销当前会话令牌）。请求从 iframe 来（带 embed_sess + embed_token 过门禁），
+ *  走一次性票据防重放；父页面收到广播后清 localStorage 并以访客身份重载 iframe。 */
+Plugin::route('plugin_room_embed_auth_logout', function (array $ctx) {
+    $sess = (string)($ctx['post']['embed_sess'] ?? '');
+    if (preg_match('/^[a-f0-9]{32}$/', $sess) === 1) {
+        DB::run('UPDATE plugin_room_embed_auth SET revoked=1 WHERE kind=? AND secret_hash=?',
+            ['sess', hash('sha256', $sess)]);
+    }
+    Api::json(['ok' => true, 'msg' => '已登出']);
+});
+Plugin::sensitive('plugin_room_embed_auth_logout');
+
+/** 后台：登录会话列表（管理员）。只给展示所需字段，哈希只露前 8 位。 */
+Plugin::route('plugin_room_embed_sess_list', function (array $ctx) {
+    if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);
+    $rows = DB::all('SELECT a.*, u.nickname, t.room_id, r.name AS room_name
+        FROM plugin_room_embed_auth a
+        LEFT JOIN users u ON u.id = a.user_id
+        LEFT JOIN plugin_room_embed_tokens t ON t.id = a.token_id
+        LEFT JOIN rooms r ON r.id = t.room_id
+        WHERE a.kind = ?
+        ORDER BY a.id DESC LIMIT 200', ['sess']);
+    $now = time();
+    $out = [];
+    foreach ($rows as $r) {
+        $out[] = [
+            'id' => (int)$r['id'],
+            'user_id' => (int)$r['user_id'],
+            'nickname' => (string)($r['nickname'] ?? ('#' . $r['user_id'])),
+            'room_id' => (int)($r['room_id'] ?? 0),
+            'room_name' => (string)($r['room_name'] ?? ('#' . (int)($r['room_id'] ?? 0))),
+            'sess_prefix' => substr((string)$r['secret_hash'], 0, 8),
+            'created_at' => (int)$r['created_at'],
+            'expires_at' => (int)$r['expires_at'],
+            'last_used_at' => (int)$r['last_used_at'],
+            'revoked' => (int)$r['revoked'],
+            'expired' => (int)$r['expires_at'] < $now,
+        ];
+    }
+    Api::json(['ok' => true, 'data' => $out]);
+});
+
+/** 后台：吊销登录会话（管理员，支持批量 ids）。 */
+Plugin::route('plugin_room_embed_sess_revoke', function (array $ctx) {
+    if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);
+    $ids = [];
+    foreach (explode(',', (string)($ctx['post']['ids'] ?? '')) as $v) {
+        $v = (int)trim($v);
+        if ($v > 0) $ids[] = $v;
+    }
+    if (!$ids) Api::json(['ok' => false, 'msg' => '参数不完整']);
+    $ph = implode(',', array_fill(0, count($ids), '?'));
+    $n = DB::run('UPDATE plugin_room_embed_auth SET revoked=1 WHERE kind=? AND id IN (' . $ph . ')',
+        array_merge(['sess'], $ids));
+    Sec::log('plugin_room_embed_sess_revoke', (string)($ctx['actor']['nickname'] ?? ''), ['ids' => $ids]);
+    Api::json(['ok' => true, 'msg' => '已吊销 ' . (int)$n . ' 个会话，对应嵌入窗口将退回访客身份']);
+});
+Plugin::sensitive('plugin_room_embed_sess_revoke');
+
+/* ===================== 登录授权辅助（v2.0.0） ===================== */
+// 会话令牌有效期（天）。用户 2026-10-13 定稿「默认 30 天」——先按常量实现，
+// 后续要做成后台可配只需把这里换成配置读取。
+define('OW_RE_SESS_DAYS', 30);
+
+/** 嵌入令牌 + 用户双重有效？返回 users 行，否则 null。tokenId 对应那枚嵌入令牌。 */
+function owReAuthUser(int $tokenId, int $userId): ?array
+{
+    $tok = DB::one('SELECT id, room_id, revoked, expires_at FROM plugin_room_embed_tokens WHERE id=?', [$tokenId]);
+    if (!$tok || (int)$tok['revoked'] !== 0 || (int)$tok['expires_at'] < time()) return null;
+    $room = DB::one('SELECT id, type, is_public, status FROM rooms WHERE id=?', [(int)$tok['room_id']]);
+    if (!$room || (int)$room['status'] !== 1 || $room['type'] !== 'public' || (int)($room['is_public'] ?? 0) !== 1) return null;
+    $u = DB::one('SELECT * FROM users WHERE id=? AND status=1', [$userId]);
+    return $u ?: null;
+}
+
+/** 换发长期会话令牌（同 (用户,令牌) 最多留 5 条有效会话，超出吊销最老的，防堆行）。 */
+function owReMintSess(int $tokenId, int $userId): string
+{
+    $sess = bin2hex(random_bytes(16));
+    $now = time();
+    DB::insert('plugin_room_embed_auth', [
+        'kind' => 'sess', 'token_id' => $tokenId, 'user_id' => $userId,
+        'secret_hash' => hash('sha256', $sess), 'created_at' => $now,
+        'expires_at' => $now + OW_RE_SESS_DAYS * 86400, 'used_at' => 0, 'revoked' => 0,
+    ]);
+    $keep = DB::all('SELECT id FROM plugin_room_embed_auth WHERE kind=? AND token_id=? AND user_id=? AND revoked=0 ORDER BY id DESC LIMIT 5',
+        ['sess', $tokenId, $userId]);
+    $keepIds = [];
+    foreach ($keep as $k) $keepIds[] = (int)$k['id'];
+    if (count($keepIds) < 5) return $sess;   // 没超额度，不用清
+    $ph = implode(',', array_fill(0, count($keepIds), '?'));
+    DB::run('UPDATE plugin_room_embed_auth SET revoked=1 WHERE kind=? AND token_id=? AND user_id=? AND revoked=0 AND id NOT IN (' . $ph . ')',
+        array_merge(['sess', $tokenId, $userId], $keepIds));
+    return $sess;
+}
+
+/** 消费一次性授权码 → 换发会话令牌。成功回传用户行，&$sessOut 带出新令牌明文。 */
+function owReExchangeCode(string $code, string &$sessOut): ?array
+{
+    $row = DB::one('SELECT * FROM plugin_room_embed_auth WHERE kind=? AND secret_hash=? AND used_at=0 AND revoked=0',
+        ['code', hash('sha256', $code)]);
+    if (!$row || (int)$row['expires_at'] < time()) return null;
+    $u = owReAuthUser((int)$row['token_id'], (int)$row['user_id']);
+    if (!$u) return null;
+    DB::run('UPDATE plugin_room_embed_auth SET used_at=? WHERE id=?', [time(), (int)$row['id']]);
+    $sessOut = owReMintSess((int)$row['token_id'], (int)$u['id']);
+    Sec::log('plugin_room_embed_auth_exchange', (string)$u['nickname'], ['room' => (int)$row['token_id']]);
+    return $u;
+}
+
+/** 校验长期会话令牌 → 用户行。 */
+function owReSessUser(string $sess): ?array
+{
+    if (preg_match('/^[a-f0-9]{32}$/', $sess) !== 1) return null;
+    $row = DB::one('SELECT * FROM plugin_room_embed_auth WHERE kind=? AND secret_hash=? AND revoked=0',
+        ['sess', hash('sha256', $sess)]);
+    if (!$row || (int)$row['expires_at'] < time()) return null;
+    return owReAuthUser((int)$row['token_id'], (int)$row['user_id']);
+}
 
 /* ===================== 路由 ===================== */
 
@@ -339,6 +539,12 @@ Plugin::on('page.head', function (): void {
   color:var(--ow-primary,#00A0E9);border:1px solid var(--ow-primary,#00A0E9);
   text-decoration:none;background:transparent}
 .ow-embed-login:hover,.ow-embed-login:active{background:var(--ow-primary,#00A0E9);color:#fff}
+/* v2.0.0：登录态顶栏（昵称 + 登出）。昵称靠 margin-left:auto 推到右侧，
+   和未登录时的登录按钮占同一个位置，切换不跳布局。 */
+.ow-embed-me{margin-left:auto!important;flex-shrink:0!important;-webkit-flex-shrink:0!important;
+  font-size:12px;line-height:1;padding:6px 2px;white-space:nowrap;
+  max-width:40%;overflow:hidden;text-overflow:ellipsis;
+  color:var(--ow-text,#333);font-weight:500}
 .ow-latency{display:none!important}
 .ow-tag{display:none!important}
 .ow-main{border:none!important;min-width:0!important}
@@ -390,6 +596,35 @@ CSS;
         }
         echo '<script>window.OW_EMBED_DOMAINS=' . json_encode($embDomains, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . ';</script>';
     }
+    /* ---------- 登录授权注入（v2.0.0） ----------
+       URL 带 embed_login（一次性授权码，弹窗回传的）→ 在此消费并换发 30 天会话令牌；
+       URL 带 embed_sess（会话令牌，父页面持久化的）→ 校验。通过则把「用户身份 +
+       会话令牌明文」注入页面：
+         · chat.js 据此覆盖 cfg.actor/cfg.me，顶栏显示昵称 + 登出；
+         · 下方 head 预打包脚本把 sess 随每个 XHR 带上，核心经 embed.sess_user 钩子
+           把请求身份解析成用户本人（发消息/头像/等级全是本人，不再是访客）。
+       在 GET 渲染时一次完成兑换，前端零额外往返；码/令牌任何一环无效都静默跳过
+       （页面按访客渲染，顶栏仍是登录入口）。 */
+    $embLogin = preg_match('/[?&]embed_login=([a-f0-9]{32})/', $uri, $ml) ? $ml[1] : '';
+    $embSessIn = preg_match('/[?&]embed_sess=([a-f0-9]{32})/', $uri, $ms) ? $ms[1] : '';
+    $embUser = null;
+    $embSessOut = '';
+    if ($embLogin !== '') {
+        $embUser = owReExchangeCode($embLogin, $embSessOut);
+    } elseif ($embSessIn !== '') {
+        $embUser = owReSessUser($embSessIn);
+        if ($embUser) $embSessOut = $embSessIn;
+    }
+    if ($embUser) {
+        $embUserJs = [
+            'id' => (int)$embUser['id'],
+            'nickname' => (string)$embUser['nickname'],
+            'role' => (string)($embUser['role'] ?? 'member'),
+            'avatar' => \Auth::avatarUrlFor($embUser, (string)$embUser['id']),
+        ];
+        echo '<script>window.OW_EMBED_USER=' . json_encode($embUserJs, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . ';</script>';
+        echo '<script>window.OW_EMBED_SESS=' . json_encode($embSessOut, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . ';</script>';
+    }
     /* ---------- 嵌入令牌保活（v1.4.0，每页注入） ----------
        解决的真问题：iframe 内**整页导航**会把 embed_token 冲掉——
        level-trust 的用户卡片链接（href="?page=level"）、插件页顶栏的
@@ -416,11 +651,16 @@ CSS;
     var RE_VIS = /[?&]embed_visitor=([a-z0-9]{4,16})/;
     var RE_ORG = /[?&]embed_origin=([a-z0-9.-]+)/;
     var RE_ROOM = /[?&]room=(\d{1,9})/;
+    var RE_SESS = /[?&]embed_sess=([a-f0-9]{32})/;
     function inFrame() { try { return window.top !== window.self; } catch (e) { return true; } }
     function ctxUrl() {
         var q = location.search || '';
-        var t = RE_TOK.exec(q), v = RE_VIS.exec(q), o = RE_ORG.exec(q), r = RE_ROOM.exec(q);
-        return { tok: t ? t[1] : '', vis: v ? v[1] : '', org: o ? o[1] : '', room: r ? r[1] : '' };
+        var t = RE_TOK.exec(q), v = RE_VIS.exec(q), o = RE_ORG.exec(q), r = RE_ROOM.exec(q), s = RE_SESS.exec(q);
+        // v2.0.0：sess 优先取服务端注入值（授权码刚兑换出来的、或刚校验过的），
+        // 注入值是最新鲜的；URL 里的只作兜底（父页面持久化那枚）。
+        var sess = s ? s[1] : '';
+        try { if (window.OW_EMBED_SESS && /^[a-f0-9]{32}$/.test(window.OW_EMBED_SESS)) sess = window.OW_EMBED_SESS; } catch (e) {}
+        return { tok: t ? t[1] : '', vis: v ? v[1] : '', org: o ? o[1] : '', room: r ? r[1] : '', sess: sess };
     }
     function nameGet() {
         try {
@@ -428,11 +668,18 @@ CSS;
             if (n.indexOf(KEY + '=') !== 0) return null;
             var p = n.slice(KEY.length + 1).split('|');
             if ((p[0] || '').length !== 32 || !RE_TOK.test('?embed_token=' + (p[0] || ''))) return null;
-            return { tok: p[0], vis: p[1] || '', org: p[2] || '', room: /^\d{1,9}$/.test(p[3] || '') ? p[3] : '' };
+            return {
+                tok: p[0], vis: p[1] || '', org: p[2] || '',
+                room: /^\d{1,9}$/.test(p[3] || '') ? p[3] : '',
+                sess: /^[a-f0-9]{32}$/.test(p[4] || '') ? p[4] : ''
+            };
         } catch (e) { return null; }
     }
     function nameSet(c) {
-        try { window.name = KEY + '=' + c.tok + '|' + c.vis + '|' + c.org + '|' + (c.room || ''); } catch (e) {}
+        try {
+            window.name = KEY + '=' + c.tok + '|' + c.vis + '|' + c.org + '|' + (c.room || '')
+                + '|' + (c.sess || '');
+        } catch (e) {}
     }
     function nameClear() {
         try { if ((window.name || '').indexOf(KEY + '=') === 0) window.name = ''; } catch (e) {}
@@ -441,7 +688,8 @@ CSS;
     function qs(c) {
         return 'embed=1&embed_token=' + c.tok
             + (c.vis ? '&embed_visitor=' + c.vis : '')
-            + (c.org ? '&embed_origin=' + c.org : '');
+            + (c.org ? '&embed_origin=' + c.org : '')
+            + (c.sess ? '&embed_sess=' + c.sess : '');   // v2.0.0：会话令牌随导航续命
     }
     function restoreUrl(c) {
         try {
@@ -454,6 +702,7 @@ CSS;
     }
     function packXhr(c) {
         var extra = 'embed_token=' + c.tok + (c.vis ? '&embed_visitor=' + c.vis : '') + (c.org ? '&embed_origin=' + c.org : '');
+        if (c.sess) extra += '&embed_sess=' + c.sess;   // v2.0.0：登录会话令牌（有则身份=用户本人）
         var oo = XMLHttpRequest.prototype.open, os = XMLHttpRequest.prototype.send;
         XMLHttpRequest.prototype.open = function (meth, url) {
             this._owUrl = String(url || '');
@@ -469,6 +718,7 @@ CSS;
                         body.append('embed_token', c.tok);
                         if (c.vis) body.append('embed_visitor', c.vis);
                         if (c.org) body.append('embed_origin', c.org);
+                        if (c.sess) body.append('embed_sess', c.sess);
                     }
                 }
             } catch (e) {}
@@ -522,12 +772,16 @@ CSS;
     var framed = inFrame();
     var c = ctxUrl();
     if (c.tok) {
-        // ⚠️ 房间要合并而不是覆盖：等级页等非聊天页的 URL 带令牌但不带房间，
+        // ⚠️ 房间/会话要合并而不是覆盖：等级页等非聊天页的 URL 带令牌但不带房间，
         // 直接 nameSet 会把上次记住的房间抹掉→「返回聊天」补不回 room，
         // 访客卡在「请选择一个群聊」（嵌入态侧栏隐藏，永远选不了群）。
-        if (!c.room) {
+        // v2.0.0：sess 同理——等级页 URL 没有 sess，不合并就会「变回访客」。
+        if (!c.room || !c.sess) {
             var prev = nameGet();
-            if (prev && prev.room) c.room = prev.room;
+            if (prev) {
+                if (!c.room && prev.room) c.room = prev.room;
+                if (!c.sess && prev.sess) c.sess = prev.sess;
+            }
         }
         nameSet(c);          // URL 带令牌：入册（后续 iframe 内导航靠它续命）
         packXhr(c);
@@ -574,8 +828,8 @@ Plugin::adminPage('room-embed', '群聊嵌入', function () {
         . '</ol>'
         . '<h3>嵌入效果（v1.3.0）</h3>'
         . '<p style="color:var(--ow-text,#333)">默认在网站右下角显示一个圆形手机图标，访客点击才展开聊天室，点聊天室外部自动收回；也可在生成时选择「直接展开」。小窗只保留群名、消息与输入框，站点品牌条与侧栏不进入嵌入页。图标底色会自动适应 embedding 网站的深浅色，也可用 CSS 变量 <code>--owlsgo-launcher-bg</code> 覆盖。</p>'
-        . '<h3>登录与注册（v1.5.0）</h3>'
-        . '<p style="color:var(--ow-text,#333)">浏览器会拦截第三方iframe里的登录 Cookie，嵌入窗口内无法直接登录。聊天窗顶栏提供「登录/注册」按钮：访客点击后将在<strong>新标签页打开主站</strong>登录页，用自己账号登录后即可在主站聊天；嵌入窗口本身仍以该群访客身份参与（发言受「游客发言」开关约束）。</p>'
+        . '<h3>登录与注册（v1.5.0 / v2.0.0）</h3>'
+        . '<p style="color:var(--ow-text,#333)">浏览器会拦截第三方 iframe 里的登录 Cookie，嵌入窗口内无法直接登录。v2.0.0 起聊天窗顶栏提供「登录/注册」按钮：访客点击后<strong>弹出主站小窗</strong>完成登录或注册（小窗是主站第一方页面，验证码/两步验证全支持），成功后小窗自动关闭、聊天窗内<strong>直接以本人身份聊天</strong>——发消息、头像、等级全是本人。会话保持 30 天，刷新嵌入页不掉线；顶栏显示昵称和「登出」，登出后退回访客身份。</p>'
         . '<h3>域名白名单（v1.3.0）</h3>'
         . '<p style="color:var(--ow-text,#333)">生成嵌入代码时可填写允许加载的域名（每行一个）：只有名单内的域名才能加载聊天，其他网站即使拿到代码也只会看到「未授权」提示。填 <code>example.com</code> 同时覆盖其子域名；填 <code>*</code> 表示不限制；留空同样不限制（兼容旧代码）。校验在服务端与前端双重生效。</p>'
         . '<h3>嵌入令牌（v1.2.0）</h3>'
@@ -606,5 +860,16 @@ Plugin::adminPage('room-embed', '群聊嵌入', function () {
         . '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">'
         . '<table class="ow-table" id="owRETable"></table></div>'
         . '<div id="owREPager" style="margin-top:12px"></div>'
+        . '</div>'
+        // v2.0.0：登录会话管理（弹窗授权换来的 30 天会话）。吊销后对应嵌入窗口
+        // 在下次请求时退回访客身份（前端也会在登出广播时立刻重载）。
+        . '<div class="ow-card"><h3 style="margin-top:0">登录会话</h3>'
+        . '<p class="ow-admin-desc">访客通过弹窗授权登录后，嵌入窗口即以其本人身份聊天，会话有效期 30 天。在此可查看所有会话并吊销（吊销后对应窗口退回访客身份，用户重新登录即可恢复）。</p>'
+        . '<div style="margin-bottom:10px">'
+        . '<button class="ow-btn ow-btn-danger" id="owRSBatchRevoke" onclick="OwRS.batchRevoke()" disabled>批量吊销</button>'
+        . '<span id="owRSStat" style="margin-left:12px;color:var(--ow-text-sub,#999);font-size:12px"></span>'
+        . '</div>'
+        . '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">'
+        . '<table class="ow-table" id="owRSTable"></table></div>'
         . '</div>';
 });

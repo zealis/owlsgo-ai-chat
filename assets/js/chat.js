@@ -745,6 +745,20 @@
             }
             // 去掉协议后必须还剩一个带点的 host，否则只是「https://」这种残链（点了什么也不会发生）
             if (u.replace(/^https?:\/\//, '').indexOf('.') < 0) return raw;
+            // 链接守卫（v1.3.104）：插件可挂 window.OW_LINK_GUARD = function (url) { return 提示文案 }，
+            // 返回非空即表示「这个链接不许跳，点了只弹窗」。
+            // 为什么做在这里而不是让插件事后扫 DOM：消息是增量渲染的（轮询、引用跳转、
+            // 撤回后重绘都会新建节点），事后扫要额外挂渲染钩子，还总会漏掉一条路径。
+            var warn = '';
+            if (typeof w.OW_LINK_GUARD === 'function') {
+                try { warn = String(w.OW_LINK_GUARD(u) || ''); } catch (e) { warn = ''; }
+            }
+            if (warn !== '') {
+                // href="#"：被拦的链接不给真实目标（中键/Ctrl+点击同样跳不出去），
+                // 但锚文本仍是完整 URL —— 用户看得见它本来要去哪。
+                return '<a class="ow-msg-link ow-link-blocked" href="#" data-warn="' + esc(warn) + '"'
+                    + ' onclick="return OwChat.blockedLink(this)" title="' + esc(warn) + '">' + u + '</a>' + tail;
+            }
             return '<a class="ow-msg-link" href="' + u + '" target="_blank"'
                 + ' rel="noopener noreferrer nofollow" title="' + u + '">' + u + '</a>' + tail;
         });
@@ -1205,7 +1219,7 @@
                     if (r.ok) {
                         msg.innerHTML = '<span style="color:var(--ow-green)">' + esc(r.msg) + '</span>';
                         // 注册成功不进入聊天（后端注册本就不建会话）：跳登录页由用户手动登录。
-                        // v2.0.0 例外：嵌入授权弹窗（?embed_auth=1）里注册已自动登录，
+                        // v1.3.104 例外：嵌入授权弹窗（?embed_auth=1）里注册已自动登录，
                         // 直接进聊天页——弹窗里的聊天页检测到授权标记后会完成「签发授权码」收尾。
                         setTimeout(function () {
                             location.href = mode === 'login' ? '?page=chat'
@@ -3984,6 +3998,13 @@
             $('owImgViewerImg').src = src;
             $('owImgViewer').style.display = '-webkit-flex';
             $('owImgViewer').style.display = 'flex';
+        },
+
+        /** 被拦链接（v1.3.104）：只弹窗告知，不跳转。文案由插件经 OW_LINK_GUARD 提供 */
+        blockedLink: function (a) {
+            var msg = a.getAttribute('data-warn') || '该链接已停止跳转。';
+            OwChat.openModal('<h3>链接提示</h3><p class="ow-modal-desc">' + esc(msg) + '</p>');
+            return false;
         },
 
         /* ---------- 用户资料卡 ---------- */

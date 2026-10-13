@@ -109,6 +109,10 @@ if ($installed && $dbOk && !$user) {
 }
 $actor = Auth::actor($user, $guest);
 if ($installed && $dbOk) Plugin::init($CFG['plugin_dir'], $CFG['data_dir'] . '/cache');
+// v1.3.104 「最早且每个请求都跑」的钩子：插件是**按需加载**的（声明的钩子被触发才 require），
+// 所以想在路由与任何输出之前拦人（垃圾信息控制插件的 IP 封锁）必须有个稳定入口。
+// 放在这里：DB 已就绪、$actor 已解析、尚未输出任何字节 —— 处理器可以直接 403 退出。
+if ($installed && $dbOk) Plugin::fire('request.start', [$actor]);
 // v1.2.60：后台需要定位 data/logs（系统日志页），与 Upload::init / Plugin::init 同一模式注入配置
 Admin::init($CFG);
 
@@ -370,29 +374,43 @@ if ($action !== '') {
         //   · 缺标识（旧式纯 iframe 代码）时回落 'shared'：全站访客共用一个身份。
         // 能走到这里说明动作已过插件的白名单（聊天面 + plugin_ 前缀），不会碰管理面。
         if (($actor['kind'] ?? '') === 'none' && class_exists('Auth')) {
-            $visitor = substr(preg_replace('/[^a-z0-9]/', '', (string)($_POST['embed_visitor'] ?? '')) ?: 'shared', 0, 16);
-            $gTok = md5('embed|' . $embedTok . '|' . $visitor);
-            $g = DB::one('SELECT * FROM guests WHERE token=?', [$gTok]);
-            if (!$g) {
-                $gid = DB::insert('guests', [
-                    'token' => $gTok,
-                    'nickname' => '网页访客' . ($visitor === 'shared' ? '' : '#' . $visitor),
-                    'client_key' => Sec::clientKey(),
-                    'ip' => Sec::ip(),
-                    'avatar_type' => 'generated',
-                    'avatar_style' => Auth::AVATAR_GUEST_STYLE,
-                    'avatar_seed' => (string)random_int(1, Auth::AVATAR_SEED_COUNT),
-                    'created_at' => time(),
-                ]);
-                $g = $gid ? DB::one('SELECT * FROM guests WHERE id=?', [$gid]) : null;
+            // v1.3.104：登录会话分支——iframe 持有效 embed_sess（弹窗授权换来的长期令牌，
+            // room-embed 插件签发/校验/吊销）时，身份直接解析为该用户本人，而不是访客。
+            // 取不到/已过期/已吊销时静默回落到下面的访客分支：嵌入照常可用，只是没登录态。
+            // ⚠️ 与令牌同权要求：sess 绑定在某枚嵌入令牌上，该令牌被吊销则 sess 一并失效
+            //    （插件侧校验），所以这里不需要再查一次嵌入令牌。
+            $sessUser = null;
+            $sessTok = (string)($_POST['embed_sess'] ?? '');
+            if ($sessTok !== '' && preg_match('/^[a-f0-9]{32}$/', $sessTok) === 1 && class_exists('Plugin')) {
+                Plugin::fire('embed.sess_user', [&$sessUser, $sessTok]);
             }
-            if ($g) {
-                if ((string)($g['client_key'] ?? '') === '') {
-                    $ck = Sec::clientKey();
-                    DB::run('UPDATE guests SET client_key=? WHERE id=?', [$ck, (int)$g['id']]);
-                    $g['client_key'] = $ck;
+            if (is_array($sessUser) && !empty($sessUser['id']) && (int)($sessUser['status'] ?? 0) === 1) {
+                $actor = Auth::actor($sessUser, null);
+            } else {
+                $visitor = substr(preg_replace('/[^a-z0-9]/', '', (string)($_POST['embed_visitor'] ?? '')) ?: 'shared', 0, 16);
+                $gTok = md5('embed|' . $embedTok . '|' . $visitor);
+                $g = DB::one('SELECT * FROM guests WHERE token=?', [$gTok]);
+                if (!$g) {
+                    $gid = DB::insert('guests', [
+                        'token' => $gTok,
+                        'nickname' => '网页访客' . ($visitor === 'shared' ? '' : '#' . $visitor),
+                        'client_key' => Sec::clientKey(),
+                        'ip' => Sec::ip(),
+                        'avatar_type' => 'generated',
+                        'avatar_style' => Auth::AVATAR_GUEST_STYLE,
+                        'avatar_seed' => (string)random_int(1, Auth::AVATAR_SEED_COUNT),
+                        'created_at' => time(),
+                    ]);
+                    $g = $gid ? DB::one('SELECT * FROM guests WHERE id=?', [$gid]) : null;
                 }
-                $actor = Auth::actor(null, $g);
+                if ($g) {
+                    if ((string)($g['client_key'] ?? '') === '') {
+                        $ck = Sec::clientKey();
+                        DB::run('UPDATE guests SET client_key=? WHERE id=?', [$ck, (int)$g['id']]);
+                        $g['client_key'] = $ck;
+                    }
+                    $actor = Auth::actor(null, $g);
+                }
             }
         }
     }
@@ -492,7 +510,20 @@ if ($action !== '') {
             $bd = (int)$p('birth_d');
             $birthdate = ($by && $bm && $bd) ? sprintf('%04d-%02d-%02d', $by, $bm, $bd) : '';
             [$ok, $msg] = Auth::register($p('nickname'), $p('email'), (string)($_POST['password'] ?? ''), $p('code'), $birthdate);
-            Api::json(['ok' => $ok, 'msg' => $msg]);
+            // v1.3.104：嵌入授权弹窗（room-embed）里注册后直接登录，省去用户再登一次。
+            // 仅在渲染注册页时带了 ?embed_auth=1（renderAuth 已把它记进会话）时生效——
+            // 主站注册流程完全不变（仍跳登录页手动登录）。
+            // 直调 Auth::login 而不走下方 'login'  case：注册本身已过机器人闸门（验证码或
+            // 邮箱验证码），且这是零失败记录的新身份，无需再撞一次登录锁定/验证码判定；
+            // 会话防固定由 Auth::login 内部的 session_regenerate_id 保证。
+            $autoLogin = false;
+            if ($ok && !empty($_SESSION['ow_embed_auth'])) {
+                unset($_SESSION['ow_embed_auth']);
+                $li = Auth::login($p('email'), (string)($_POST['password'] ?? ''));
+                $autoLogin = (bool)($li[0] ?? false);
+                if ($autoLogin) $msg = '注册成功，已自动登录';
+            }
+            Api::json(['ok' => $ok, 'msg' => $msg, 'autologin' => $autoLogin]);
 
         case 'login':
             $identity = $p('identity');
@@ -1440,6 +1471,12 @@ function renderInstall(string $err): void
 
 function renderAuth(string $mode): void
 {
+    // v1.3.104：嵌入授权弹窗标记（room-embed 的「弹窗登录/注册」）。带标记进来就把
+    // 「这是嵌入授权流程」记进会话——注册 POST 到 ?action=register 时 URL 参数已丢，
+    // 只有会话能把标记带过去（注册成功后据此自动登录）。不影响主站任何行为。
+    if (isset($_GET['embed_auth']) && $_GET['embed_auth'] === '1') {
+        $_SESSION['ow_embed_auth'] = 1;
+    }
     pageHead(['login' => '登录', 'register' => '注册', 'forgot' => '找回密码'][$mode]);
     $titles = ['login' => '欢迎回来', 'register' => '创建账号', 'forgot' => '找回密码'];
     echo '<body class="ow-auth-body" data-lang="' . ow_lang() . '"><div class="ow-auth-card">'

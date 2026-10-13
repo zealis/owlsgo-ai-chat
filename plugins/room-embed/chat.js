@@ -1,5 +1,5 @@
 /**
- * 群聊嵌入插件（room-embed）前端脚本 v1.5.0
+ * 群聊嵌入插件（room-embed）前端脚本 v2.0.0
  *
  * 职责：
  *   1. 嵌入模式（?embed=1）：域名白名单守卫 + UI 微调（隐藏音效按钮/拖拽手柄）
@@ -32,6 +32,15 @@
  *   - 启动器图标底色改自动适配页面深浅（autoTheme 沿祖先链算背景亮度，
  *     浅页深底白图形/深页白底深图形），可用 --owlsgo-launcher-bg/fg 覆盖，
  *     transparent 即透明图标；替换掉原来写死的黄褐兜底色。
+ * v2.0.0（2026-10-13）：
+ *   - 弹窗授权登录（OAuth 式）：嵌入窗内点「登录/注册」→ window.open 弹出主站
+ *     登录小窗（第一方，cookie 正常）→ 小窗内登录/注册成功 → 小窗里的聊天页
+ *     检测 window.name 授权标记 → OwApi.secure 签发一次性授权码 → postMessage
+ *     回传 iframe → iframe 带 embed_login 重载，服务端换发 30 天会话令牌并注入
+ *     OW_EMBED_USER/SESS → 本文件据此覆盖 cfg 身份、顶栏显示昵称 + 登出；
+ *   - 会话令牌经 postMessage 交父页面持久化（父页面刷新/重开 iframe 时带上），
+ *     iframe 内导航靠 main.php 的 window.name 上下文续命；
+ *   - 登出：OwApi.secure 吊销会话 + 广播父页面清令牌重载（退回访客）。
  */
 (function () {
     var w = window;
@@ -40,6 +49,45 @@
     w.__owRoomEmbedLoaded = true;
 
     var isEmbed = /[?&]embed=1(&|$)/.test(w.location.search);
+
+    /* ---------- v2.0.0：授权小窗分支（本页是弹出的登录小窗） ----------
+       判定：有 opener（是被 window.open 弹出来的）+ window.name 带授权标记
+       （opener 写的，跨导航存活——登录成功后会从 ?page=login 跳到 ?page=chat，
+       标记跟着走到聊天页）。小窗整个流程都停留在主站第一方上下文，cookie 正常，
+       所以登录/注册（含自动登录）在这里能真正建立会话。 */
+    if (isAuthPopup()) { doAuthPopup(); return; }
+    function isAuthPopup() {
+        try {
+            return !!w.opener && w.opener !== w && (w.name || '').indexOf('owlsgo_embed_auth|') === 0;
+        } catch (e) { return false; }
+    }
+    function doAuthPopup() {
+        // 标记格式：owlsgo_embed_auth|state|token（state 防跨站伪造消息，token 定位嵌入房间）
+        var parts = (w.name || '').split('|');
+        var state = parts[1] || '', tok = parts[2] || '';
+        if (!/^[a-f0-9]{32}$/.test(tok)) { try { w.close(); } catch (e) {} return; }
+        function finish(r) {
+            if (r && r.ok && r.code) {
+                // 回传 opener（= 嵌入 iframe，同源）：targetOrigin 用本窗源，
+                // 消息只投递给 opener 窗口，其他页面读不到。
+                try { w.opener.postMessage({ type: 'owlsgo_embed_auth', state: state, code: r.code }, w.location.origin); } catch (e) {}
+            }
+            setTimeout(function () { try { w.close(); } catch (e) {} }, 250);
+        }
+        function go(tryNo) {
+            OwApi.secure('plugin_room_embed_auth_code', { embed_token: tok }, function (r) {
+                // ⚠️ 为什么要延迟 + 多次重试：聊天页首屏会并发打一串请求（history/poll/各插件），
+                // 核心的会话处理器**不加锁**（长轮询必须尽早释放会话，是有意设计），
+                // 首屏请求会把刚签发的一次性票据从会话里冲掉 → 敏感校验 403。
+                // 洪峰长度不定（插件多、网络慢就长），所以退避重试到 ~9s 覆盖整个窗口，
+                // 而不是赌一个固定等待。实测单次/两次重试都会偶发失败。
+                if (r && r.ok) { finish(r); return; }
+                if (tryNo < 8) { setTimeout(function () { go(tryNo + 1); }, 700 + tryNo * 250); return; }
+                finish(r);
+            });
+        }
+        setTimeout(function () { go(0); }, 1200);
+    }
 
     /* ---------- 嵌入模式：隐藏音效按钮、隐藏输入框拖拽手柄 ---------- */
     if (isEmbed) {
@@ -63,18 +111,21 @@
         } else {
             document.addEventListener('DOMContentLoaded', trimEmbedUI);
         }
-        injectLoginEntry();   // v1.5.0：登录/注册入口（新标签页打开主站）
+        injectLoginEntry();   // v1.5.0/v2.0.0：登录/注册入口（弹窗授权）
+        embedAuthBoot();      // v2.0.0：登录态 UI + 授权码回传监听
         embedTokenBoot();     // v1.2.0：令牌引导（跨站无 cookie 时顶替签名门禁）
         embedGuard();         // 兜底：无令牌/令牌失效时的恢复引导
         return;
     }
 
-    /* ---------- 嵌入模式：登录/注册入口（v1.5.0） ----------
+    /* ---------- 嵌入模式：登录/注册入口（v1.5.0 新标签页 → v2.0.0 弹窗授权） ----------
        为什么不在嵌入窗口内直接登录：第三方 iframe 里浏览器拒绝落地会话 cookie
        （SameSite=Lax 不允许在第三方上下文存储），登录态根本无法保存在 iframe 内。
-       唯一可行路径：新标签页打开主站登录页（第一方上下文，cookie 正常落地）。
-       登录后访客可用自己的账号在主站聊天；嵌入窗口本身仍以该群访客身份参与
-       （令牌机制与登录态互不影响）。同站嵌入且已登录时（actor.kind=user）不注入。 */
+       v2.0.0 起改走「弹窗授权」：点入口弹出主站登录小窗（第一方上下文，cookie 正常），
+       小窗里登录/注册成功后会签发一次性授权码回传本窗，本窗带码重载后服务端把身份
+       升级成用户本人——和「微信/Google 第三方登录」同一个模式。弹窗被拦截时退回
+       v1.5.0 的新标签页行为。同站嵌入且已登录时（actor.kind=user）不注入。 */
+    var AUTH_STATE = '';
     function injectLoginEntry() {
         var actor = w.OwChat.cfg && w.OwChat.cfg.actor;
         if (actor && actor.kind === 'user') return;          // 已登录（同站嵌入场景）不显示
@@ -91,11 +142,143 @@
             a.target = '_blank';
             a.rel = 'noopener';
             a.textContent = '登录/注册';
-            a.title = '嵌入窗口内无法保存登录状态，将在新标签页打开主站';
+            a.title = '弹出小窗登录主站账号，成功后即可用本人身份聊天';
+            a.onclick = function (e) {
+                // 弹窗授权：onclick 里 window.open 才算用户手势，不会被拦截。
+                // 被拦时**不** preventDefault——让 <a target="_blank"> 的默认行为兜底
+                // （新标签页打开主站，v1.5.0 的老路），登录这条路永远走得通。
+                var pop = openAuthPopup(base, 'login');
+                if (pop) { e.preventDefault(); return false; }
+                return true;
+            };
             bar.appendChild(a);
         }
         if (document.readyState === 'complete' || document.readyState === 'interactive') place();
         else document.addEventListener('DOMContentLoaded', place);
+    }
+
+    /** 弹出授权小窗并写好 window.name 标记（跨导航存活，登录成功跳到聊天页后仍读得到）。
+     *  返回小窗窗口；被拦截返回 null（调用方走 <a> 默认行为兜底）。 */
+    function openAuthPopup(base, kind) {
+        var tok = embedTokenOf();
+        if (!tok) return null;   // 没令牌（老代码）→ 让调用方走新标签页
+        AUTH_STATE = Math.random().toString(36).slice(2, 12);
+        var pop = null;
+        try {
+            pop = w.open(base + '/?page=' + kind + '&embed_auth=1', 'owlsgo_embed_auth', 'width=460,height=620');
+        } catch (e) {}
+        if (!pop) return null;
+        try { pop.name = 'owlsgo_embed_auth|' + AUTH_STATE + '|' + tok; } catch (e) {}
+        return pop;
+    }
+
+    /** 当前嵌入令牌（URL → localStorage → window.name 上下文，兼容保活恢复） */
+    function embedTokenOf() {
+        var m = /[?&]embed_token=([a-f0-9]{32})/.exec(w.location.search);
+        if (m) return m[1];
+        try { var ls = w.localStorage.getItem('ow_embed_token'); if (ls) return ls; } catch (e) {}
+        try {
+            var n = w.name || '';
+            if (n.indexOf('owEmbedCtx=') === 0) {
+                var p = n.slice(11).split('|');
+                if (/^[a-f0-9]{32}$/.test(p[0] || '')) return p[0];
+            }
+        } catch (e) {}
+        return '';
+    }
+
+    /* ---------- v2.0.0：登录态 UI（昵称 + 登出）与授权码回传监听 ---------- */
+    function embedAuthBoot() {
+        // ① 页面渲染时服务端已把授权码换成会话令牌并注入 OW_EMBED_USER/SESS
+        var user = w.OW_EMBED_USER, sess = w.OW_EMBED_SESS;
+        if (user && sess) {
+            // 交给父页面持久化：父页面刷新/重开 iframe 时把 sess 拼回 src
+            postToParent({ type: 'owlsgo_embed_sess', sess: sess });
+            patchLoggedIn(user, sess);
+        }
+        // ② 监听授权小窗回传的一次性授权码（同源消息：小窗的 opener 就是本 iframe）
+        w.addEventListener('message', function (e) {
+            if (e.origin !== w.location.origin) return;
+            var d = e.data;
+            if (!d || d.type !== 'owlsgo_embed_auth' || !d.code) return;
+            if (d.state !== AUTH_STATE) return;   // 非本窗发起的授权（防跨站伪造）
+            AUTH_STATE = '';
+            // 带授权码整页重载：服务端在 page.head 消费码并换发会话令牌
+            var kept = [];
+            (w.location.search || '').replace(/^\?/, '').split('&').forEach(function (kv) {
+                if (kv && kv.indexOf('embed_login=') !== 0 && kv.indexOf('embed_sess=') !== 0) kept.push(kv);
+            });
+            kept.push('embed_login=' + d.code);
+            w.location.search = '?' + kept.join('&');
+        });
+    }
+
+    /** 覆盖 cfg 身份 + 顶栏换成「昵称 + 登出」 */
+    function patchLoggedIn(user, sess) {
+        try {
+            w.OwChat.cfg.actor = {
+                kind: 'user', id: user.id, nickname: user.nickname,
+                role: user.role || 'member', avatar: user.avatar || ''
+            };
+            w.OwChat.cfg.me = {
+                id: user.id, nickname: user.nickname, role: user.role || 'member',
+                avatar: user.avatar || '', title: ''
+            };
+        } catch (e) {}
+        function paint() {
+            var old = document.getElementById('owEmbedLogin');
+            var bar = document.querySelector('.ow-topbar');
+            if (!bar) return;
+            var me = document.getElementById('owEmbedMe');
+            if (!me) {
+                me = document.createElement('span');
+                me.id = 'owEmbedMe';
+                me.className = 'ow-embed-me';
+                me.textContent = user.nickname;
+                bar.appendChild(me);
+            }
+            var out = document.getElementById('owEmbedLogout');
+            if (!out) {
+                out = document.createElement('a');
+                out.id = 'owEmbedLogout';
+                out.className = 'ow-embed-login';
+                out.href = 'javascript:void(0)';
+                out.textContent = '登出';
+                out.title = '退出登录，退回访客身份';
+                out.onclick = function () { embedLogout(sess); };
+                bar.appendChild(out);
+            }
+            if (old && old.parentNode) old.parentNode.removeChild(old);
+        }
+        if (document.readyState === 'complete' || document.readyState === 'interactive') paint();
+        else document.addEventListener('DOMContentLoaded', paint);
+    }
+
+    /** 登出：服务端吊销会话 + 广播父页面清令牌并重载 iframe（退回访客） */
+    function embedLogout(sess) {
+        try {
+            OwApi.secure('plugin_room_embed_auth_logout', { embed_sess: sess }, function () {
+                postToParent({ type: 'owlsgo_embed_logout' });
+                // 父页面不在线（直接展开模式被剥离等）时自己回退
+                setTimeout(function () {
+                    var kept = [];
+                    (w.location.search || '').replace(/^\?/, '').split('&').forEach(function (kv) {
+                        if (kv && kv.indexOf('embed_sess=') !== 0 && kv.indexOf('embed_login=') !== 0) kept.push(kv);
+                    });
+                    w.location.search = kept.length ? '?' + kept.join('&') : '';
+                }, 400);
+            });
+        } catch (e) {}
+    }
+
+    /** 跨站 postMessage 给父页面（目标源从 URL 的 embed_parent 取，父页面脚本写入） */
+    function postToParent(msg) {
+        var target = '*';
+        var m = /[?&]embed_parent=([^&]+)/.exec(w.location.search);
+        if (m) {
+            try { target = decodeURIComponent(m[1]); } catch (e) {}
+        }
+        try { w.parent.postMessage(msg, target); } catch (e) {}
     }
 
     /* ---------- 嵌入模式：域名白名单守卫（v1.3.0） ----------
@@ -140,10 +323,12 @@
     var EMBED_TOKEN = '';
     var EMBED_VISITOR = '';
     var EMBED_ORIGIN = '';
+    var EMBED_SESS = '';
     function embedTokenBoot() {
         var m = /[?&]embed_token=([a-f0-9]{32})/.exec(w.location.search);
         var v = /[?&]embed_visitor=([a-z0-9]{4,16})/.exec(w.location.search);
         var o = /[?&]embed_origin=([a-z0-9.-]+)/.exec(w.location.search);
+        var s = /[?&]embed_sess=([a-f0-9]{32})/.exec(w.location.search);
         if (m) {
             EMBED_TOKEN = m[1];
             try { w.localStorage.setItem(OW_RE_TOK_KEY, EMBED_TOKEN); } catch (e) {}
@@ -152,14 +337,21 @@
         }
         EMBED_VISITOR = v ? v[1] : '';
         EMBED_ORIGIN = o ? o[1] : '';
-        if (EMBED_TOKEN) wrapOwApiToken(EMBED_TOKEN, EMBED_VISITOR, EMBED_ORIGIN);
+        // v2.0.0：会话令牌——服务端注入值最新鲜（刚兑换/刚校验），URL 的作兜底
+        EMBED_SESS = '';
+        try {
+            if (w.OW_EMBED_SESS && /^[a-f0-9]{32}$/.test(w.OW_EMBED_SESS)) EMBED_SESS = w.OW_EMBED_SESS;
+        } catch (e) {}
+        if (!EMBED_SESS && s) EMBED_SESS = s[1];
+        if (EMBED_TOKEN) wrapOwApiToken(EMBED_TOKEN, EMBED_VISITOR, EMBED_ORIGIN, EMBED_SESS);
     }
-    function wrapOwApiToken(tok, vis, org) {
+    function wrapOwApiToken(tok, vis, org, sess) {
         function inject(data) {
             data = data || {};
             if (!data.embed_token) data.embed_token = tok;
             if (vis && !data.embed_visitor) data.embed_visitor = vis;
             if (org && !data.embed_origin) data.embed_origin = org;
+            if (sess && !data.embed_sess) data.embed_sess = sess;   // v2.0.0：带上会话令牌（身份=用户本人）
             return data;
         }
         // ⚠️ 必须 .call(this, …)：原方法内部用 this.sign()/this.post()，裸调会把 this 丢成
@@ -207,6 +399,7 @@
                 body += '&embed_token=' + EMBED_TOKEN;
                 if (EMBED_VISITOR) body += '&embed_visitor=' + EMBED_VISITOR;
                 if (EMBED_ORIGIN) body += '&embed_origin=' + EMBED_ORIGIN;
+                if (EMBED_SESS) body += '&embed_sess=' + EMBED_SESS;   // v2.0.0：有会话令牌一并带
             }
             x.send(body);
         }
@@ -343,6 +536,20 @@
                 + 'return light?["#2b2f36","#ffffff"]:["#ffffff","#2b2f36"];}\n'
                 + 'var SITE=' + JSON.stringify(base) + ',ROOM=' + roomId + ',TOKEN=' + JSON.stringify(token || '')
                 + ',DIRECT=' + (direct ? 'true' : 'false') + ';\n'
+                // v2.0.0：登录会话令牌持久化（父页面 localStorage——第三方 iframe 自己的
+                // 存储会被浏览器拦掉，父页面不会）。iframe 换发成功后经 postMessage 交回来，
+                // 之后每次创建 iframe 都带上，刷新嵌入页不掉线。
+                + 'var SESS_KEY="owlsgo_embed_sess",PARENT_ORIGIN=location.origin||'
+                + '(location.protocol+"//"+location.host);\n'
+                + 'function getSess(){try{return localStorage.getItem(SESS_KEY)||"";}catch(e){return"";}}\n'
+                + 'function setSess(s){try{s?localStorage.setItem(SESS_KEY,s):localStorage.removeItem(SESS_KEY);}catch(e){}}\n'
+                // iframe 地址统一入口：visitor/origin/sess 都在这拼，登出重载也走它
+                + 'function frameSrc(){\n'
+                + 'var q="/?page=chat&room="+ROOM+"&embed=1&embed_token="+TOKEN'
+                + '+ "&embed_visitor="+v+"&embed_origin="+location.hostname'
+                + '+ "&embed_parent="+encodeURIComponent(PARENT_ORIGIN);\n'
+                + 'var s=getSess();if(/^[a-f0-9]{32}$/.test(s))q+="&embed_sess="+s;\n'
+                + 'return SITE+q;}\n'
                 + 'var launcher=document.createElement("button");\n'
                 + 'launcher.id="owlsgo-launcher";launcher.type="button";launcher.title="在线聊天";\n'
                 + 'launcher.innerHTML=' + JSON.stringify(phoneSvg) + ';\n'
@@ -353,11 +560,18 @@
                 + 'function ensureFrame(){\n'
                 + 'if(frame)return frame;\n'
                 + 'frame=document.createElement("iframe");\n'
-                + 'frame.src=SITE+"/?page=chat&room="+ROOM+"&embed=1&embed_token="+TOKEN'
-                + '+ "&embed_visitor="+v+"&embed_origin="+location.hostname;\n'
+                + 'frame.src=frameSrc();\n'
                 + 'frame.allow="storage-access";frame.title="聊天室";\n'
                 + 'frame.style.cssText=' + JSON.stringify(frameStyle) + '+"display:none;";\n'
                 + 'document.body.appendChild(frame);return frame;}\n'
+                // 只听主站源的消息：iframe 回传「换发的会话令牌」与「登出广播」
+                + 'window.addEventListener("message",function(e){\n'
+                + 'if(e.origin!==SITE)return;var d=e.data;if(!d)return;\n'
+                + 'if(d.type==="owlsgo_embed_sess"&&d.sess){setSess(d.sess);return;}\n'
+                + 'if(d.type==="owlsgo_embed_logout"){\n'
+                + 'setSess("");\n'
+                + 'if(frame){frame.src=frameSrc();}\n'   // 不带 sess 重载 → 退回访客身份
+                + 'return;}});\n'
                 + 'function openChat(){ensureFrame().style.display="block";launcher.style.display="none";}\n'
                 + 'function closeChat(){if(frame)frame.style.display="none";launcher.style.display="flex";}\n'
                 + 'if(DIRECT){openChat();launcher.style.display="none";}\n'
@@ -386,8 +600,9 @@
                       + fmtDate(expiresAt) + '）：浏览器拦截第三方 Cookie 的跨站场景下靠它维持连接，每位访客会自动获得独立身份（可单独禁言），权力等同该群访客。请勿公开粘贴完整代码，怀疑泄露可到后台「群聊嵌入」页吊销；再次生成会换发新令牌，旧代码立即失效。</p>'
                     : '')
                 + '<p style="color:var(--ow-text-sub,#999);font-size:12px;margin:0 0 10px">'
-                + '图标底色会自动适应你网站的深浅色（也可用 CSS 变量 <code>--owlsgo-launcher-bg</code> 覆盖，设 <code>transparent</code> 即为透明图标）；'
-                + '嵌入窗口无法保存登录状态（浏览器拦截第三方 Cookie），聊天窗顶栏提供「登录/注册」按钮，访客点击将在新标签页打开主站，用自己账号登录后可在主站聊天。</p>'
+                + '图标底色会自动适应你网站的深浅色（也可用 CSS 变量 <code>--owlsgo-launcher-bg</code> 覆盖，设 <code>transparent</code> 即为透明图标）。'
+                + '访客点聊天窗顶栏的「登录/注册」会弹出主站小窗完成登录/注册（浏览器拦截第三方 Cookie，嵌入窗口内无法直接登录），'
+                + '成功后即用本人身份聊天，会话保持 30 天，可随时登出。</p>'
                 + '<div class="ow-form-row" style="gap:8px">'
                 + '<button class="ow-btn ow-btn-primary" onclick="OwRoomEmbed.copy()">复制代码</button>'
                 + '<button class="ow-btn ow-btn-ghost" onclick="OwChat.closeModal()">关闭</button>'
