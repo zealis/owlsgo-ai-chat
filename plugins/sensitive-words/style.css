@@ -24,11 +24,8 @@
 .ow-spam-pane { padding-top: 2px; }
 .ow-spam-pane .ow-form-item textarea.ow-input { line-height: 1.7; resize: vertical; }
 
-/* ---------- 被拦链接（核心 linkifyHtml 在插件注册了 OW_LINK_GUARD 时加这个类） ----------
-   仍是链接的样子（要让人看得出它本来能点），但用虚下划线 + 警告色与正常链接区分。 */
-.ow-msg-link.ow-link-blocked {
-    color: var(--ow-yellow);
-    text-decoration: underline dotted;
-    cursor: pointer;
-}
-.ow-msg-link.ow-link-blocked:hover { color: var(--ow-yellow); background: var(--ow-warn-bg); }
+/* ---------- 被拦链接 ----------
+   v1.3.111 起**不再做任何视觉区分**：以前是警告黄 + 虚下划线，站方要求与普通链接一样。
+   区分靠点击后的弹窗（提示文案 + 规则说明 + 申请恢复访问），列表里标黄反而像坏链。
+   .ow-link-blocked 这个类仍然由核心打在 <a> 上（自检拿它当「这条被拦了」的判据），
+   只是本插件不再为它写样式。 */
