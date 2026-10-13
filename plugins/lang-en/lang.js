@@ -274,6 +274,85 @@
         '恢复到最近一次升级之前的代码状态？\n当前代码文件会被备份替换（数据、配置、上传不受影响）。':
             'Restore the code to its state before the last upgrade?\nCurrent code files are swapped for the backup (data, config and uploads are untouched).',
         '恢复失败': 'Restore failed',
+        /* ---------- 垃圾信息控制插件（v1.3.104）----------
+           只收 UI 文字：textarea 里的提示词/名单是**内容与参数**，不是界面文案
+           （引擎本来就跳过 textarea，给它们建键反而会把发给模型的中文提示翻成英文）。 */
+        '垃圾信息控制': 'Spam control',
+        '敏感词、刷屏、链接域名、IP 封锁、AI 审核集中在一页管理。每个标签独立保存，改动即时生效。':
+            'Spam controls in one page: sensitive words, flooding, link domains, IP blocking and AI review. Each tab saves on its own and takes effect immediately.',
+        '敏感词': 'Sensitive words',
+        '词库打码': 'Mask with a word list',
+        '刷屏': 'Flooding',
+        '窗口条数与最小间隔': 'Rate window and minimum gap',
+        '链接域名': 'Link domains',
+        '点击弹窗不跳转': 'Warn on click, no redirect',
+        'IP 封锁': 'IP blocking',
+        '黑白名单整站拦截': 'Allow / deny list, site-wide',
+        'AI 防线': 'AI review',
+        '模型判定，默认仅记录': 'Model verdict, log-only by default',
+        '替换为': 'Replace with',
+        '添加': 'Add',
+        '对所有输入文字生效：发言、昵称、群名称、群简介、群公告。命中即替换，不拦发送。':
+            'Applies to every piece of text on the site: messages, nicknames, room names, descriptions and announcements. A hit is replaced, not blocked.',
+        '频率窗口(秒)': 'Rate window (s)',
+        '在这个时长内统计发送条数': 'Messages are counted within this span',
+        '窗口内最多条数': 'Max messages per window',
+        '超过就拒发，登录用户与游客同一套': 'Above it the message is rejected — same rule for members and guests',
+        '两条消息最小间隔(秒)': 'Minimum gap between messages (s)',
+        '填 0 表示不限制；比窗口更细的一层': '0 means no limit; a finer layer below the window',
+        '前两项就是核心发言频率限制（键名未变，只是编辑入口搬到这里），第三项由本插件在发送前额外判定。游客另有「系统设置 → 游客、存储 → 游客发言间隔」。':
+            'The first two are the core message rate limits (same storage keys, only the editor moved here); the third is checked by this plugin before sending. Guests have a separate interval under Settings → Guests & storage.',
+        '保存刷屏设置': 'Save flood settings',
+        '启用域名过滤': 'Enable domain filtering',
+        '域名名单': 'Domain list',
+        '名单里的域名（含其子域）出现在消息链接里时，用户点击不会跳转，只弹一句提示。':
+            'When a listed domain (or any subdomain of it) appears in a message link, clicking it shows a notice instead of navigating away.',
+        '提示文案': 'Notice text',
+        '保存域名设置': 'Save domain settings',
+        '你当前的 IP：': 'Your current IP:',
+        '改动名单前先确认这个地址在名单里，否则保存后你自己也进不来。':
+            'Before editing the list, make sure this address is in it — otherwise you will lock yourself out after saving.',
+        '启用 IP 封锁': 'Enable IP blocking',
+        '模式': 'Mode',
+        '黑名单：名单内的 IP 一律拒绝访问': 'Deny list: every IP in the list is refused',
+        '白名单：只允许名单内的 IP 访问': 'Allow list: only IPs in the list may visit',
+        '白名单模式下名单为空视为不启用（防止勾上就把自己关在外面）。':
+            'In allow-list mode an empty list means "not active" (so ticking the box cannot lock you out on its own).',
+        'IP 名单': 'IP list',
+        '支持精确地址、CIDR 网段、末尾通配三种写法，IPv4 与 IPv6 都可以。识别的是服务器连接对端地址，不读任何代理头（那类头客户端可以随便伪造）。':
+            'Accepts exact addresses, CIDR ranges and trailing wildcards; IPv4 and IPv6 both work. The address compared is the TCP peer, never a proxy header (clients can forge those).',
+        '我确认要封锁当前 IP（明知会被关在外面）': 'I really want to block my current IP (I know it locks me out)',
+        '保存 IP 规则': 'Save IP rules',
+        '启用 AI 防线': 'Enable AI review',
+        '命中后': 'On a hit',
+        '仅记录（不动消息，只写安全日志）': 'Log only (leave the message alone)',
+        '打码替换（整条正文替换为 ***）': 'Mask (replace the whole message with ***)',
+        '拒发（提示用户修改后再发）': 'Reject (ask the user to edit and resend)',
+        '默认「仅记录」：先看一段时间判得准不准，再决定要不要真拦。':
+            'Log-only by default: watch how accurate it is for a while before letting it actually block.',
+        '超时(秒)': 'Timeout (s)',
+        '超过这个时间直接放行': 'Longer than this and the message goes through',
+        '每日调用上限': 'Daily call cap',
+        '填 0 表示不限量': '0 means unlimited',
+        '接口地址': 'Endpoint',
+        'OpenAI 兼容地址，必须 https（密钥不能明文出网），系统会自动接 /chat/completions。':
+            'OpenAI-compatible base URL, https only (a key must never travel in clear text); /chat/completions is appended for you.',
+        '模型': 'Model',
+        '提示词': 'Prompt',
+        '可用占位符：{scene} 场景、{text} 消息正文。要求模型只回 JSON（spam / reason 两个字段），回不出 JSON 就按放行处理。':
+            'Placeholders: {scene} and {text}. The model is asked to reply with JSON only (spam / reason); anything that is not JSON passes through.',
+        '清空本框并保存 = 恢复系统默认提示词。': 'Clear this box and save to go back to the built-in prompt.',
+        '测试文本': 'Test text',
+        '粘贴一条消息，看模型怎么判': 'Paste a message and see how the model judges it',
+        '每行一个，支持三种写法': 'One per line; three notations supported',
+        '测试 AI 配置': 'Test AI settings',
+        '保存 AI 设置': 'Save AI settings',
+        /* 聊天页：被拦链接的弹窗标题与兜底文案 */
+        '链接提示': 'Link notice',
+        '该链接已被站点拦截，不再自动跳转。': 'This link was blocked by the site and will not open.',
+        /* 核心系统设置页里那条「已移走」的说明 */
+        '发言频率窗口与窗口内最大条数已移到「插件管理 → 垃圾信息控制 → 刷屏」，那里还多了一条「两条消息最小间隔」。存储键没变，只是编辑入口收在一处。':
+            'The rate window and per-window cap moved to Plugins → Spam control → Flooding, which also adds a minimum gap between messages. Same storage keys — only the editor was consolidated.',
         '运行缓存': 'Runtime cache',
         '立即执行全部': 'Run all now',
         '启用': 'Enable',

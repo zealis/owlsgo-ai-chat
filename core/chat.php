@@ -662,6 +662,24 @@ class Chat
     }
 
     /**
+     * 内容否决钩子（v1.3.104，与 text.filter 配对）。
+     *
+     * text.filter 只能**改写**文字（敏感词打码），拦不住「这条根本不该发」——
+     * 刷屏与 AI 判定要拒发时必须有个出口，否则插件只能把正文替换成一句提示，
+     * 消息照样落库、照样在别人屏幕上闪一下。
+     * 约定：任一插件往 $reason 里写非空字符串即拒发，理由原样回给用户；不认领就留空。
+     * $text 同样按引用传出：判定方（AI 防线）可以就地改写正文，这样一个钩子就能同时
+     * 表达「拦」与「换」，不必让插件把同一段文字送去判两次。
+     * 只对**消息正文**开放（昵称/群名等仍走 filterText），场景与 text.filter 同一套。
+     */
+    public static function checkText(string &$text, string $scene, array $actor = []): ?string
+    {
+        $reason = '';
+        Plugin::fire('text.check', [&$reason, &$text, $scene, $actor]);
+        return is_string($reason) && $reason !== '' ? $reason : null;
+    }
+
+    /**
      * 图文混排消息（type=rich）的形态校验与拆分（v1.3.86）。
      *
      * 前端送来的是 `{"text":"…","media":[{"url":"uploads/image/…","kind":"image"},…]}`。
@@ -801,6 +819,9 @@ class Chat
             [$okR, $msgR, $rText, $rMedia] = self::normalizeRich($content);
             if (!$okR) return [false, $msgR];
             self::filterText($rText, 'message', $actor);
+            // 打码之后才否决：插件（垃圾信息控制）看到的是**最终**文字，
+            // 判定依据与用户实际会看到的內容一致。
+            if (($why = self::checkText($rText, 'message', $actor)) !== null) return [false, $why];
             $content = json_encode(['text' => $rText, 'media' => $rMedia], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         } elseif ($type === 'file') {
             // 文件消息 content 是 JSON：只允许 name/size/ext/path 四个字段，
@@ -820,6 +841,7 @@ class Chat
             if ($content === '') return [false, '消息不能为空'];
             if (mb_strlen($content) > 2000) return [false, '消息过长（最多 2000 字）'];
             self::filterText($content, 'message', $actor);
+            if (($why = self::checkText($content, 'message', $actor)) !== null) return [false, $why];
         }
 
         // 引用快照：前端传 {nick,text}，服务端只保留两个字段并截断，避免塞入任意结构

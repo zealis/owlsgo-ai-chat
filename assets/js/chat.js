@@ -718,21 +718,64 @@
     }
 
     /**
-     * 把**已经 esc() 过的**文本里的 http(s) 链接变成可点（v1.3.101）。
+     * 认得的「长后缀」白名单（≥3 位）。两位一律当 ccTLD 放行（.cn/.io/.me/.tv…），
+     * 所以这里只列三位及以上的常见通用顶级域。
+     *
+     * 为什么用白名单而不是「看着像域名就算」：聊天里 photo.jpg、index.html、main.py、
+     * v1.2 天天出现，全字母后缀一律当域名的话，普通文字会被成片点亮。
+     * 白名单的代价是冷门新后缀认不出 —— 那种场景极少，而且用户补一个 https:// 就一定算。
+     */
+    var OW_TLD = /^(?:com|net|org|edu|gov|mil|int|info|biz|name|pro|xyz|app|dev|page|cloud|site|online|store|shop|tech|live|video|photo|pics|studio|group|space|website|link|click|imo|fun|win|buy|sell|host|zone|plus|one|two|three|now|new|life|world|email|news|bio|art|auto|blog|cash|club|data|design|fan|fit|game|games|global|house|ink|land|love|market|meme|mini|money|museum|party|pet|ping|pizza|place|press|pub|quest|read|room|run|sale|science|show|social|software|solar|solutions|style|taxi|team|technology|today|tool|top|town|trade|travel|vip|vote|watch|wiki|work|wtf|xxx|zone)$/;
+
+    /**
+     * 两位后缀里的「反例」：它们确实是国家级顶级域（.py 巴拉圭、.sh 圣赫勒拿…），
+     * 但在聊天里出现 `main.py`、`index.ts`、`mod.go` 时，几乎一定是在说文件。
+     * 判错的代价不对称 —— 把文件点亮是一眼可见的笑话，把 .pl 漏掉只是「用户补个协议就好」，
+     * 所以这一小撮一律不当域名。
+     */
+    var OW_TLD_NOT = /^(?:py|js|ts|go|sh|rb|rs|kt|ex|ml|nb|nn|hl|gl)$/;
+
+    /** 末段后缀在白名单里，或是两位且不在反例里，才算一个真域名的主机名 */
+    function owHostReal(host) {
+        var parts = String(host || '').toLowerCase().split('.');
+        if (parts.length < 2) return false;
+        var tld = parts[parts.length - 1];
+        if (/^[a-z]{2}$/.test(tld)) return !OW_TLD_NOT.test(tld);
+        return tld.length >= 3 && tld.length <= 24 && OW_TLD.test(tld);
+    }
+
+    /**
+     * 把**已经 esc() 过的**文本里的网址变成可点（v1.3.101 起，v1.3.104 补全裸域名）。
+     *
+     * 三种写法都要认 —— 用户不会为了「能被点」去补协议头：
+     *   https://example.com/a   带协议
+     *   www.example.com/a       www 开头
+     *   example.com/a           裸域名（后缀须在 OW_TLD 白名单里）
+     * 裸域名与 www 生成的 href 一律补 https://：明文 http 要用户自己写出来，我们不替他降级。
      *
      * ⚠️ 顺序只能是「先 esc、再 linkify」：esc 之后文本里不可能再有真标签，
      *    生成的 href 直接沿用转义后的串（`&amp;` 写在属性里本来就是合法写法，浏览器会还原成 &）。
      *    反过来先链接化再 esc，会把我们刚生成的 <a> 一起转义成文字，等于没做。
-     * ⚠️ 只认 http(s):// 开头。裸域名与 www 开头的字符串在聊天里更多是「地址」而不是链接，
-     *    误判会把普通文字变成可点区域；javascript: / data: 这类协议根本不在匹配范围内。
-     * ⚠️ URL 字符集里排掉中日韩汉字与全角标点（　-〿 / 一-鿿 / ＀-￯）：
-     *    中文打字习惯是「详见 https://x.com/a，很好用」——链接和下文之间常常没有空格，
-     *    不排除就会把后面整句中文吞进 href。代价是极少见的中文原样路径链接（百科类）会截断，
-     *    而 RFC 3986 本来要求这类字符百分号编码，截断后的地址浏览器也能补全。
+     * ⚠️ URL 字符集里排掉中日韩汉字与全角标点（　-〿 / 一-鿿 / -￯）：
+     *    中文打字习惯是「详见 example.com/a，很好用」——链接和下文之间常常没有空格，
+     *    不排除就会把后面整句中文吞进 href。
+     * ⚠️ 裸域名前一个字符是字母/数字/@/点/连字符/斜杠时不算链接：那说明它是更大一串的一部分
+     *    （邮箱 me@example.com、文件名 a.com.txt、版本号 x.y.com 都在这里被挡掉）。
      * ⚠️ rel 必须带 noopener：target=_blank 打开的页面能靠 window.opener 反向改原页面。
      */
     function linkifyHtml(s) {
-        return String(s || '').replace(/https?:\/\/[^\s<　-〿一-鿿＀-￯]+/g, function (raw) {
+        var NOSTOP = '[^\\s<\\u3000-\\u303f\\u4e00-\\u9fff\\uff00-\\uffef]';
+        var RE = new RegExp('https?:\\/\\/' + NOSTOP + '+|www\\.' + NOSTOP + '+|(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.)+[a-z]{2,24}(?::\\d{1,5})?(?:[\\/?#]' + NOSTOP + '*)?', 'gi');
+        return String(s || '').replace(RE, function (raw, offset, str) {
+            var lower = raw.toLowerCase();
+            var hasScheme = lower.indexOf('http://') === 0 || lower.indexOf('https://') === 0;
+            if (!hasScheme) {
+                var prev = offset > 0 ? str.charAt(offset - 1) : '';
+                if (/[\w.@\-\/]/.test(prev)) return raw;
+                // 先剥端口再验后缀：example.com:8080/p 的主机段是 example.com:8080，
+                // 拿它按点切分会得到「com:8080」这个假后缀，一条正常链接就被判成了普通文字。
+                if (!owHostReal(raw.split(/[\/?#]/)[0].replace(/:\d+$/, ''))) return raw;
+            }
             // 句尾标点是句子的一部分，不是 URL 的一部分，剥下来放回正文。
             // &quot;/&#039; 要显式写：源文本里的引号经 esc() 后就是这两串。
             var m = raw.match(/(?:&quot;|&#039;|[)\]},.;:!?])+$/);
@@ -744,23 +787,26 @@
                 u += ';'; tail = tail.slice(1);
             }
             // 去掉协议后必须还剩一个带点的 host，否则只是「https://」这种残链（点了什么也不会发生）
-            if (u.replace(/^https?:\/\//, '').indexOf('.') < 0) return raw;
+            var bare = u.replace(/^https?:\/\//, '');
+            if (bare.indexOf('.') < 0) return raw;
+            var href = hasScheme ? u : 'https://' + u;
             // 链接守卫（v1.3.104）：插件可挂 window.OW_LINK_GUARD = function (url) { return 提示文案 }，
-            // 返回非空即表示「这个链接不许跳，点了只弹窗」。
+            // 返回非空即表示「这个链接不许跳，点了只弹窗」。传的是**补全协议后**的地址，
+            // 所以用户只打裸域名时同样在管控范围内。
             // 为什么做在这里而不是让插件事后扫 DOM：消息是增量渲染的（轮询、引用跳转、
             // 撤回后重绘都会新建节点），事后扫要额外挂渲染钩子，还总会漏掉一条路径。
             var warn = '';
             if (typeof w.OW_LINK_GUARD === 'function') {
-                try { warn = String(w.OW_LINK_GUARD(u) || ''); } catch (e) { warn = ''; }
+                try { warn = String(w.OW_LINK_GUARD(href) || ''); } catch (e) { warn = ''; }
             }
             if (warn !== '') {
                 // href="#"：被拦的链接不给真实目标（中键/Ctrl+点击同样跳不出去），
-                // 但锚文本仍是完整 URL —— 用户看得见它本来要去哪。
+                // 但锚文本仍是用户打出来的那串 —— 看得见它本来要去哪。
                 return '<a class="ow-msg-link ow-link-blocked" href="#" data-warn="' + esc(warn) + '"'
                     + ' onclick="return OwChat.blockedLink(this)" title="' + esc(warn) + '">' + u + '</a>' + tail;
             }
-            return '<a class="ow-msg-link" href="' + u + '" target="_blank"'
-                + ' rel="noopener noreferrer nofollow" title="' + u + '">' + u + '</a>' + tail;
+            return '<a class="ow-msg-link" href="' + href + '" target="_blank"'
+                + ' rel="noopener noreferrer nofollow" title="' + href + '">' + u + '</a>' + tail;
         });
     }
 
@@ -7102,9 +7148,12 @@
                         + sec('游客、存储',
                               sw('guest_browse', '游客可浏览', '1')
                             + sw('guest_chat', '游客可发言', '1')
-                            + row(fld('guest_msg_interval', '游客发言间隔(秒)', '30')
-                                + fld('msg_rate_window', '发言频率窗口(秒)', '10')
-                                + fld('msg_rate_max', '窗口内最大条数', '8'))
+                            + fld('guest_msg_interval', '游客发言间隔(秒)', '30')
+                            // v1.3.104：发言频率的两项已移到「插件 → 垃圾信息控制 → 刷屏」，
+                            // 与新增的「两条消息最小间隔」放在一起才看得懂全局（键名不变，
+                            // 仍是核心的 msg_rate_window / msg_rate_max，这里只是撤掉编辑入口）。
+                            + note('发言频率窗口与窗口内最大条数已移到「插件管理 → 垃圾信息控制 → 刷屏」，'
+                                + '那里还多了一条「两条消息最小间隔」。存储键没变，只是编辑入口收在一处。')
                             // v1.3.55：「邮件发送间隔(秒)」已移入**邮箱验证插件**后台页
                             //   （连同有效期、各类限流、后缀白名单）。键仍是核心的
                             //   mail_rate_limit，只是编辑入口收在一处，避免两个页面改同一个值。

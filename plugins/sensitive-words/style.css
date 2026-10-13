@@ -1,0 +1,34 @@
+/**
+ * 垃圾信息控制插件样式（v1.3.104）
+ * 只放本插件作用域的选择器：ow-spam-* 与 ow-link-blocked。
+ * 颜色一律取核心 --ow-* 令牌，不写死色值（深色模式与色系插件才能跟着变）。
+ */
+
+/* ---------- 后台五标签 ----------
+   与「安全日志 → 系统日志」的文件切换条同一套观感，但独立命名：
+   复用 .ow-syslog-tab 会让别的页面改那个类时连带改到这里。 */
+.ow-spam-tabs { display: flex; display: -webkit-flex; flex-wrap: wrap; -webkit-flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.ow-spam-tab {
+    display: flex; display: -webkit-flex; flex-direction: column; -webkit-flex-direction: column;
+    gap: 2px; padding: 7px 12px; cursor: pointer;
+    border: 1px solid var(--ow-border); border-radius: 6px;
+    background: var(--ow-bg-sub); color: var(--ow-text);
+    transition: border-color .15s, background .15s; -webkit-transition: border-color .15s, background .15s;
+}
+.ow-spam-tab b { font-size: 13px; font-weight: 600; white-space: nowrap; }
+.ow-spam-tab span { font-size: 11px; color: var(--ow-text-sub); white-space: nowrap; }
+/* hover 必须比底色更深一档：浅灰上涂更浅的灰会「越悬停越淡」，看着像禁用 */
+.ow-spam-tab:hover { background: var(--ow-hover-bg); border-color: var(--ow-border-control); }
+.ow-spam-tab.active { border-color: var(--ow-primary-strong); background: var(--ow-blue-light); }
+.ow-spam-tab.active b { color: var(--ow-primary-dark); }
+.ow-spam-pane { padding-top: 2px; }
+.ow-spam-pane .ow-form-item textarea.ow-input { line-height: 1.7; resize: vertical; }
+
+/* ---------- 被拦链接（核心 linkifyHtml 在插件注册了 OW_LINK_GUARD 时加这个类） ----------
+   仍是链接的样子（要让人看得出它本来能点），但用虚下划线 + 警告色与正常链接区分。 */
+.ow-msg-link.ow-link-blocked {
+    color: var(--ow-yellow);
+    text-decoration: underline dotted;
+    cursor: pointer;
+}
+.ow-msg-link.ow-link-blocked:hover { color: var(--ow-yellow); background: var(--ow-warn-bg); }
