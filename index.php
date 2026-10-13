@@ -110,8 +110,9 @@ if ($installed && $dbOk && !$user) {
 $actor = Auth::actor($user, $guest);
 if ($installed && $dbOk) Plugin::init($CFG['plugin_dir'], $CFG['data_dir'] . '/cache');
 // v1.3.104 「最早且每个请求都跑」的钩子：插件是**按需加载**的（声明的钩子被触发才 require），
-// 所以想在路由与任何输出之前拦人（垃圾信息控制插件的 IP 封锁）必须有个稳定入口。
+// 所以想在路由与任何输出之前拦人的插件必须有个稳定入口。
 // 放在这里：DB 已就绪、$actor 已解析、尚未输出任何字节 —— 处理器可以直接 403 退出。
+// v1.3.110 起内置插件里没人监听它（垃圾信息控制的 IP 封锁已移除），保留给第三方插件用。
 if ($installed && $dbOk) Plugin::fire('request.start', [$actor]);
 // v1.2.60：后台需要定位 data/logs（系统日志页），与 Upload::init / Plugin::init 同一模式注入配置
 Admin::init($CFG);

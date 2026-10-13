@@ -1,27 +1,29 @@
 <?php
 /**
- * 垃圾信息控制插件（v1.0.104 由核心剥离为「敏感词过滤」，v1.3.104 扩成五件套）
+ * 垃圾信息控制插件（v1.0.104 由核心剥离为「敏感词过滤」，v1.3.104 扩成多件套）
  *
- * 五道控制，各自生效的位置不同 —— 搞错位置等于白做：
+ * 四道控制，各自生效的位置不同 —— 搞错位置等于白做：
  *   1. 敏感词过滤   核心 text.filter 钩子：命中词库即**替换**（打码），对所有输入文字生效
  *                   （发言、昵称、群名称、群简介、群公告）。词库沿用 sensitive_words 表。
  *   2. 刷屏控制     「窗口内条数」直接接管核心键 msg_rate_window / msg_rate_max
  *                   （核心 Chat::send 已在读，只是编辑入口搬到这里，键不变、不打架）；
  *                   另加「两条消息最小间隔」= spam_min_gap，走新的 text.check 钩子拒发。
- *   3. IP 封锁      request.start 钩子（index.php 里最早、每个请求都跑的那个）——
- *                   黑名单命中即 403，白名单模式下不在名单内即 403。
- *   4. 域名过滤     **只在前端点击时拦**：名单随聊天页下发，核心 linkifyHtml 经
+ *   3. 域名过滤     **只在前端点击时拦**：名单随聊天页下发，核心 linkifyHtml 经
  *                   window.OW_LINK_GUARD 把命中的链接改成「点了弹窗、不跳转」。
  *                   不在服务端拦发送 —— 按站方定版：垃圾已经进了库，但不让人走进去。
  *                   弹窗里给两个出口（v1.3.106）：「规则说明」（文本后台可改）与
  *                   「申请恢复访问」（游客也可提交 → 落 plugin_spam_appeal 表 + 前台通知所有超管；
  *                   管理员点「通过」就把该域名从名单里删掉，真的恢复访问）。
- *   5. AI 防线      text.check 钩子：把正文交给可配的 OpenAI 兼容接口判定，
+ *   4. AI 防线      text.check 钩子：把正文交给可配的 OpenAI 兼容接口判定，
  *                   动作三选一（仅记录 / 打码替换 / 拒发），默认仅记录。
  *
+ * v1.3.110 移除「IP 封锁」标签页（站点级 IP 黑白名单）：站方判断这条不值得留 ——
+ *   真要拦人用的是后台的封禁用户/禁言，而 IP 段一填错就是把自己和一片人关在门外，
+ *   风险与收益不成比例。要恢复的话看 git 历史里 v1.3.109 的 main.php 与自检 ②③⑩ 段。
+ *
  * ⚠️ 三条不可省的前提：
- *   · IP 一律取 Sec::ip()（REMOTE_ADDR）。任何 X-Forwarded-For / X-Real-IP 都不读 ——
- *     那些头客户端想写什么写什么，拿它封 IP 等于把「绕过封锁」的开关交给攻击者。
+ *   · 需要记 IP 的地方（申诉、AI 命中日志）一律取 Sec::ip()（REMOTE_ADDR），
+ *     不读 X-Forwarded-For / X-Real-IP —— 那些头客户端想写什么写什么。
  *   · AI 的 key 只存后端、只在服务端用，绝不下发前端；base URL 强制 https，
  *     否则等于拿明文往外送密钥。
  *   · AI 判定失败/超时/额度用尽一律**放行**：宁可漏一条垃圾，不能因为第三方接口抖一下
@@ -49,7 +51,7 @@ function owSPInt(string $k, int $def = 0): int
 }
 function owSPOn(string $k): bool { return (string)DB::setting('spam_' . $k, '0') === '1'; }
 
-/** 多行文本 → 去重去空的条目列表（域名与 IP 名单共用；容忍逗号/分号/空格分隔） */
+/** 多行文本 → 去重去空的条目列表（域名名单用；容忍逗号/分号/空格分隔） */
 function owSPlist(string $txt): array
 {
     $out = [];
@@ -175,79 +177,7 @@ function owSPremoveDomain(string $domain): int
     return $removed;
 }
 
-/* ============================ 3. IP 匹配 ============================ */
-
-/**
- * CIDR 命中（v4/v6 通吃）：都转成二进制按前缀比长度。
- * 不用 ip2long —— IPv6 地址装不进 32 位整型，那样写等于悄悄不支持 v6。
- */
-function owSPcidrHit(string $ip, string $cidr): bool
-{
-    [$net, $bits] = explode('/', $cidr, 2);
-    $binIp = @inet_pton($ip);
-    $binNet = @inet_pton($net);
-    if ($binIp === false || $binNet === false || strlen($binIp) !== strlen($binNet)) return false;
-    $bits = (int)$bits;
-    $max = strlen($binNet) * 8;
-    if ($bits < 0 || $bits > $max) return false;
-    $full = intdiv($bits, 8);
-    if ($full > 0 && substr($binIp, 0, $full) !== substr($binNet, 0, $full)) return false;
-    $rem = $bits % 8;
-    if ($rem === 0) return true;
-    $mask = (0xFF << (8 - $rem)) & 0xFF;
-    return (ord($binIp[$full]) & $mask) === (ord($binNet[$full]) & $mask);
-}
-
-/**
- * 名单命中判定，支持三种写法混用：
- *   精确        203.0.113.7 / 2001:db8::1
- *   CIDR        203.0.113.0/24 / 2001:db8::/32
- *   通配        203.0.113.* / 2001:db8:*   （星号必须在末尾，前缀自带 . 或 : 作边界）
- * 单独的 '*' 一律忽略 —— 它在黑名单里等于封全站、在白名单里等于放开全站，两种都不是管理员的意思。
- */
-function owSPipHit(string $ip, array $list): bool
-{
-    foreach ($list as $rule) {
-        if ($rule === '') continue;
-        if ($rule === $ip) return true;
-        if (strpos($rule, '/') !== false) { if (owSPcidrHit($ip, $rule)) return true; continue; }
-        if (substr($rule, -1) === '*') {
-            $pre = substr($rule, 0, -1);
-            if ($pre === '' || $pre === $rule) continue;
-            if (strncmp($ip, $pre, strlen($pre)) === 0) return true;
-        }
-    }
-    return false;
-}
-
-/** 清洗后的 IP 名单（逐条校验，写不进 inet_pton 又不是通配的条目直接丢掉，避免留下永远不生效的规则） */
-function owSPipList(string $txt): array
-{
-    $out = [];
-    foreach (owSPlist($txt) as $r) {
-        if ($r === '*') continue;
-        if (strpos($r, '/') !== false) {
-            [$n] = explode('/', $r, 2);
-            if (@inet_pton($n) === false) continue;
-        } elseif (@inet_pton($r) === false && substr($r, -1) !== '*') {
-            continue;
-        }
-        if (!in_array($r, $out, true)) $out[] = $r;
-    }
-    return $out;
-}
-
-/**
- * 这个 IP 会不会被「mode + 名单」拦住？
- * 白名单模式下**名单为空视为不启用** —— 否则管理员勾上白名单、还没填 IP 就先把自己关在外面。
- */
-function owSPipBlocked(string $ip, string $mode, array $list): bool
-{
-    if (!$list) return false;
-    return $mode === 'white' ? !owSPipHit($ip, $list) : owSPipHit($ip, $list);
-}
-
-/* ============================ 5. AI 防线 ============================ */
+/* ============================ 3. AI 防线 ============================ */
 
 /** 默认提示词：站方可在后台改。要求只回 JSON 是因为解析一句「是的，这条像广告」太脆 */
 const OWSP_AI_PROMPT = <<<TXT
@@ -537,7 +467,7 @@ Plugin::on('text.filter', function (&$text, $scene, $actor) {
 $GLOBALS['sw_ai_ask'] = $GLOBALS['sw_ai_ask'] ?? 'owSPaiAsk';
 
 /**
- * 2) + 5) 拒发与 AI：核心 text.check 钩子（只对消息正文触发）。
+ * 2) + 4) 拒发与 AI：核心 text.check 钩子（只对消息正文触发）。
  * 顺序是先便宜的（最小间隔）后贵的（AI），且 AI 只在开关打开时才发请求。
  */
 Plugin::on('text.check', function (&$reason, &$text, $scene, $actor) {
@@ -571,29 +501,7 @@ Plugin::on('text.check', function (&$reason, &$text, $scene, $actor) {
         ['action' => $action, 'why' => $r['why'], 'ip' => Sec::ip()]);
 });
 
-/**
- * 3) IP 封锁：request.start 是核心里最早、且**每个请求都会跑**的钩子
- *    （插件是按需加载的，别的钩子都可能不被触发）。
- */
-Plugin::on('request.start', function ($actor) {
-    if (!owSPOn('ip_on')) return;
-    $list = owSPipList(owSPSet('ip_list'));
-    $mode = owSPSet('ip_mode', 'black') === 'white' ? 'white' : 'black';
-    $ip = Sec::ip();
-    if (!owSPipBlocked($ip, $mode, $list)) return;
-    // 被拦的机器往往在循环重试，日志按 IP 限流，否则安全日志会被它一个人写满
-    if (Sec::rateLimit('spam_ip_log', $ip, 3600, 10)) {
-        Sec::log('spam_ip_block', (string)(is_array($actor) ? ($actor['nickname'] ?? '?') : '?'),
-            ['ip' => $ip, 'mode' => $mode, 'uri' => mb_substr((string)($_SERVER['REQUEST_URI'] ?? ''), 0, 120)]);
-    }
-    http_response_code(403);
-    header('Content-Type: text/plain; charset=utf-8');
-    // 不回显「你被 IP 规则拦住了」这类细节：那等于告诉对方换个 IP 就能绕过哪条规则
-    echo '403 Forbidden';
-    exit;
-});
-
-/** 4) 域名名单下发：只在聊天页（page.footer 只在 renderChat 触发），且只带名单不带密钥 */
+/** 3) 域名名单下发：只在聊天页（page.footer 只在 renderChat 触发），且只带名单不带密钥 */
 Plugin::on('page.footer', function (): void {
     $list = owSPdomains();
     if (!$list) return;
@@ -612,16 +520,14 @@ Plugin::on('page.footer', function (): void {
 /* ============================ 后台页 ============================ */
 
 Plugin::adminPage('sensitive-words', '垃圾信息控制', function () {
-    $cur = Sec::ip();
     $tabs = [
         ['words', '敏感词', '词库打码'],
         ['flood', '刷屏', '窗口条数与最小间隔'],
         ['domain', '链接域名', '点击弹窗不跳转'],
         ['appeal', '访问申诉', '用户申请恢复访问'],
-        ['ip', 'IP 封锁', '黑白名单整站拦截'],
         ['ai', 'AI 防线', '模型判定，默认仅记录'],
     ];
-    $h = '<h2>垃圾信息控制</h2><p class="ow-admin-desc">敏感词、刷屏、链接域名、访问申诉、IP 封锁、AI 审核集中在一页管理。'
+    $h = '<h2>垃圾信息控制</h2><p class="ow-admin-desc">敏感词、刷屏、链接域名、访问申诉、AI 审核集中在一页管理。'
         . '每个标签独立保存，改动即时生效。</p>';
     $h .= '<div class="ow-card"><div class="ow-spam-tabs" id="owSpamTabs">';
     foreach ($tabs as $i => $t) {
@@ -688,25 +594,7 @@ Plugin::adminPage('sensitive-words', '垃圾信息控制', function () {
         . '<div class="ow-table-wrap"><table class="ow-table" id="owSpamAppealTable"></table></div>'
         . '<div id="owSpamAppealPager" style="margin-top:10px"></div></div>';
 
-    /* ---------- ⑤ IP ---------- */
-    $h .= '<div class="ow-spam-pane" data-pane="ip" style="display:none">'
-        . '<p style="font-size:12px;color:var(--ow-yellow)">你当前的 IP：<b>' . htmlspecialchars($cur, ENT_QUOTES) . '</b>'
-        . ' 改动名单前先确认这个地址在名单里，否则保存后你自己也进不来。</p>'
-        . owSPswitch('ip_on', '启用 IP 封锁')
-        . '<div class="ow-form-item"><label>模式</label><select class="ow-input" id="owSpam_ip_mode">'
-        . '<option value="black"' . (owSPSet('ip_mode', 'black') === 'black' ? ' selected' : '') . '>黑名单：名单内的 IP 一律拒绝访问</option>'
-        . '<option value="white"' . (owSPSet('ip_mode') === 'white' ? ' selected' : '') . '>白名单：只允许名单内的 IP 访问</option></select>'
-        . '<p style="font-size:12px">白名单模式下名单为空视为不启用（防止勾上就把自己关在外面）。</p></div>'
-        . '<div class="ow-form-item"><label>IP 名单</label>'
-        . '<textarea class="ow-input" id="owSpam_ip_list" rows="8" style="font-family:Consolas,monospace" placeholder="每行一个，支持三种写法&#10;203.0.113.7&#10;203.0.113.0/24&#10;203.0.113.*">'
-        . htmlspecialchars(owSPSet('ip_list'), ENT_QUOTES) . '</textarea>'
-        . '<p style="font-size:12px">支持精确地址、CIDR 网段、末尾通配三种写法，IPv4 与 IPv6 都可以。'
-        . '识别的是服务器连接对端地址，不读任何代理头（那类头客户端可以随便伪造）。</p></div>'
-        . '<div class="ow-form-item"><label style="font-weight:400"><input type="checkbox" id="owSpam_ip_keep"> '
-        . '我确认要封锁当前 IP（明知会被关在外面）</label></div>'
-        . '<button class="ow-btn ow-btn-primary" onclick="OwSW.save(\'ip\')">保存 IP 规则</button></div>';
-
-    /* ---------- ⑥ AI ---------- */
+    /* ---------- ⑤ AI ---------- */
     $h .= '<div class="ow-spam-pane" data-pane="ai" style="display:none">'
         . owSPswitch('ai_on', '启用 AI 防线')
         . '<div class="ow-form-item"><label>命中后</label><select class="ow-input" id="owSpam_ai_action">'
@@ -761,9 +649,6 @@ function owSPnum(string $key, string $label, string $storeKey, string $def, stri
  * 打勾框只表达「勾了没有」，一排设置下来要逐个读文字才知道站点当前行为。
  * 结构照核心 switchHtml()：隐藏的 checkbox + 一个 for 到它的轨道 label，
  * is-on 类由 admin.js 调核心的 bindSwitches 同步（switchHtml / bindSwitches 都由 chat.js 挂到 window）。
- *
- * ⚠️ 例外：IP 标签页里「我确认要封锁当前 IP」仍是打勾框 —— 那是一次性的**知情确认**，
- * 不是设置项。做成开关会让人以为「封锁自己」是个可以常开的功能。
  */
 function owSPswitch(string $key, string $label, string $hint = ''): string
 {
@@ -810,22 +695,6 @@ Plugin::route('plugin_spam_save', function (array $ctx) {
         DB::setSetting('spam_appeal_on', $p('appeal_on') === '1' ? '1' : '0');
         DB::setSetting('spam_appeal_interval', (string)max(0, min(86400, (int)$p('appeal_interval', '300'))));
         DB::setSetting('spam_appeal_note_limit', (string)max(20, min(1000, (int)$p('appeal_note_limit', '300'))));
-    } elseif ($g === 'ip') {
-        $on = $p('ip_on') === '1' ? '1' : '0';
-        $mode = $p('ip_mode') === 'white' ? 'white' : 'black';
-        $list = owSPipList($p('ip_list'));
-        $cur = Sec::ip();
-        // 防自锁：新规则会拦住正在保存的管理员时，除非他显式勾选，否则拒绝保存。
-        // 只靠页面上那句提醒是不够的 —— 名单一填错，下一次请求就连后台都进不去了。
-        if ($on === '1' && owSPipBlocked($cur, $mode, $list) && $p('ip_keep') !== '1') {
-            Api::json(['ok' => false, 'msg' => '这套规则会把你当前的 IP（' . $cur . '）拦在门外，已拒绝保存。'
-                . '把该地址放进名单（或关掉开关）再试；确实要封锁自己，请勾选「我确认要封锁当前 IP」。']);
-        }
-        DB::setSetting('spam_ip_on', $on);
-        DB::setSetting('spam_ip_mode', $mode);
-        DB::setSetting('spam_ip_list', implode("\n", $list));
-        Sec::log('spam_ip_save', (string)($ctx['actor']['nickname'] ?? ''),
-            ['on' => $on, 'mode' => $mode, 'count' => count($list), 'self_blocked' => owSPipBlocked($cur, $mode, $list) ? 1 : 0]);
     } elseif ($g === 'ai') {
         DB::setSetting('spam_ai_on', $p('ai_on') === '1' ? '1' : '0');
         DB::setSetting('spam_ai_action', in_array($p('ai_action'), ['record', 'mask', 'reject'], true) ? $p('ai_action') : 'record');

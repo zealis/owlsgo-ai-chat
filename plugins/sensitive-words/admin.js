@@ -2,7 +2,7 @@
  * 垃圾信息控制插件 - 后台交互（v1.3.107）
  * 全局对象 OwSW；依赖 OwApi / esc / toast / owTr / OwAdmin.uiPager / OwAdmin.uiBatchBar / OwApi.secure
  *
- * 页面是六个标签共用一张卡片：标签只切换 .ow-spam-pane 的显隐。
+ * 页面是五个标签共用一张卡片：标签只切换 .ow-spam-pane 的显隐。
  * 词库与访问申诉两张表都接核心的列表轮子（批量条 + 全选列 + .ow-table-wrap + uiPager）。
  *
  * ⚠️ 凡是写进**已存在节点**的文案（统计位、判定结果、确认弹窗）必须自己过 owTr：
@@ -23,7 +23,6 @@
         flood:  ['rate_win', 'rate_max', 'min_gap'],
         domain: ['domain_on', 'domain_list', 'domain_warn', 'domain_rules'],
         appeal: ['appeal_on', 'appeal_interval', 'appeal_note_limit'],
-        ip:     ['ip_on', 'ip_mode', 'ip_list', 'ip_keep'],
         ai:     ['ai_on', 'ai_action', 'ai_timeout', 'ai_daily', 'ai_base', 'ai_key', 'ai_model', 'ai_prompt']
     };
 

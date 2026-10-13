@@ -278,8 +278,8 @@
            只收 UI 文字：textarea 里的提示词/名单是**内容与参数**，不是界面文案
            （引擎本来就跳过 textarea，给它们建键反而会把发给模型的中文提示翻成英文）。 */
         '垃圾信息控制': 'Spam control',
-        '敏感词、刷屏、链接域名、访问申诉、IP 封锁、AI 审核集中在一页管理。每个标签独立保存，改动即时生效。':
-            'Spam controls in one page: sensitive words, flooding, link domains, access appeals, IP blocking and AI review. Each tab saves on its own and takes effect immediately.',
+        '敏感词、刷屏、链接域名、访问申诉、AI 审核集中在一页管理。每个标签独立保存，改动即时生效。':
+            'Spam controls in one page: sensitive words, flooding, link domains, access appeals and AI review. Each tab saves on its own and takes effect immediately.',
         '敏感词': 'Sensitive words',
         '词库打码': 'Mask with a word list',
         '共 {n} 条敏感词': '{n} words in the list',
@@ -296,8 +296,6 @@
         '窗口条数与最小间隔': 'Rate window and minimum gap',
         '链接域名': 'Link domains',
         '点击弹窗不跳转': 'Warn on click, no redirect',
-        'IP 封锁': 'IP blocking',
-        '黑白名单整站拦截': 'Allow / deny list, site-wide',
         'AI 防线': 'AI review',
         '模型判定，默认仅记录': 'Model verdict, log-only by default',
         '替换为': 'Replace with',
@@ -371,20 +369,7 @@
         /* 通知模板（core/notice.php 的 spam_appeal） */
         '{nick} 申诉被拦截的域名 {domain}，申请恢复访问。请到「后台 → 插件管理 → 垃圾信息控制 → 访问申诉」查看并处理。':
             '{nick} appealed the blocked domain {domain} and asked to restore access. Handle it under Admin → Plugins → Spam control → Access appeals.',
-        '你当前的 IP：': 'Your current IP:',
-        '改动名单前先确认这个地址在名单里，否则保存后你自己也进不来。':
-            'Before editing the list, make sure this address is in it — otherwise you will lock yourself out after saving.',
-        '启用 IP 封锁': 'Enable IP blocking',
         '模式': 'Mode',
-        '黑名单：名单内的 IP 一律拒绝访问': 'Deny list: every IP in the list is refused',
-        '白名单：只允许名单内的 IP 访问': 'Allow list: only IPs in the list may visit',
-        '白名单模式下名单为空视为不启用（防止勾上就把自己关在外面）。':
-            'In allow-list mode an empty list means "not active" (so ticking the box cannot lock you out on its own).',
-        'IP 名单': 'IP list',
-        '支持精确地址、CIDR 网段、末尾通配三种写法，IPv4 与 IPv6 都可以。识别的是服务器连接对端地址，不读任何代理头（那类头客户端可以随便伪造）。':
-            'Accepts exact addresses, CIDR ranges and trailing wildcards; IPv4 and IPv6 both work. The address compared is the TCP peer, never a proxy header (clients can forge those).',
-        '我确认要封锁当前 IP（明知会被关在外面）': 'I really want to block my current IP (I know it locks me out)',
-        '保存 IP 规则': 'Save IP rules',
         '启用 AI 防线': 'Enable AI review',
         '命中后': 'On a hit',
         '仅记录（不动消息，只写安全日志）': 'Log only (leave the message alone)',
@@ -409,7 +394,6 @@
         '清空本框并保存 = 恢复系统默认提示词。': 'Clear this box and save to go back to the built-in prompt.',
         '测试文本': 'Test text',
         '粘贴一条消息，看模型怎么判': 'Paste a message and see how the model judges it',
-        '每行一个，支持三种写法': 'One per line; three notations supported',
         '测试 AI 配置': 'Test AI settings',
         '保存 AI 设置': 'Save AI settings',
         /* AI 测试的判定结果：写进已存在的节点，i18n 的观察器看不到，由 admin.js 自己走 owTr */

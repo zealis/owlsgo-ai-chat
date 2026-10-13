@@ -6419,7 +6419,6 @@
             sensitive_word_add: '添加敏感词', sensitive_word_del: '删除敏感词', sensitive_word_batch_del: '批量删除敏感词',
             spam_appeal_submit: '用户提交访问申诉', spam_appeal_handle: '处理访问申诉',
             spam_appeal_delete: '删除申诉记录', spam_appeal_batch_del: '批量删除申诉记录',
-            spam_ip_save: '保存 IP 封锁规则', spam_ip_block: 'IP 规则拦下访问',
             spam_ai_hit: 'AI 判定命中', spam_ai_fail: 'AI 判定失败（消息已放行）',
             nickname_reserve_block: '保留昵称拦截', nickname_reserve_save: '保存保留昵称',
             upload_file: '上传附件', admin_attachment_delete: '删除附件',
@@ -6441,8 +6440,8 @@
             trash: '回收站ID', cost: '扣除积分', items: '保存项', scene: '场景', interval: '间隔',
             desc_limit: '简介字数', status: '状态', word: '词条', email: '邮箱', ip: 'IP',
             fails: '失败次数', minutes: '锁定分钟', reason: '原因', expires: '时长',
-            domain: '域名', kind: '身份', removed: '移出名单', mode: '名单模式', on: '启用',
-            self_blocked: '封锁到自己', why: '模型理由', action: '命中后动作'
+            domain: '域名', kind: '身份', removed: '移出名单', mode: '模式',
+            why: '模型理由', action: '命中后动作'
         },
         /* room_review 的 act 子类型 */
         _logReviewAct: { reset_name: '重置名称', reset_avatar: '重置头像', ban: '封禁', unban: '解封', delete: '删除' },
