@@ -503,11 +503,28 @@ function owSPnum(string $key, string $label, string $storeKey, string $def, stri
         . '<input class="ow-input" type="number" min="0" id="owSpam_' . $key . '" value="' . htmlspecialchars($v, ENT_QUOTES) . '">'
         . ($hint !== '' ? '<p style="font-size:12px">' . $hint . '</p>' : '') . '</div>';
 }
-/** 开关（与核心设置页同款视觉：复选框 + 文字） */
-function owSPswitch(string $key, string $label): string
+/**
+ * 开关（与核心设置页同款 .ow-switch-row）。
+ *
+ * 后台的布尔设置项一律用开关，不用裸打勾框：开关一眼能看出「现在是开着还是关着」，
+ * 打勾框只表达「勾了没有」，一排设置下来要逐个读文字才知道站点当前行为。
+ * 结构照 assets/js/chat.js 的 switchHtml()：隐藏的 checkbox + 一个 for 到它的轨道 label，
+ * is-on 类由 admin.js 同步（那两个助手是 chat.js 的模块私有函数，没对外暴露，插件侧各写一份）。
+ *
+ * ⚠️ 例外：IP 标签页里「我确认要封锁当前 IP」仍是打勾框 —— 那是一次性的**知情确认**，
+ * 不是设置项。做成开关会让人以为「封锁自己」是个可以常开的功能。
+ */
+function owSPswitch(string $key, string $label, string $hint = ''): string
 {
-    return '<div class="ow-form-item"><label style="font-weight:400"><input type="checkbox" id="owSpam_' . $key . '"'
-        . (owSPOn($key) ? ' checked' : '') . '> ' . $label . '</label></div>';
+    $on = owSPOn($key);
+    $id = htmlspecialchars('owSpam_' . $key, ENT_QUOTES);
+    $escLabel = htmlspecialchars($label, ENT_QUOTES);
+    return '<div class="ow-switch-row">'
+        . '<span class="ow-switch-label">' . $escLabel . '</span>'
+        . '<input type="checkbox" class="ow-switch-input" id="' . $id . '"' . ($on ? ' checked' : '') . '>'
+        . '<label class="ow-switch' . ($on ? ' is-on' : '') . '" for="' . $id . '"></label>'
+        . ($hint !== '' ? '<p class="ow-switch-hint">' . htmlspecialchars($hint, ENT_QUOTES) . '</p>' : '')
+        . '</div>';
 }
 /** 下拉选项：按当前值决定 selected */
 function owSPopt(string $key, string $val, string $label): string

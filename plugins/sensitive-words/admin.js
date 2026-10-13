@@ -30,8 +30,28 @@
                 actions: [{ key: 'del', label: '批量删除所选敏感词', danger: true }],
                 onExec: function (act, ids) { w.OwSW.batchDelete(ids); }
             });
+            this.bindSwitches();
             this.bindTabs();
             this.list(1);
+        },
+
+        /**
+         * 开关轨道同步：隐藏的 checkbox 变了就把 is-on 挪到轨道上（轨道本身是 label[for]，
+         * 点它等于点 checkbox，所以只需要监听 change）。
+         * 核心那份 bindSwitches 是 chat.js 的模块私有函数，插件侧用不到，只能各写一份。
+         */
+        bindSwitches: function () {
+            var inputs = d.querySelectorAll('.ow-switch-input');
+            for (var i = 0; i < inputs.length; i++) {
+                (function (cb) {
+                    var row = cb.parentNode;
+                    var track = row ? row.querySelector('.ow-switch') : null;
+                    if (!track) return;
+                    var sync = function () { track.className = 'ow-switch' + (cb.checked ? ' is-on' : ''); };
+                    cb.onchange = sync;
+                    sync();
+                })(inputs[i]);
+            }
         },
 
         /* ---------- 标签切换 ---------- */
