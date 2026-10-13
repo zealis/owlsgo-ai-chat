@@ -401,8 +401,9 @@
             'OpenAI-compatible base URL, https only (a key must never travel in clear text); /chat/completions is appended for you.',
         '模型': 'Model',
         '提示词': 'Prompt',
-        '可用占位符：{scene} 场景、{text} 消息正文。要求模型只回 JSON（spam / reason 两个字段），回不出 JSON 就按放行处理。':
-            'Placeholders: {scene} and {text}. The model is asked to reply with JSON only (spam / reason); anything that is not JSON passes through.',
+        '可用占位符：{scene} 场景、{text} 消息正文。要求模型只回 JSON（spam / reason 两个字段），回不出 JSON 就按放行处理。网关偶尔会自己拒收某条消息（它那一侧的输入风控，与这里无关），插件会趁热再问一次，仍失败就放行。':
+            'Placeholders: {scene} and {text}. The model is asked to reply with JSON only (spam / reason); anything that is not JSON passes through. '
+            + 'The endpoint sometimes refuses one message on its own safety filter — nothing to do with this setting; we retry once and then let the message through.',
         '清空本框并保存 = 恢复系统默认提示词。': 'Clear this box and save to go back to the built-in prompt.',
         '测试文本': 'Test text',
         '粘贴一条消息，看模型怎么判': 'Paste a message and see how the model judges it',

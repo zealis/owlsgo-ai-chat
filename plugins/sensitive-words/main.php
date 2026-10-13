@@ -28,6 +28,9 @@
  *     全站发不出消息。超时是**整次请求**的预算（连接 + TLS 握手 + 模型推理），默认 10 秒 ——
  *     v1.3.104 的 3 秒连握手都跑不完，结果是「防线看着开着、其实一条都没判」，
  *     加载时会把仍停在旧默认值 3 秒的配置一次性上调（管理员之后自己选 3 秒不再被覆盖）。
+ *   · 网关有时会以自己的输入风控拒收某条消息，且**随机**（实测同一条博彩广告问 6 次：
+ *     拦 2 拒 4；正常消息 6/6 都能判）。这种拒收只重问一次，且只用**剩下的预算**，
+ *     不撑破管理员设的上限；再失败就放行并说明原因。不做任何绕过对方风控的改写。
  */
 if (!defined('OWLSGO_VERSION')) exit;   // 禁止直接 HTTP 访问本文件
 
@@ -370,10 +373,29 @@ function owSPaiDecode(string $resp): array
 }
 
 /**
+ * 网关把自己的输入风控判成「违规」而拒绝处理这次请求。
+ * 与站点配置无关，而且实测**随机**：同一条博彩广告连问 6 次是「拦 拒 拒 拦 拒 拒」，
+ * 正常消息则 6/6 都能判 —— 拒的恰好是最需要判的那类文本。
+ * 只做一次带剩余预算的重试；不做任何绕过（改写/编码正文去躲对方风控不是这里该干的事）。
+ */
+function owSPaiIsRefusal(array $err): bool
+{
+    $code = strtolower(trim((string)($err['code'] ?? '') . ' ' . (string)($err['type'] ?? '')));
+    if (strpos($code, 'content_check') !== false) return true;
+    return (bool)preg_match('/sensitive content|content policy/i', (string)($err['message'] ?? ''));
+}
+
+const OWSP_AI_REFUSAL = '网关拒绝审核这段文本（它自己的输入风控，与站点配置无关；已按放行处理）。'
+    . '被拒的往往正是广告与违规内容 —— 要覆盖这一类，得换一家接口或让服务商为审核流量放行。';
+
+/**
  * 问一次模型。返回 ['ok'=>bool,'spam'=>?bool,'why'=>string,'raw'=>string,'ms'=>int]
  * 任何一步不对都 ok=false + 人话原因 —— 调用方一律放行，绝不因为审核接口挂了而拦人。
+ *
+ * $budget 只给内部重试用（剩余秒数），外部一律留空读配置：
+ * 重试不能把「超时(秒)」这个对管理员承诺的上限撑破。
  */
-function owSPaiAsk(string $prompt): array
+function owSPaiAsk(string $prompt, int $budget = 0, int $attempt = 1): array
 {
     // 统一的失败出口：调用方只看 ok 与 raw，但测试页要知道这一次到底等了多久
     $fail = fn(string $raw, int $ms = 0): array => ['ok' => false, 'spam' => null, 'why' => '', 'raw' => $raw, 'ms' => $ms];
@@ -393,7 +415,7 @@ function owSPaiAsk(string $prompt): array
 
     $hdr = ['Content-Type: application/json', 'Accept: application/json'];
     if ($key !== '') $hdr[] = 'Authorization: Bearer ' . $key;
-    $timeout = owSPaiTimeout();
+    $timeout = $budget > 0 ? max(1, min(OWSP_AI_TIMEOUT_MAX, $budget)) : owSPaiTimeout();
     // 连接阶段单独设上限：预算可能被调到 30 秒等模型，但「地址根本不通」不该也等 30 秒 ——
     // 那样每条消息都要卡满半分钟才放行。
     $connTo = min(5, $timeout);
@@ -445,10 +467,19 @@ function owSPaiAsk(string $prompt): array
 
     $j = owSPaiDecode((string)$resp);
     $content = (string)($j['choices'][0]['message']['content'] ?? '');
-    if ($content === '' && isset($j['error']['message'])) {
-        // 网关自己的风控也会走这里（例如它判定这条测试文本违规）：把它的原话留下，
-        // 管理员才知道是「这句话不能问」而不是「配置错了」
-        return $fail('接口报错：' . mb_substr((string)$j['error']['message'], 0, 200), $ms);
+    if ($content === '' && isset($j['error']) && is_array($j['error'])) {
+        $em = mb_substr((string)($j['error']['message'] ?? ''), 0, 200);
+        if (owSPaiIsRefusal($j['error'])) {
+            // 拒审是随机的，趁热再问一次；但只用**剩下的预算**，不撑破管理员设的上限
+            $left = $timeout - (int)ceil($ms / 1000);
+            if ($attempt === 1 && $left >= 3) {
+                $r2 = owSPaiAsk($prompt, $left, 2);
+                $r2['ms'] = (int)($r2['ms'] ?? 0) + $ms;
+                return $r2;
+            }
+            return $fail(OWSP_AI_REFUSAL . ' 网关原话：' . ($em !== '' ? $em : mb_substr((string)$resp, 0, 120)), $ms);
+        }
+        return $fail('接口报错：' . ($em !== '' ? $em : mb_substr((string)$resp, 0, 200)), $ms);
     }
     if ($content === '') return $fail('响应里没有 content：' . mb_substr((string)$resp, 0, 200), $ms);
     $r = owSPaiParse($content);
@@ -699,6 +730,7 @@ Plugin::adminPage('sensitive-words', '垃圾信息控制', function () {
         . htmlspecialchars(owSPSet('ai_prompt', OWSP_AI_PROMPT), ENT_QUOTES) . '</textarea>'
         . '<p style="font-size:12px">可用占位符：{scene} 场景、{text} 消息正文。'
         . '要求模型只回 JSON（spam / reason 两个字段），回不出 JSON 就按放行处理。'
+        . '网关偶尔会自己拒收某条消息（它那一侧的输入风控，与这里无关），插件会趁热再问一次，仍失败就放行。'
         . '<b>清空本框并保存 = 恢复系统默认提示词。</b></p></div>'
         . '<div class="ow-form-row"><div class="ow-form-item" style="flex:1"><label>测试文本</label>'
         . '<input class="ow-input" id="owSpamTest" placeholder="粘贴一条消息，看模型怎么判"></div>'
