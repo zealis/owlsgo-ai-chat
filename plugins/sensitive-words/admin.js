@@ -1,15 +1,20 @@
 /**
- * 垃圾信息控制插件 - 后台交互（v1.3.104）
- * 全局对象 OwSW；依赖 OwApi / esc / toast / OwAdmin.uiPager / OwAdmin.uiBatchBar / OwApi.secure
+ * 垃圾信息控制插件 - 后台交互（v1.3.107）
+ * 全局对象 OwSW；依赖 OwApi / esc / toast / owTr / OwAdmin.uiPager / OwAdmin.uiBatchBar / OwApi.secure
  *
- * 页面是五个标签共用一张卡片：标签只切换 .ow-spam-pane 的显隐，
- * 词库那张表的分页/批量轮子与原来完全一致（路由与表名都没改）。
+ * 页面是六个标签共用一张卡片：标签只切换 .ow-spam-pane 的显隐。
+ * 词库与访问申诉两张表都接核心的列表轮子（批量条 + 全选列 + .ow-table-wrap + uiPager）。
+ *
+ * ⚠️ 凡是写进**已存在节点**的文案（统计位、判定结果、确认弹窗）必须自己过 owTr：
+ * i18n 的 MutationObserver 只看新插入的元素，改文本它看不见。toast 与新渲染的表格单元格
+ * 是新增节点，观察器会翻，直接写中文即可。
  */
 (function (w, d) {
     'use strict';
     var $ = function (id) { return d.getElementById(id); };
 
     var state = { page: 1, size: 30, total: 0 };
+    var aState = { page: 1, size: 20, total: 0, pending: 0 };
 
     /* 每个标签要提交哪些字段。字段 id 统一是 owSpam_<key>，
        白名单在插件后端（plugin_spam_save）也写死了一份 —— 这里只决定「带不带」，
@@ -21,40 +26,31 @@
         ip:     ['ip_on', 'ip_mode', 'ip_list', 'ip_keep'],
         ai:     ['ai_on', 'ai_action', 'ai_timeout', 'ai_daily', 'ai_base', 'ai_key', 'ai_model', 'ai_prompt']
     };
-    var aState = { page: 1, size: 20, total: 0 };
 
     w.OwSW = {
         init: function () {
             w.OwAdmin.uiBatchBar({
                 id: 'owSWBatch',
                 chkCls: 'owSWChk',
-                statBase: '共 0 条敏感词',
+                statBase: '',
                 actions: [{ key: 'del', label: '批量删除所选敏感词', danger: true }],
                 onExec: function (act, ids) { w.OwSW.batchDelete(ids); }
             });
-            this.bindSwitches();
+            // 申诉条数显示在筛选行那一句里，这里的统计位只报「已选 N 条」，避免两个「共 N 条」
+            w.OwAdmin.uiBatchBar({
+                id: 'owSpamAppealBatch',
+                chkCls: 'owAppealChk',
+                statBase: '',
+                actions: [{ key: 'del', label: '批量删除所选申诉', danger: true }],
+                onExec: function (act, ids) { w.OwSW.appealBatchDel(ids); }
+            });
+            // 开关轨道同步用核心导出的 bindSwitches（chat.js 已挂到 window）。
+            // 只圈本插件那张卡片：init 可能在其它后台页也跑，绑到 document 会把别人的开关重复绑。
+            var card = $('owSpamTabs') && $('owSpamTabs').parentNode;
+            if (card && w.bindSwitches) w.bindSwitches(card);
             this.bindTabs();
             this.list(1);
             this.appealList(1);
-        },
-
-        /**
-         * 开关轨道同步：隐藏的 checkbox 变了就把 is-on 挪到轨道上（轨道本身是 label[for]，
-         * 点它等于点 checkbox，所以只需要监听 change）。
-         * 核心那份 bindSwitches 是 chat.js 的模块私有函数，插件侧用不到，只能各写一份。
-         */
-        bindSwitches: function () {
-            var inputs = d.querySelectorAll('.ow-switch-input');
-            for (var i = 0; i < inputs.length; i++) {
-                (function (cb) {
-                    var row = cb.parentNode;
-                    var track = row ? row.querySelector('.ow-switch') : null;
-                    if (!track) return;
-                    var sync = function () { track.className = 'ow-switch' + (cb.checked ? ' is-on' : ''); };
-                    cb.onchange = sync;
-                    sync();
-                })(inputs[i]);
-            }
         },
 
         /* ---------- 标签切换 ---------- */
@@ -103,30 +99,50 @@
         },
 
         /* ---------- AI 测试 ---------- */
+        /**
+         * 判定结果写进**已存在**的 #owSpamAiStat：i18n 引擎只遍历新增元素里的文本节点，
+         * 改现有节点的文本不会被翻译，所以这几句必须自己走 owTr（与升级面板同一做法）。
+         * 耗时一律显示：慢是这条链路最常见的故障，光看「失败」两字分不清该调超时还是换地址。
+         */
         aiTest: function () {
             var box = $('owSpamAiStat'), t = $('owSpamTest');
             if (!box || !t) return;
-            if (!t.value.trim()) { toast('请先输入一段测试文本'); return; }
-            box.textContent = '判定中…（要等接口回话，最多几秒）';
+            if (!t.value.trim()) { toast(owTr('请先输入一段测试文本')); return; }
+            box.textContent = owTr('判定中…（要等接口回话，可能要十几秒）');
             OwApi.post('plugin_spam_ai_test', { text: t.value }, function (r) {
-                if (!r || !r.ok) { box.textContent = '测试失败：' + ((r && r.msg) || '接口无响应'); return; }
-                if (r.verdict === 'spam') box.textContent = '判定：垃圾信息' + (r.why ? '（' + r.why + '）' : '') + '　原始返回：' + r.raw;
-                else if (r.verdict === 'clean') box.textContent = '判定：正常' + (r.why ? '（' + r.why + '）' : '');
-                else box.textContent = '判定失败（消息照常放行）：' + r.raw + (r.quota_left === 'exhausted' ? '　※ 今日调用上限已用完' : '');
+                if (!r || !r.ok) {
+                    box.textContent = owTr('测试失败：{msg}', { msg: (r && r.msg) || owTr('接口无响应') });
+                    return;
+                }
+                var cost = r.ms ? '　' + owTr('本次耗时 {sec} 秒', { sec: (r.ms / 1000).toFixed(1) }) : '';
+                var why = r.why ? '（' + r.why + '）' : '';
+                if (r.verdict === 'spam') {
+                    box.textContent = owTr('判定：垃圾信息') + why
+                        + '　' + owTr('原始返回：{raw}', { raw: r.raw }) + cost;
+                } else if (r.verdict === 'clean') {
+                    box.textContent = owTr('判定：正常') + why + cost;
+                } else {
+                    box.textContent = owTr('判定失败（消息照常放行）：{err}', { err: r.raw }) + cost
+                        + (r.quota_left === 'exhausted' ? '　' + owTr('※ 今日调用上限已用完') : '');
+                }
             });
         },
 
-        /* ---------- 访问申诉列表（与内容举报的列表同一套观感） ---------- */
+        /* ---------- 访问申诉列表（与安全日志同一套轮子：筛选 + 批量 + 分页） ---------- */
         appealList: function (page) {
             var f = $('owSpamAppealFilter');
             OwApi.post('plugin_spam_appeal_list',
                 { page: page || 1, size: aState.size, status: f ? f.value : '' }, function (r) {
                 var table = $('owSpamAppealTable');
                 if (!table) return;
-                if (!r || !r.ok) { table.innerHTML = '<tr><td style="color:var(--ow-text-sub)">加载失败</td></tr>'; return; }
+                if (!r || !r.ok) { table.innerHTML = '<tr><td colspan="9" style="color:var(--ow-text-sub)">' + esc(owTr('加载失败')) + '</td></tr>'; return; }
                 aState.total = r.data.total;
                 aState.page = r.data.page;
+                aState.pending = r.data.pending || 0;
                 OwSW.appealRender(r.data.list);
+                var stat = $('owSpamAppealStat');
+                if (stat) stat.textContent = owTr('共 {total} 条申诉，待处理 {pending} 条',
+                    { total: aState.total, pending: aState.pending });
                 w.OwAdmin.uiPager($('owSpamAppealPager'), aState.page, aState.total, aState.size,
                     function (pg) { OwSW.appealList(pg); });
             });
@@ -134,7 +150,8 @@
 
         appealRender: function (rows) {
             var table = $('owSpamAppealTable');
-            var h = '<tr><th>ID</th><th>域名</th><th>申请人</th><th>说明</th><th>IP</th><th>提交时间</th><th>状态</th><th>操作</th></tr>';
+            var h = '<tr><th style="width:32px"><input type="checkbox" id="owAppealCheckAll" onchange="OwSW.appealToggleAll(this)"></th>'
+                + '<th>ID</th><th>域名</th><th>申请人</th><th>说明</th><th>IP</th><th>提交时间</th><th>状态</th><th>操作</th></tr>';
             for (var i = 0; i < rows.length; i++) {
                 var r = rows[i];
                 var tag = r.status == 0 ? '<span class="ow-tag ow-tag-guest">待处理</span>'
@@ -142,6 +159,7 @@
                 var who = esc(r.nick) + (r.kind == 'guest' ? '（游客）' : '');
                 // 待处理行高亮：一屏几十条里要能一眼挑出没处理的（与内容举报同法）
                 h += '<tr' + (r.status == 0 ? ' style="background:var(--ow-blue-light)"' : '') + '>'
+                    + '<td><input type="checkbox" class="owAppealChk" value="' + r.id + '" onchange="OwSW.appealSyncBatch()"></td>'
                     + '<td>' + r.id + '</td><td>' + esc(r.domain) + '</td><td>' + who + '</td>'
                     + '<td>' + esc(r.note) + '</td><td>' + esc(r.ip) + '</td>'
                     + '<td>' + esc(new Date(r.created_at * 1000).toLocaleString()) + '</td><td>' + tag + '</td><td>'
@@ -151,15 +169,39 @@
                         : '')
                     + '<a href="javascript:;" onclick="OwSW.appealDel(' + r.id + ')">删除</a></td></tr>';
             }
-            if (!rows.length) h += '<tr><td colspan="8" style="color:var(--ow-text-sub)">暂无申诉记录</td></tr>';
+            if (!rows.length) h += '<tr><td colspan="9" style="color:var(--ow-text-sub)">暂无申诉记录</td></tr>';
             table.innerHTML = h;
+            var all = $('owAppealCheckAll');
+            if (all) all.checked = false;
+            OwSW.appealSyncBatch();
         },
 
-        /** 通过 = 把这个域名从黑名单里删掉，所以确认文案必须把这件事说在前面 */
+        appealToggleAll: function (cb) {
+            var boxes = d.getElementsByClassName('owAppealChk');
+            for (var i = 0; i < boxes.length; i++) boxes[i].checked = cb.checked;
+            OwSW.appealSyncBatch();
+        },
+
+        appealSyncBatch: function () {
+            w.OwAdmin.batchSync('owAppealChk', 'owSpamAppealBatch', '');
+        },
+
+        /** 批量删除只删记录，不动黑名单 —— 与单条删除同一条语义，确认文案必须说清 */
+        appealBatchDel: function (ids) {
+            w.OwAdmin.confirm(owTr('删除选中的 {n} 条申诉记录？（只删记录，不影响黑名单）', { n: ids.length }), function () {
+                OwApi.secure('plugin_spam_appeal_batch', { ids: ids.join(',') }, function (r) {
+                    toast(r && r.msg ? r.msg : '删除失败');
+                    if (r && r.ok) OwSW.appealList(aState.page);
+                });
+            });
+        },
+
+        /** 通过 = 把这个域名从黑名单删掉，所以确认文案必须把这件事说在前面 */
         appealHandle: function (id, status) {
-            var txt = status == 1
+            // OwAdmin.confirm 写的是弹窗里**已存在**的节点，观察器翻不到 → 自己走 owTr
+            var txt = owTr(status == 1
                 ? '通过后该域名会从黑名单移除，所有人点它都能正常跳转。确认通过？'
-                : '确认拒绝这条申诉？域名保持在黑名单里。';
+                : '确认拒绝这条申诉？域名保持在黑名单里。');
             w.OwAdmin.confirm(txt, function () {
                 OwApi.secure('plugin_spam_appeal_handle', { id: id, status: status }, function (r) {
                     toast(r && r.msg ? r.msg : '操作失败');
@@ -169,7 +211,7 @@
         },
 
         appealDel: function (id) {
-            w.OwAdmin.confirm('删除这条申诉记录？（不影响黑名单）', function () {
+            w.OwAdmin.confirm(owTr('删除这条申诉记录？（不影响黑名单）'), function () {
                 OwApi.secure('plugin_spam_appeal_delete', { id: id }, function (r) {
                     toast(r && r.msg ? r.msg : '删除失败');
                     if (r && r.ok) OwSW.appealList(aState.page);
@@ -177,7 +219,7 @@
             });
         },
 
-        /* ---------- 以下词库部分与 v1.0.110 相同：路由、表、轮子都没动 ---------- */
+        /* ---------- 以下词库部分：路由、表、轮子都没动（v1.3.107 只把统计与确认文案改走 owTr） ---------- */
         list: function (page) {
             OwApi.post('plugin_sensitive_words_admin', { page: page || 1, size: state.size }, function (r) {
                 var table = $('owSWTable'), pager = $('owSWPager');
@@ -186,7 +228,7 @@
                 state.page = r.data.page;
                 OwSW.render(r.data.list);
                 w.OwAdmin.uiPager(pager, state.page, state.total, state.size, function (pg) { w.OwSW.list(pg); });
-                w.OwAdmin.batchSync('owSWChk', 'owSWBatch', '共 ' + state.total + ' 条敏感词');
+                w.OwAdmin.batchSync('owSWChk', 'owSWBatch', owTr('共 {n} 条敏感词', { n: state.total }));
             });
         },
 
@@ -216,12 +258,12 @@
         },
 
         syncBatch: function () {
-            w.OwAdmin.batchSync('owSWChk', 'owSWBatch', '共 ' + state.total + ' 条敏感词');
+            w.OwAdmin.batchSync('owSWChk', 'owSWBatch', owTr('共 {n} 条敏感词', { n: state.total }));
         },
 
         batchDelete: function (ids) {
-            if (!ids || !ids.length) { toast('请先选择要删除的敏感词'); return; }
-            w.OwAdmin.confirm('确认删除选中的 ' + ids.length + ' 条敏感词？', function () {
+            if (!ids || !ids.length) { toast(owTr('请先选择要删除的敏感词')); return; }
+            w.OwAdmin.confirm(owTr('确认删除选中的 {n} 条敏感词？', { n: ids.length }), function () {
                 OwApi.secure('plugin_sensitive_words_batch', { ids: ids.join(',') }, function (r) {
                     toast(r.msg);
                     if (r.ok) w.OwSW.list(state.page);
@@ -239,7 +281,7 @@
             OwApi.post('plugin_sensitive_words_toggle', { id: id, enabled: en }, function (r) { toast(r.msg); if (r.ok) w.OwSW.list(state.page); });
         },
         wordDel: function (id) {
-            w.OwAdmin.confirm('确定删除该敏感词？', function () {
+            w.OwAdmin.confirm(owTr('确定删除该敏感词？'), function () {
                 OwApi.secure('plugin_sensitive_words_del', { id: id }, function (r) {
                     toast(r.msg);
                     if (r.ok) w.OwSW.list(state.page);

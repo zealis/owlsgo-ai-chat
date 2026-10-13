@@ -25,7 +25,9 @@
  *   · AI 的 key 只存后端、只在服务端用，绝不下发前端；base URL 强制 https，
  *     否则等于拿明文往外送密钥。
  *   · AI 判定失败/超时/额度用尽一律**放行**：宁可漏一条垃圾，不能因为第三方接口抖一下
- *     全站发不出消息。
+ *     全站发不出消息。超时是**整次请求**的预算（连接 + TLS 握手 + 模型推理），默认 10 秒 ——
+ *     v1.3.104 的 3 秒连握手都跑不完，结果是「防线看着开着、其实一条都没判」，
+ *     加载时会把仍停在旧默认值 3 秒的配置一次性上调（管理员之后自己选 3 秒不再被覆盖）。
  */
 if (!defined('OWLSGO_VERSION')) exit;   // 禁止直接 HTTP 访问本文件
 
@@ -258,6 +260,24 @@ const OWSP_AI_PROMPT = <<<TXT
 【消息】{text}
 TXT;
 
+/**
+ * AI 超时预算（秒）。
+ *
+ * 为什么默认值从 3 秒提到 10 秒：一次判定 = TCP 连接 + TLS 握手 + 模型推理，实测最省事的
+ * 兼容网关也要 7 秒以上（握手 2 秒 + 推理 5 秒）。3 秒连握手都完不成，于是「AI 防线」
+ * 在每个人身上静默失败、静默放行 —— 开关看着是开的，其实一条都没判。
+ * 上限留到 30 秒兜住慢模型，但发送请求会等这么久，所以提示词里让管理员自己权衡。
+ */
+const OWSP_AI_TIMEOUT_MIN = 3;
+const OWSP_AI_TIMEOUT_MAX = 30;
+const OWSP_AI_TIMEOUT_DEF = 10;
+
+/** 当前生效的超时预算。旧数据可能留着 1 秒或 999 秒这类越界值，读写两头都夹回区间 */
+function owSPaiTimeout(): int
+{
+    return max(OWSP_AI_TIMEOUT_MIN, min(OWSP_AI_TIMEOUT_MAX, owSPInt('ai_timeout', OWSP_AI_TIMEOUT_DEF)));
+}
+
 /** 填模板：只认 {scene} / {text} 两个占位，其它花括号原样留给模型 */
 function owSPaiPrompt(string $text, string $scene): string
 {
@@ -287,27 +307,96 @@ function owSPaiParse(string $content): array
 }
 
 /**
- * 问一次模型。返回 ['ok'=>bool,'spam'=>?bool,'why'=>string,'raw'=>string]
+ * 把 curl 的失败翻译成人能照着做的一句话。
+ *
+ * libcurl 原文只会说 "SSL connection timeout" —— 看不出卡在哪个阶段，也不知道该把哪个数调大，
+ * 管理员只能反复点测试按钮。这里按阶段分（没连上 / TLS 卡住 / 接口不回话），并给出实测耗时，
+ * 因为这三种情况的处置完全不同：换地址、查证书、调超时。
+ */
+function owSPaiErrText(int $errno, string $cerr, int $ms, int $budget, float $connT, float $appT): string
+{
+    $sec = number_format($ms / 1000, 1);
+    if ($errno === CURLE_OPERATION_TIMEDOUT) {
+        // ⚠️ PHP 的 curl_getinfo 用 **0** 表示「这一阶段没走到」，不是 -1（实测：连不上时
+        //    connect_time / appconnect_time 都是 0.0）。判 < 0 等于这条分支永不生效，
+        //    任何「地址不通」都会被报成「接口太慢」，把管理员引去调一个不该调的数。
+        if ($connT <= 0) {
+            return '连不上接口：等了 ' . $sec . ' 秒还没建立连接（上限 ' . $budget
+                . ' 秒）。先确认这台服务器能访问外网、地址里的端口没被挡。';
+        }
+        if ($appT <= 0) {
+            return 'TLS 握手超时：连接通了，但 ' . $sec . ' 秒还没完成证书协商（上限 ' . $budget
+                . ' 秒）。把「超时(秒)」调到 10 秒以上；若一直卡在这一步，多半是证书链不全或被网络设备拦截。';
+        }
+        return '接口太慢：' . $sec . ' 秒没返回内容（上限 ' . $budget
+            . ' 秒）。模型判定本身就要几秒，把「超时(秒)」调到 ' . owSPaiSuggest($budget) . ' 秒再试。';
+    }
+    if ($errno === CURLE_COULDNT_RESOLVE_HOST) return '域名解析失败：地址里的主机名查不到（' . mb_substr($cerr, 0, 60) . '）';
+    if ($errno === CURLE_COULDNT_CONNECT) return '连不上接口：' . mb_substr($cerr, 0, 80);
+    // 证书类错误码一堆，合并成一句「证书有问题」就够管理员动手了。
+    // ⚠️ 只用 PHP 的 curl 扩展真正定义的常量：CURLE_PEER_FAILED_VERIFICATION / _ISSUER_ERROR
+    //    这些 libcurl 名字在 PHP 里不存在，写上去就是 Undefined constant 直接炸。
+    if (in_array($errno, [CURLE_SSL_CONNECT_ERROR, CURLE_SSL_CERTPROBLEM, CURLE_SSL_CIPHER,
+        CURLE_SSL_CACERT, CURLE_SSL_CACERT_BADFILE, CURLE_SSL_PEER_CERTIFICATE], true)) {
+        return 'HTTPS 证书校验失败：' . mb_substr($cerr, 0, 100) . '（接口地址要用证书有效的 https）';
+    }
+    return '请求失败：' . ($cerr ?: '网络不通') . '（errno ' . $errno . '，已等 ' . $sec . ' 秒）';
+}
+
+/** 超时报错里的建议值：够把没跑完的请求跑完，又不把人吊死在发送上 */
+function owSPaiSuggest(int $budget): int
+{
+    return (int)max(OWSP_AI_TIMEOUT_DEF, min(OWSP_AI_TIMEOUT_MAX, $budget * 2));
+}
+
+/**
+ * 解析返回体。有些 OpenAI 兼容网关把一次性应答也按流式格式发（首行是 "data: {...}"），
+ * 直接 json_decode 得到 null，于是我们把接口明明说出口的错误原因报成「响应里没有 content」。
+ * 先按整体解，解不动再逐行剥 SSE 帧头试一次。
+ */
+function owSPaiDecode(string $resp): array
+{
+    $j = json_decode($resp, true);
+    if (is_array($j)) return $j;
+    // ⚠️ 不能用 \R 分行：返回体是**按字节**处理的（没加 /u），而 PCRE 在非 UTF 模式下把 0x85
+    //    也算换行 —— 中文 UTF-8 序列里到处是 0x85（例如「内」= E5 86 85），会把一个字符拦腰切开。
+    foreach (preg_split('/\r\n|\r|\n/', $resp) ?: [] as $line) {
+        $line = trim((string)preg_replace('/^data:\s*/', '', trim($line)));
+        if ($line === '' || $line === '[DONE]' || strpos($line, '{') !== 0) continue;
+        $j = json_decode($line, true);
+        if (is_array($j)) return $j;
+    }
+    return [];
+}
+
+/**
+ * 问一次模型。返回 ['ok'=>bool,'spam'=>?bool,'why'=>string,'raw'=>string,'ms'=>int]
  * 任何一步不对都 ok=false + 人话原因 —— 调用方一律放行，绝不因为审核接口挂了而拦人。
  */
 function owSPaiAsk(string $prompt): array
 {
+    // 统一的失败出口：调用方只看 ok 与 raw，但测试页要知道这一次到底等了多久
+    $fail = fn(string $raw, int $ms = 0): array => ['ok' => false, 'spam' => null, 'why' => '', 'raw' => $raw, 'ms' => $ms];
+
     $base = trim(owSPSet('ai_base'));
     $key  = trim(owSPSet('ai_key'));
     $model = trim(owSPSet('ai_model', 'gpt-4o-mini'));
-    if ($base === '' || $model === '') return ['ok' => false, 'spam' => null, 'why' => '', 'raw' => '未配置接口地址或模型'];
-    if (stripos($base, 'https://') !== 0) return ['ok' => false, 'spam' => null, 'why' => '', 'raw' => '接口地址必须是 https（否则密钥明文出网）'];
+    if ($base === '' || $model === '') return $fail('未配置接口地址或模型');
+    if (stripos($base, 'https://') !== 0) return $fail('接口地址必须是 https（否则密钥明文出网）');
     $url = rtrim($base, '/') . '/chat/completions';
     $body = json_encode([
         'model' => $model,
         'messages' => [['role' => 'user', 'content' => $prompt]],
         'temperature' => 0,
     ], JSON_UNESCAPED_UNICODE);
-    if ($body === false) return ['ok' => false, 'spam' => null, 'why' => '', 'raw' => '请求体编码失败'];
+    if ($body === false) return $fail('请求体编码失败');
 
     $hdr = ['Content-Type: application/json', 'Accept: application/json'];
     if ($key !== '') $hdr[] = 'Authorization: Bearer ' . $key;
-    $timeout = max(1, min(15, owSPInt('ai_timeout', 3)));
+    $timeout = owSPaiTimeout();
+    // 连接阶段单独设上限：预算可能被调到 30 秒等模型，但「地址根本不通」不该也等 30 秒 ——
+    // 那样每条消息都要卡满半分钟才放行。
+    $connTo = min(5, $timeout);
 
     $ch = function_exists('curl_init') ? curl_init($url) : null;
     if ($ch) {
@@ -316,7 +405,7 @@ function owSPaiAsk(string $prompt): array
             CURLOPT_POST           => true,
             CURLOPT_POSTFIELDS     => $body,
             CURLOPT_HTTPHEADER     => $hdr,
-            CURLOPT_CONNECTTIMEOUT => $timeout,
+            CURLOPT_CONNECTTIMEOUT => $connTo,
             CURLOPT_TIMEOUT        => $timeout,
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
@@ -325,32 +414,46 @@ function owSPaiAsk(string $prompt): array
             $ca = Upgrade::caBundle();
             if ($ca !== null) curl_setopt($ch, CURLOPT_CAINFO, $ca);
         }
+        $t0 = microtime(true);
         $resp = curl_exec($ch);
-        $code = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        $ms = (int)round((microtime(true) - $t0) * 1000);
+        $errno = curl_errno($ch);
         $cerr = $resp === false ? curl_error($ch) : '';
+        $connT = (float)curl_getinfo($ch, CURLINFO_CONNECT_TIME);
+        $appT = (float)curl_getinfo($ch, CURLINFO_APPCONNECT_TIME);
+        $code = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
         curl_close($ch);
-        if ($resp === false) return ['ok' => false, 'spam' => null, 'why' => '', 'raw' => '请求失败：' . ($cerr ?: '网络不通')];
-        if ($code !== 200) return ['ok' => false, 'spam' => null, 'why' => '', 'raw' => 'HTTP ' . $code . '：' . mb_substr((string)$resp, 0, 200)];
+        if ($resp === false) {
+            return $fail(owSPaiErrText($errno, $cerr, $ms, $timeout, $connT, $appT), $ms);
+        }
+        if ($code !== 200) {
+            return $fail('HTTP ' . $code . '（耗时 ' . number_format($ms / 1000, 1) . ' 秒）：'
+                . mb_substr((string)$resp, 0, 200), $ms);
+        }
     } else {
-        if (!ini_get('allow_url_fopen')) return ['ok' => false, 'spam' => null, 'why' => '', 'raw' => '无 curl 且 allow_url_fopen 关闭'];
+        if (!ini_get('allow_url_fopen')) return $fail('无 curl 且 allow_url_fopen 关闭');
         $ctx = stream_context_create(['http' => [
             'method' => 'POST', 'header' => implode("\r\n", $hdr) . "\r\n",
             'content' => $body, 'timeout' => $timeout, 'ignore_errors' => true,
         ], 'ssl' => ['verify_peer' => true, 'verify_peer_name' => true]]);
+        $t0 = microtime(true);
         $resp = @file_get_contents($url, false, $ctx);
-        if ($resp === false) return ['ok' => false, 'spam' => null, 'why' => '', 'raw' => '请求失败（无 curl 扩展的回落通道也不通）'];
+        $ms = (int)round((microtime(true) - $t0) * 1000);
+        if ($resp === false) return $fail('请求失败（无 curl 扩展的回落通道也不通，已等 '
+            . number_format($ms / 1000, 1) . ' 秒）', $ms);
     }
 
-    $j = json_decode((string)$resp, true);
-    $content = '';
-    if (is_array($j)) {
-        $content = (string)($j['choices'][0]['message']['content'] ?? '');
-        if ($content === '' && isset($j['error']['message'])) {
-            return ['ok' => false, 'spam' => null, 'why' => '', 'raw' => '接口报错：' . mb_substr((string)$j['error']['message'], 0, 200)];
-        }
+    $j = owSPaiDecode((string)$resp);
+    $content = (string)($j['choices'][0]['message']['content'] ?? '');
+    if ($content === '' && isset($j['error']['message'])) {
+        // 网关自己的风控也会走这里（例如它判定这条测试文本违规）：把它的原话留下，
+        // 管理员才知道是「这句话不能问」而不是「配置错了」
+        return $fail('接口报错：' . mb_substr((string)$j['error']['message'], 0, 200), $ms);
     }
-    if ($content === '') return ['ok' => false, 'spam' => null, 'why' => '', 'raw' => '响应里没有 content：' . mb_substr((string)$resp, 0, 200)];
-    return owSPaiParse($content);
+    if ($content === '') return $fail('响应里没有 content：' . mb_substr((string)$resp, 0, 200), $ms);
+    $r = owSPaiParse($content);
+    $r['ms'] = $ms;
+    return $r;
 }
 
 /** 额度闸门：默认每天 2000 次，防止一个失控的循环把账单打爆 */
@@ -360,6 +463,22 @@ function owSPaiQuotaOk(): bool
     if ($daily <= 0) return true;              // 0 = 不限量（站方自己承担）
     return Sec::rateLimit('spam_ai', 'all', 86400, $daily);
 }
+
+/**
+ * v1.3.107 一次性上调旧默认超时（加载时调用，可单独测）。
+ *
+ * 3 秒是 v1.3.104 的默认值，也是绝大多数站点从没碰过的值，而它连 TLS 握手都跑不完 ——
+ * 结果是「AI 防线」看着开着、实际对每条消息都静默放行。只动「仍是那个旧默认值」且没标记过
+ * 的情形：管理员之后主动改回 3 秒，就不再被覆盖。
+ */
+function owSPaiTimeoutMigrate(): bool
+{
+    if (DB::setting('spam_ai_timeout') !== '3' || (string)DB::setting('spam_ai_timeout_v107', '') !== '') return false;
+    DB::setSetting('spam_ai_timeout', (string)OWSP_AI_TIMEOUT_DEF);
+    DB::setSetting('spam_ai_timeout_v107', '1');
+    return true;
+}
+owSPaiTimeoutMigrate();
 
 /* ============================ 钩子 ============================ */
 
@@ -525,11 +644,16 @@ Plugin::adminPage('sensitive-words', '垃圾信息控制', function () {
         . '</div>'
         . '<p style="font-size:12px;color:var(--ow-text-sub);margin-bottom:10px">游客与登录用户都能提交；'
         . '新申诉会以站内通知发给所有超级管理员。同一人对同一域名只留一条待处理记录。</p>'
-        . '<div class="ow-form-item"><label>筛选</label><select class="ow-input" id="owSpamAppealFilter" onchange="OwSW.appealList(1)">'
+        . '<div class="ow-form-row" style="align-items:center">'
+        . '<div class="ow-form-item" style="min-width:180px"><label>按状态筛选</label>'
+        . '<select class="ow-input" id="owSpamAppealFilter" onchange="OwSW.appealList(1)">'
         . '<option value="">全部</option><option value="0">待处理</option>'
         . '<option value="1">已通过</option><option value="2">已拒绝</option></select></div>'
+        . '<span id="owSpamAppealStat" style="margin-left:auto;color:var(--ow-text-sub);font-size:12px"></span>'
+        . '</div>'
+        . '<div id="owSpamAppealBatch"></div>'
         . '<div class="ow-table-wrap"><table class="ow-table" id="owSpamAppealTable"></table></div>'
-        . '<div id="owSpamAppealPager"></div></div>';
+        . '<div id="owSpamAppealPager" style="margin-top:10px"></div></div>';
 
     /* ---------- ⑤ IP ---------- */
     $h .= '<div class="ow-spam-pane" data-pane="ip" style="display:none">'
@@ -558,7 +682,9 @@ Plugin::adminPage('sensitive-words', '垃圾信息控制', function () {
         . owSPopt('ai_action', 'reject', '拒发（提示用户修改后再发）') . '</select>'
         . '<p style="font-size:12px">默认「仅记录」：先看一段时间判得准不准，再决定要不要真拦。</p></div>'
         . '<div class="ow-form-row">'
-        . owSPnum('ai_timeout', '超时(秒)', 'spam_ai_timeout', '3', '超过这个时间直接放行')
+        . owSPnum('ai_timeout', '超时(秒)', 'spam_ai_timeout', (string)OWSP_AI_TIMEOUT_DEF,
+            '3～30 秒。一次判定含连接、TLS 握手与模型推理，实测要 5～10 秒；设小了就是「看着开着、其实一条都没判」。'
+            . '这期间发送请求要等接口回话，别设太长。', 3, 30)
         . owSPnum('ai_daily', '每日调用上限', 'spam_ai_daily', '2000', '填 0 表示不限量')
         . '</div>'
         . '<div class="ow-form-item"><label>接口地址</label><input class="ow-input" id="owSpam_ai_base" maxlength="200" placeholder="https://api.openai.com/v1" value="'
@@ -585,11 +711,13 @@ Plugin::adminPage('sensitive-words', '垃圾信息控制', function () {
 });
 
 /** 数字输入项（三个标签页共用，省得每处手写 label+input+提示） */
-function owSPnum(string $key, string $label, string $storeKey, string $def, string $hint = ''): string
+function owSPnum(string $key, string $label, string $storeKey, string $def, string $hint = '', int $min = 0, int $max = 0): string
 {
     $v = (string)DB::setting($storeKey, $def);
+    // min/max 只给浏览器即时反馈，真正的夹紧在服务端保存分支（前端参数不能信）
     return '<div class="ow-form-item"><label>' . $label . '</label>'
-        . '<input class="ow-input" type="number" min="0" id="owSpam_' . $key . '" value="' . htmlspecialchars($v, ENT_QUOTES) . '">'
+        . '<input class="ow-input" type="number" min="' . $min . '"' . ($max > 0 ? ' max="' . $max . '"' : '')
+        . ' id="owSpam_' . $key . '" value="' . htmlspecialchars($v, ENT_QUOTES) . '">'
         . ($hint !== '' ? '<p style="font-size:12px">' . $hint . '</p>' : '') . '</div>';
 }
 /**
@@ -597,8 +725,8 @@ function owSPnum(string $key, string $label, string $storeKey, string $def, stri
  *
  * 后台的布尔设置项一律用开关，不用裸打勾框：开关一眼能看出「现在是开着还是关着」，
  * 打勾框只表达「勾了没有」，一排设置下来要逐个读文字才知道站点当前行为。
- * 结构照 assets/js/chat.js 的 switchHtml()：隐藏的 checkbox + 一个 for 到它的轨道 label，
- * is-on 类由 admin.js 同步（那两个助手是 chat.js 的模块私有函数，没对外暴露，插件侧各写一份）。
+ * 结构照核心 switchHtml()：隐藏的 checkbox + 一个 for 到它的轨道 label，
+ * is-on 类由 admin.js 调核心的 bindSwitches 同步（switchHtml / bindSwitches 都由 chat.js 挂到 window）。
  *
  * ⚠️ 例外：IP 标签页里「我确认要封锁当前 IP」仍是打勾框 —— 那是一次性的**知情确认**，
  * 不是设置项。做成开关会让人以为「封锁自己」是个可以常开的功能。
@@ -667,7 +795,8 @@ Plugin::route('plugin_spam_save', function (array $ctx) {
     } elseif ($g === 'ai') {
         DB::setSetting('spam_ai_on', $p('ai_on') === '1' ? '1' : '0');
         DB::setSetting('spam_ai_action', in_array($p('ai_action'), ['record', 'mask', 'reject'], true) ? $p('ai_action') : 'record');
-        DB::setSetting('spam_ai_timeout', (string)max(1, min(15, (int)$p('ai_timeout', '3'))));
+        DB::setSetting('spam_ai_timeout', (string)max(OWSP_AI_TIMEOUT_MIN,
+            min(OWSP_AI_TIMEOUT_MAX, (int)$p('ai_timeout', (string)OWSP_AI_TIMEOUT_DEF))));
         DB::setSetting('spam_ai_daily', (string)max(0, min(1000000, (int)$p('ai_daily', '2000'))));
         $base = $p('ai_base');
         if ($base !== '' && stripos($base, 'https://') !== 0) {
@@ -696,6 +825,9 @@ Plugin::route('plugin_spam_ai_test', function (array $ctx) {
         'verdict' => $r['ok'] ? ($r['spam'] ? 'spam' : 'clean') : 'error',
         'why' => $r['why'],
         'raw' => $r['raw'],
+        // 耗时与上限一起回：管理员要据此判断「该把超时调大」还是「这地址根本不通」
+        'ms' => (int)($r['ms'] ?? 0),
+        'budget' => owSPaiTimeout(),
         'quota_left' => owSPaiQuotaOk() ? 'ok' : 'exhausted',
     ]);
 });
@@ -794,6 +926,24 @@ Plugin::route('plugin_spam_appeal_delete', function (array $ctx) {
     DB::run('DELETE FROM plugin_spam_appeal WHERE id=?', [(int)($ctx['post']['id'] ?? 0)]);
     Sec::log('spam_appeal_delete', (string)($ctx['actor']['nickname'] ?? ''), ['id' => (int)($ctx['post']['id'] ?? 0)]);
     Api::json(['ok' => true, 'msg' => '已删除']);
+}, ['sensitive' => true]);
+
+/**
+ * 后台：批量删除申诉记录（敏感操作）。
+ * 只删记录、不碰黑名单 —— 与单条删除同一语义。批量入口绝不能顺手把域名也放出去：
+ * 勾一批历史申诉点删除，等于一次性放行一堆没人复审的站点。
+ */
+Plugin::route('plugin_spam_appeal_batch', function (array $ctx) {
+    if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);
+    $ids = array_values(array_unique(array_filter(
+        array_map('intval', explode(',', (string)($ctx['post']['ids'] ?? ''))),
+        fn(int $v): bool => $v > 0)));
+    if (!$ids) Api::json(['ok' => false, 'msg' => '未选择申诉']);
+    if (count($ids) > 200) Api::json(['ok' => false, 'msg' => '一次最多删除 200 条']);
+    $ok = 0;
+    foreach ($ids as $id) { DB::run('DELETE FROM plugin_spam_appeal WHERE id=?', [$id]); $ok++; }
+    Sec::log('spam_appeal_batch_del', (string)($ctx['actor']['nickname'] ?? ''), ['count' => $ok]);
+    Api::json(['ok' => $ok > 0, 'msg' => '批量删除：成功 ' . $ok . ' 条']);
 }, ['sensitive' => true]);
 
 /* ---------- 词库：沿用 v1.0.104 剥离时的表与路由，不改名以免老链接失效 ---------- */
