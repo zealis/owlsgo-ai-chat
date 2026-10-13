@@ -330,8 +330,10 @@
         '同一人申诉间隔(秒)': 'Per-person appeal interval (s)',
         '填 0 表示不限制': '0 means no limit',
         '申请说明字数上限': 'Max appeal note length',
-        '游客与登录用户都能提交；新申诉会以站内通知发给所有超级管理员。同一人对同一域名只留一条待处理记录。':
-            'Guests and members can both submit; every new appeal sends a site notice to all admins. One pending appeal per person per domain.',
+        '游客与登录用户都能提交；新申诉会以站内通知发给所有超级管理员。同一人对同一域名只留一条待处理记录。下面这张列表只读，处理与删除都即时生效，不需要保存。':
+            'Guests and members can both submit; every new appeal sends a site notice to all admins. One pending appeal per person per domain. '
+            + 'The list below is read-only — handling and deleting take effect immediately, no save needed.',
+        '保存申诉设置': 'Save appeal settings',
         '按状态筛选': 'Filter by status',
         '共 {total} 条申诉，待处理 {pending} 条': '{total} appeals in total, {pending} still pending',
         '批量删除所选申诉': 'Delete the selected appeals',

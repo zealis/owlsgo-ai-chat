@@ -674,8 +674,10 @@ Plugin::adminPage('sensitive-words', '垃圾信息控制', function () {
         . owSPnum('appeal_note_limit', '申请说明字数上限', 'spam_appeal_note_limit', '300', '')
         . '</div>'
         . '<p style="font-size:12px;color:var(--ow-text-sub);margin-bottom:10px">游客与登录用户都能提交；'
-        . '新申诉会以站内通知发给所有超级管理员。同一人对同一域名只留一条待处理记录。</p>'
-        . '<div class="ow-form-row" style="align-items:center">'
+        . '新申诉会以站内通知发给所有超级管理员。同一人对同一域名只留一条待处理记录。'
+        . '下面这张列表只读，处理与删除都即时生效，不需要保存。</p>'
+        . '<button class="ow-btn ow-btn-primary" onclick="OwSW.save(\'appeal\')">保存申诉设置</button>'
+        . '<div class="ow-form-row" style="align-items:center;margin-top:14px">'
         . '<div class="ow-form-item" style="min-width:180px"><label>按状态筛选</label>'
         . '<select class="ow-input" id="owSpamAppealFilter" onchange="OwSW.appealList(1)">'
         . '<option value="">全部</option><option value="0">待处理</option>'
