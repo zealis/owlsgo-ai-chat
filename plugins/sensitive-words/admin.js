@@ -16,10 +16,12 @@
        能写哪些键最终由后端说了算。 */
     var GROUPS = {
         flood:  ['rate_win', 'rate_max', 'min_gap'],
-        domain: ['domain_on', 'domain_list', 'domain_warn'],
+        domain: ['domain_on', 'domain_list', 'domain_warn', 'domain_rules'],
+        appeal: ['appeal_on', 'appeal_interval', 'appeal_note_limit'],
         ip:     ['ip_on', 'ip_mode', 'ip_list', 'ip_keep'],
         ai:     ['ai_on', 'ai_action', 'ai_timeout', 'ai_daily', 'ai_base', 'ai_key', 'ai_model', 'ai_prompt']
     };
+    var aState = { page: 1, size: 20, total: 0 };
 
     w.OwSW = {
         init: function () {
@@ -33,6 +35,7 @@
             this.bindSwitches();
             this.bindTabs();
             this.list(1);
+            this.appealList(1);
         },
 
         /**
@@ -110,6 +113,67 @@
                 if (r.verdict === 'spam') box.textContent = '判定：垃圾信息' + (r.why ? '（' + r.why + '）' : '') + '　原始返回：' + r.raw;
                 else if (r.verdict === 'clean') box.textContent = '判定：正常' + (r.why ? '（' + r.why + '）' : '');
                 else box.textContent = '判定失败（消息照常放行）：' + r.raw + (r.quota_left === 'exhausted' ? '　※ 今日调用上限已用完' : '');
+            });
+        },
+
+        /* ---------- 访问申诉列表（与内容举报的列表同一套观感） ---------- */
+        appealList: function (page) {
+            var f = $('owSpamAppealFilter');
+            OwApi.post('plugin_spam_appeal_list',
+                { page: page || 1, size: aState.size, status: f ? f.value : '' }, function (r) {
+                var table = $('owSpamAppealTable');
+                if (!table) return;
+                if (!r || !r.ok) { table.innerHTML = '<tr><td style="color:var(--ow-text-sub)">加载失败</td></tr>'; return; }
+                aState.total = r.data.total;
+                aState.page = r.data.page;
+                OwSW.appealRender(r.data.list);
+                w.OwAdmin.uiPager($('owSpamAppealPager'), aState.page, aState.total, aState.size,
+                    function (pg) { OwSW.appealList(pg); });
+            });
+        },
+
+        appealRender: function (rows) {
+            var table = $('owSpamAppealTable');
+            var h = '<tr><th>ID</th><th>域名</th><th>申请人</th><th>说明</th><th>IP</th><th>提交时间</th><th>状态</th><th>操作</th></tr>';
+            for (var i = 0; i < rows.length; i++) {
+                var r = rows[i];
+                var tag = r.status == 0 ? '<span class="ow-tag ow-tag-guest">待处理</span>'
+                    : (r.status == 1 ? '<span class="ow-tag ow-tag-green">已通过</span>' : '<span class="ow-tag">已拒绝</span>');
+                var who = esc(r.nick) + (r.kind == 'guest' ? '（游客）' : '');
+                // 待处理行高亮：一屏几十条里要能一眼挑出没处理的（与内容举报同法）
+                h += '<tr' + (r.status == 0 ? ' style="background:var(--ow-blue-light)"' : '') + '>'
+                    + '<td>' + r.id + '</td><td>' + esc(r.domain) + '</td><td>' + who + '</td>'
+                    + '<td>' + esc(r.note) + '</td><td>' + esc(r.ip) + '</td>'
+                    + '<td>' + esc(new Date(r.created_at * 1000).toLocaleString()) + '</td><td>' + tag + '</td><td>'
+                    + (r.status == 0
+                        ? '<a href="javascript:;" onclick="OwSW.appealHandle(' + r.id + ',1)">通过</a> '
+                          + '<a href="javascript:;" onclick="OwSW.appealHandle(' + r.id + ',2)">拒绝</a> '
+                        : '')
+                    + '<a href="javascript:;" onclick="OwSW.appealDel(' + r.id + ')">删除</a></td></tr>';
+            }
+            if (!rows.length) h += '<tr><td colspan="8" style="color:var(--ow-text-sub)">暂无申诉记录</td></tr>';
+            table.innerHTML = h;
+        },
+
+        /** 通过 = 把这个域名从黑名单里删掉，所以确认文案必须把这件事说在前面 */
+        appealHandle: function (id, status) {
+            var txt = status == 1
+                ? '通过后该域名会从黑名单移除，所有人点它都能正常跳转。确认通过？'
+                : '确认拒绝这条申诉？域名保持在黑名单里。';
+            w.OwAdmin.confirm(txt, function () {
+                OwApi.secure('plugin_spam_appeal_handle', { id: id, status: status }, function (r) {
+                    toast(r && r.msg ? r.msg : '操作失败');
+                    if (r && r.ok) OwSW.appealList(aState.page);
+                });
+            });
+        },
+
+        appealDel: function (id) {
+            w.OwAdmin.confirm('删除这条申诉记录？（不影响黑名单）', function () {
+                OwApi.secure('plugin_spam_appeal_delete', { id: id }, function (r) {
+                    toast(r && r.msg ? r.msg : '删除失败');
+                    if (r && r.ok) OwSW.appealList(aState.page);
+                });
             });
         },
 

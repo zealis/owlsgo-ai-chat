@@ -802,7 +802,9 @@
             if (warn !== '') {
                 // href="#"：被拦的链接不给真实目标（中键/Ctrl+点击同样跳不出去），
                 // 但锚文本仍是用户打出来的那串 —— 看得见它本来要去哪。
-                return '<a class="ow-msg-link ow-link-blocked" href="#" data-warn="' + esc(warn) + '"'
+                // data-url 另存一份补全协议后的地址：插件的申诉弹窗要按域名填表。
+                return '<a class="ow-msg-link ow-link-blocked" href="#" data-url="' + esc(href)
+                    + '" data-warn="' + esc(warn) + '"'
                     + ' onclick="return OwChat.blockedLink(this)" title="' + esc(warn) + '">' + u + '</a>' + tail;
             }
             return '<a class="ow-msg-link" href="' + href + '" target="_blank"'
@@ -4046,10 +4048,16 @@
             $('owImgViewer').style.display = 'flex';
         },
 
-        /** 被拦链接（v1.3.104）：只弹窗告知，不跳转。文案由插件经 OW_LINK_GUARD 提供 */
+        /** 被拦链接（v1.3.104）：只弹窗告知，不跳转。文案由插件经 OW_LINK_GUARD 提供。
+         *  v1.3.106 起窗口下方还能挂插件自己的操作区（申请恢复访问 / 规则说明）：
+         *  核心不知道装没装那个插件，所以只认一个可选全局函数，返回 HTML 原样拼进去。 */
         blockedLink: function (a) {
             var msg = a.getAttribute('data-warn') || '该链接已停止跳转。';
-            OwChat.openModal('<h3>链接提示</h3><p class="ow-modal-desc">' + esc(msg) + '</p>');
+            var extra = '';
+            if (typeof w.OW_LINK_BLOCKED_EXTRA === 'function') {
+                try { extra = String(w.OW_LINK_BLOCKED_EXTRA(a) || ''); } catch (e) { extra = ''; }
+            }
+            OwChat.openModal('<h3>链接提示</h3><p class="ow-modal-desc">' + esc(msg) + '</p>' + extra);
             return false;
         },
 

@@ -13,6 +13,9 @@
  *   4. 域名过滤     **只在前端点击时拦**：名单随聊天页下发，核心 linkifyHtml 经
  *                   window.OW_LINK_GUARD 把命中的链接改成「点了弹窗、不跳转」。
  *                   不在服务端拦发送 —— 按站方定版：垃圾已经进了库，但不让人走进去。
+ *                   弹窗里给两个出口（v1.3.106）：「规则说明」（文本后台可改）与
+ *                   「申请恢复访问」（游客也可提交 → 落 plugin_spam_appeal 表 + 前台通知所有超管；
+ *                   管理员点「通过」就把该域名从名单里删掉，真的恢复访问）。
  *   5. AI 防线      text.check 钩子：把正文交给可配的 OpenAI 兼容接口判定，
  *                   动作三选一（仅记录 / 打码替换 / 拒发），默认仅记录。
  *
@@ -104,6 +107,67 @@ function owSPdomains(): array
         if ($n !== '' && !in_array($n, $out, true)) $out[] = $n;
     }
     return $out;
+}
+
+/* ==================== 域名申诉（上面「2. 域名过滤」的下游） ==================== */
+
+/**
+ * 申诉表：用户点了被拦的链接 → 填一句理由提交 → 落表并通知超级管理员；
+ * 管理员点「通过」= 把该域名从黑名单里删掉（真的恢复访问）。
+ *
+ * 建表写在这里而不是安装脚本里：插件随时可停用/删除，表跟着插件走
+ * （与 content-report 同一做法），CREATE IF NOT EXISTS 幂等。
+ * status：0 待处理 / 1 已通过 / 2 已拒绝。
+ */
+DB::run('CREATE TABLE IF NOT EXISTS plugin_spam_appeal (
+    id ' . DB::autoId() . ',
+    domain VARCHAR(190) NOT NULL DEFAULT \'\',
+    kind VARCHAR(8) NOT NULL DEFAULT \'\',
+    uid INTEGER NOT NULL DEFAULT 0,
+    nick VARCHAR(64) NOT NULL DEFAULT \'\',
+    ip VARCHAR(45) NOT NULL DEFAULT \'\',
+    ' . DB::textCol('note') . ',
+    status INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL DEFAULT 0,
+    handled_at INTEGER NOT NULL DEFAULT 0
+)');
+DB::createIndex('plugin_spam_appeal_domain', 'plugin_spam_appeal', 'domain');
+
+/**
+ * 默认规则说明。内容与「内容举报」的理由同一批口径，但**独立存一份**：
+ * 读举报插件的配置就等于让两个插件互相依赖，内容举报一停用，这里的弹窗就空了。
+ */
+const OWSP_DOMAIN_RULES = "垃圾广告\n辱骂攻击\n色情低俗\n违法违规\n刷屏灌水\n其他";
+
+/** 规则说明按行拆开（弹窗与后台共用；空行与重复行去掉） */
+function owSPdomainRules(): array
+{
+    $raw = owSPSet('domain_rules', '');
+    if (trim($raw) === '') $raw = OWSP_DOMAIN_RULES;
+    $out = [];
+    foreach (preg_split('/\r\n|\r|\n/', $raw) ?: [] as $l) {
+        $l = trim($l);
+        if ($l !== '' && !in_array($l, $out, true)) $out[] = $l;
+    }
+    return $out;
+}
+
+/**
+ * 把域名从黑名单里摘掉（「通过申诉」的动作）。
+ * 名单条目可能写成 https://x.com/y 这种整条 URL，所以按**归一后的主机**比对，
+ * 而不是拿字符串硬等 —— 否则管理员粘过 URL，通过一次申诉名单纹丝不动。
+ */
+function owSPremoveDomain(string $domain): int
+{
+    $lines = preg_split('/\r\n|\r|\n/', owSPSet('domain_list')) ?: [];
+    $kept = []; $removed = 0;
+    foreach ($lines as $l) {
+        if (trim($l) === '') { $kept[] = $l; continue; }
+        if (owSPnormDomain($l) === $domain) { $removed++; continue; }
+        $kept[] = $l;
+    }
+    if ($removed > 0) DB::setSetting('spam_domain_list', implode("\n", $kept));
+    return $removed;
 }
 
 /* ============================ 3. IP 匹配 ============================ */
@@ -384,10 +448,15 @@ Plugin::on('page.footer', function (): void {
     $list = owSPdomains();
     if (!$list) return;
     $warn = owSPSet('domain_warn', '网页包含不安全内容，被多人投诉，已停止自动跳转。');
+    // 规则文本与「能不能申诉」一并下发：弹窗是点击瞬间拼的，为它发一次 XHR 会让按钮先空一下
     echo '<script>window.OW_SPAM_DOMAINS='
         . json_encode($list, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . ';'
         . 'window.OW_SPAM_DOMAIN_WARN='
-        . json_encode(mb_substr($warn, 0, 200), JSON_UNESCAPED_UNICODE) . ';</script>';
+        . json_encode(mb_substr($warn, 0, 200), JSON_UNESCAPED_UNICODE) . ';'
+        . 'window.OW_SPAM_DOMAIN_RULES='
+        . json_encode(owSPdomainRules(), JSON_UNESCAPED_UNICODE) . ';'
+        . 'window.OW_SPAM_APPEAL_ON=' . (owSPOn('appeal_on') ? '1' : '0') . ';'
+        . 'window.OW_SPAM_APPEAL_LIMIT=' . max(20, min(1000, owSPInt('appeal_note_limit', 300))) . ';</script>';
 });
 
 /* ============================ 后台页 ============================ */
@@ -398,10 +467,11 @@ Plugin::adminPage('sensitive-words', '垃圾信息控制', function () {
         ['words', '敏感词', '词库打码'],
         ['flood', '刷屏', '窗口条数与最小间隔'],
         ['domain', '链接域名', '点击弹窗不跳转'],
+        ['appeal', '访问申诉', '用户申请恢复访问'],
         ['ip', 'IP 封锁', '黑白名单整站拦截'],
         ['ai', 'AI 防线', '模型判定，默认仅记录'],
     ];
-    $h = '<h2>垃圾信息控制</h2><p class="ow-admin-desc">敏感词、刷屏、链接域名、IP 封锁、AI 审核集中在一页管理。'
+    $h = '<h2>垃圾信息控制</h2><p class="ow-admin-desc">敏感词、刷屏、链接域名、访问申诉、IP 封锁、AI 审核集中在一页管理。'
         . '每个标签独立保存，改动即时生效。</p>';
     $h .= '<div class="ow-card"><div class="ow-spam-tabs" id="owSpamTabs">';
     foreach ($tabs as $i => $t) {
@@ -440,9 +510,28 @@ Plugin::adminPage('sensitive-words', '垃圾信息控制', function () {
         . '<p style="font-size:12px">名单里的域名（含其子域）出现在消息链接里时，用户点击不会跳转，只弹一句提示。</p></div>'
         . '<div class="ow-form-item"><label>提示文案</label><input class="ow-input" id="owSpam_domain_warn" maxlength="200" value="'
         . htmlspecialchars(owSPSet('domain_warn', '网页包含不安全内容，被多人投诉，已停止自动跳转。'), ENT_QUOTES) . '"></div>'
+        . '<div class="ow-form-item"><label>规则说明</label>'
+        . '<textarea class="ow-input" id="owSpam_domain_rules" rows="7" style="resize:vertical" placeholder="每行一条">'
+        . htmlspecialchars(owSPSet('domain_rules', OWSP_DOMAIN_RULES), ENT_QUOTES) . '</textarea>'
+        . '<p style="font-size:12px">用户点被拦链接时，弹窗里「规则说明」按钮展示的就是这几行 —— 与举报理由同一套口径，独立一份，停用内容举报插件也不影响。</p></div>'
         . '<button class="ow-btn ow-btn-primary" onclick="OwSW.save(\'domain\')">保存域名设置</button></div>';
 
-    /* ---------- ④ IP ---------- */
+    /* ---------- ④ 访问申诉 ---------- */
+    $h .= '<div class="ow-spam-pane" data-pane="appeal" style="display:none">'
+        . owSPswitch('appeal_on', '允许申请恢复访问', '关闭后弹窗只剩「规则说明」，用户不能再提交申诉')
+        . '<div class="ow-form-row">'
+        . owSPnum('appeal_interval', '同一人申诉间隔(秒)', 'spam_appeal_interval', '300', '填 0 表示不限制')
+        . owSPnum('appeal_note_limit', '申请说明字数上限', 'spam_appeal_note_limit', '300', '')
+        . '</div>'
+        . '<p style="font-size:12px;color:var(--ow-text-sub);margin-bottom:10px">游客与登录用户都能提交；'
+        . '新申诉会以站内通知发给所有超级管理员。同一人对同一域名只留一条待处理记录。</p>'
+        . '<div class="ow-form-item"><label>筛选</label><select class="ow-input" id="owSpamAppealFilter" onchange="OwSW.appealList(1)">'
+        . '<option value="">全部</option><option value="0">待处理</option>'
+        . '<option value="1">已通过</option><option value="2">已拒绝</option></select></div>'
+        . '<div class="ow-table-wrap"><table class="ow-table" id="owSpamAppealTable"></table></div>'
+        . '<div id="owSpamAppealPager"></div></div>';
+
+    /* ---------- ⑤ IP ---------- */
     $h .= '<div class="ow-spam-pane" data-pane="ip" style="display:none">'
         . '<p style="font-size:12px;color:var(--ow-yellow)">你当前的 IP：<b>' . htmlspecialchars($cur, ENT_QUOTES) . '</b>'
         . ' 改动名单前先确认这个地址在名单里，否则保存后你自己也进不来。</p>'
@@ -460,7 +549,7 @@ Plugin::adminPage('sensitive-words', '垃圾信息控制', function () {
         . '我确认要封锁当前 IP（明知会被关在外面）</label></div>'
         . '<button class="ow-btn ow-btn-primary" onclick="OwSW.save(\'ip\')">保存 IP 规则</button></div>';
 
-    /* ---------- ⑤ AI ---------- */
+    /* ---------- ⑥ AI ---------- */
     $h .= '<div class="ow-spam-pane" data-pane="ai" style="display:none">'
         . owSPswitch('ai_on', '启用 AI 防线')
         . '<div class="ow-form-item"><label>命中后</label><select class="ow-input" id="owSpam_ai_action">'
@@ -553,6 +642,12 @@ Plugin::route('plugin_spam_save', function (array $ctx) {
         DB::setSetting('spam_domain_list', mb_substr($p('domain_list'), 0, 8000));
         $w = $p('domain_warn', '网页包含不安全内容，被多人投诉，已停止自动跳转。');
         DB::setSetting('spam_domain_warn', mb_substr(preg_replace('/[\r\n]+/u', ' ', $w), 0, 200));
+        // 规则说明留换行（一行一条，弹窗按行渲染）；清空 = 回到默认那六条
+        DB::setSetting('spam_domain_rules', mb_substr(trim($p('domain_rules')), 0, 2000));
+    } elseif ($g === 'appeal') {
+        DB::setSetting('spam_appeal_on', $p('appeal_on') === '1' ? '1' : '0');
+        DB::setSetting('spam_appeal_interval', (string)max(0, min(86400, (int)$p('appeal_interval', '300'))));
+        DB::setSetting('spam_appeal_note_limit', (string)max(20, min(1000, (int)$p('appeal_note_limit', '300'))));
     } elseif ($g === 'ip') {
         $on = $p('ip_on') === '1' ? '1' : '0';
         $mode = $p('ip_mode') === 'white' ? 'white' : 'black';
@@ -604,6 +699,102 @@ Plugin::route('plugin_spam_ai_test', function (array $ctx) {
         'quota_left' => owSPaiQuotaOk() ? 'ok' : 'exhausted',
     ]);
 });
+
+/* ============================ 访问申诉路由 ============================ */
+
+/**
+ * 前台：提交申诉。游客与登录用户都能提（被拦的链接游客也看得见，只让登录用户申诉
+ * 等于给游客留一个点了没反应的按钮）。防灌水靠三道：
+ * 只能申诉**当前真在黑名单里**的域名（这张表不会变成任意留言箱）、
+ * 同一人同一域名有待处理记录就不再收、按人限流。
+ */
+Plugin::route('plugin_spam_appeal_submit', function (array $ctx) {
+    if (!owSPOn('appeal_on')) Api::json(['ok' => false, 'msg' => '站点未开放访问申诉'], 403);
+    $actor = $ctx['actor'];
+    $kind = (string)($actor['kind'] ?? 'none');
+    if ($kind !== 'user' && $kind !== 'guest') Api::json(['ok' => false, 'msg' => '请先登录或刷新页面'], 403);
+    $uid = (int)($actor['id'] ?? 0);
+    $nick = mb_substr((string)($actor['nickname'] ?? ''), 0, 64);
+
+    $domain = owSPnormDomain((string)($ctx['post']['domain'] ?? ''));
+    if ($domain === '' || strlen($domain) > 190) Api::json(['ok' => false, 'msg' => '域名无效']);
+    if (!owSPdomainHit($domain, owSPdomains())) Api::json(['ok' => false, 'msg' => '该域名当前未被拦截，无需申诉']);
+
+    $limit = max(20, min(1000, owSPInt('appeal_note_limit', 300)));
+    $note = trim((string)($ctx['post']['note'] ?? ''));
+    if ($note === '') Api::json(['ok' => false, 'msg' => '请填写申请说明']);
+    if (mb_strlen($note) > $limit) Api::json(['ok' => false, 'msg' => '申请说明不能超过 ' . $limit . ' 字']);
+
+    if (DB::one('SELECT id FROM plugin_spam_appeal WHERE domain=? AND kind=? AND uid=? AND status=0',
+        [$domain, $kind, $uid])) Api::json(['ok' => false, 'msg' => '你已经申诉过这个域名，正在等待处理']);
+    $gap = owSPInt('appeal_interval', 300);
+    if ($gap > 0 && !Sec::rateLimit('spam_appeal', $kind . $uid, $gap, 1)) {
+        Api::json(['ok' => false, 'msg' => '申诉过于频繁，请 ' . $gap . ' 秒后再试']);
+    }
+
+    // 说明文字也过一遍敏感词（与举报的补充说明同口径）
+    Plugin::fire('text.filter', [&$note, 'appeal', $actor]);
+
+    DB::insert('plugin_spam_appeal', [
+        'domain' => $domain, 'kind' => $kind, 'uid' => $uid, 'nick' => $nick,
+        'ip' => Sec::ip(), 'note' => mb_substr($note, 0, $limit),
+        'status' => 0, 'created_at' => time(), 'handled_at' => 0,
+    ]);
+
+    // 通知所有超级管理员（与「仓库有新版」同一批人、同一条前台通知通道）。
+    // 库里只存 kind + 参数，整句模板交给语言包翻译。
+    foreach (DB::all("SELECT id FROM users WHERE role='admin'") as $adm) {
+        Notice::push((int)$adm['id'], 'spam_appeal', ['nick' => $nick, 'domain' => $domain]);
+    }
+    Sec::log('spam_appeal_submit', $nick, ['domain' => $domain, 'kind' => $kind, 'ip' => Sec::ip()]);
+    Api::json(['ok' => true, 'msg' => '申诉已提交，等待管理员处理']);
+});
+
+/** 后台：申诉列表（分页 + 按状态筛） */
+Plugin::route('plugin_spam_appeal_list', function (array $ctx) {
+    if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);
+    $page = max(1, (int)($ctx['post']['page'] ?? 1));
+    $size = min(100, max(1, (int)($ctx['post']['size'] ?? 20)));
+    $status = isset($ctx['post']['status']) && $ctx['post']['status'] !== '' ? (int)$ctx['post']['status'] : -1;
+    $where = '1=1'; $args = [];
+    if ($status >= 0) { $where .= ' AND status=?'; $args[] = $status; }
+    $total = (int)DB::val('SELECT COUNT(*) FROM plugin_spam_appeal WHERE ' . $where, $args);
+    $rows = DB::all('SELECT * FROM plugin_spam_appeal WHERE ' . $where . ' ORDER BY id DESC LIMIT '
+        . $size . ' OFFSET ' . (($page - 1) * $size), $args);
+    Api::json(['ok' => true, 'data' => ['list' => $rows, 'total' => $total, 'page' => $page, 'size' => $size,
+        'pending' => (int)DB::val('SELECT COUNT(*) FROM plugin_spam_appeal WHERE status=0')]]);
+});
+
+/**
+ * 后台：处理申诉。
+ * 「通过」= 把该域名从黑名单里删掉（用户申请的是恢复访问，那就真的恢复）；
+ * 只标记不动名单等于让他再点一次还是拦着。「拒绝」仅标记。
+ */
+Plugin::route('plugin_spam_appeal_handle', function (array $ctx) {
+    if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);
+    $id = (int)($ctx['post']['id'] ?? 0);
+    $status = (int)($ctx['post']['status'] ?? 0);
+    if (!in_array($status, [1, 2], true)) Api::json(['ok' => false, 'msg' => '非法状态']);
+    $row = DB::one('SELECT * FROM plugin_spam_appeal WHERE id=?', [$id]);
+    if (!$row) Api::json(['ok' => false, 'msg' => '申诉不存在或已被删除']);
+    if ((int)$row['status'] !== 0) Api::json(['ok' => false, 'msg' => '这条申诉已经处理过了']);
+    $domain = (string)$row['domain'];
+    $removed = $status === 1 ? owSPremoveDomain($domain) : 0;
+    DB::run('UPDATE plugin_spam_appeal SET status=?, handled_at=? WHERE id=?', [$status, time(), $id]);
+    Sec::log('spam_appeal_handle', (string)($ctx['actor']['nickname'] ?? ''),
+        ['id' => $id, 'status' => $status, 'domain' => $domain, 'removed' => $removed]);
+    Api::json(['ok' => true, 'msg' => $status === 2 ? '已拒绝'
+        : ($removed > 0 ? '已通过：' . $domain . ' 已从名单移除（用户刷新页面后链接恢复可点）'
+            : '已标记通过，但该域名已不在名单里（可能先前被手动移除）')]);
+}, ['sensitive' => true]);
+
+/** 后台：删除申诉记录（敏感操作） */
+Plugin::route('plugin_spam_appeal_delete', function (array $ctx) {
+    if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);
+    DB::run('DELETE FROM plugin_spam_appeal WHERE id=?', [(int)($ctx['post']['id'] ?? 0)]);
+    Sec::log('spam_appeal_delete', (string)($ctx['actor']['nickname'] ?? ''), ['id' => (int)($ctx['post']['id'] ?? 0)]);
+    Api::json(['ok' => true, 'msg' => '已删除']);
+}, ['sensitive' => true]);
 
 /* ---------- 词库：沿用 v1.0.104 剥离时的表与路由，不改名以免老链接失效 ---------- */
 

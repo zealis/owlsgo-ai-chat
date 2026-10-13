@@ -278,8 +278,8 @@
            只收 UI 文字：textarea 里的提示词/名单是**内容与参数**，不是界面文案
            （引擎本来就跳过 textarea，给它们建键反而会把发给模型的中文提示翻成英文）。 */
         '垃圾信息控制': 'Spam control',
-        '敏感词、刷屏、链接域名、IP 封锁、AI 审核集中在一页管理。每个标签独立保存，改动即时生效。':
-            'Spam controls in one page: sensitive words, flooding, link domains, IP blocking and AI review. Each tab saves on its own and takes effect immediately.',
+        '敏感词、刷屏、链接域名、访问申诉、IP 封锁、AI 审核集中在一页管理。每个标签独立保存，改动即时生效。':
+            'Spam controls in one page: sensitive words, flooding, link domains, access appeals, IP blocking and AI review. Each tab saves on its own and takes effect immediately.',
         '敏感词': 'Sensitive words',
         '词库打码': 'Mask with a word list',
         '刷屏': 'Flooding',
@@ -309,6 +309,46 @@
             'When a listed domain (or any subdomain of it) appears in a message link, clicking it shows a notice instead of navigating away.',
         '提示文案': 'Notice text',
         '保存域名设置': 'Save domain settings',
+        /* ---------- 域名访问申诉（v1.3.106）---------- */
+        '访问申诉': 'Access appeals',
+        '用户申请恢复访问': 'Users ask to unblock a domain',
+        '规则说明': 'Site rules',
+        '用户点被拦链接时，弹窗里「规则说明」按钮展示的就是这几行 —— 与举报理由同一套口径，独立一份，停用内容举报插件也不影响。':
+            'These are the lines behind the "Site rules" button in the blocked-link notice. Same wording family as the report reasons, kept separately so disabling the report plugin cannot empty this.',
+        '允许申请恢复访问': 'Allow access appeals',
+        '关闭后弹窗只剩「规则说明」，用户不能再提交申诉': 'When off, the notice only shows "Site rules" and no appeal form',
+        '同一人申诉间隔(秒)': 'Per-person appeal interval (s)',
+        '填 0 表示不限制': '0 means no limit',
+        '申请说明字数上限': 'Max appeal note length',
+        '游客与登录用户都能提交；新申诉会以站内通知发给所有超级管理员。同一人对同一域名只留一条待处理记录。':
+            'Guests and members can both submit; every new appeal sends a site notice to all admins. One pending appeal per person per domain.',
+        '筛选': 'Filter',
+        '全部': 'All',
+        '已通过': 'Approved',
+        '暂无申诉记录': 'No appeals yet',
+        '通过后该域名会从黑名单移除，所有人点它都能正常跳转。确认通过？':
+            'Approving removes this domain from the block list, so everyone can open it again. Approve?',
+        '确认拒绝这条申诉？域名保持在黑名单里。':
+            'Decline this appeal? The domain stays on the block list.',
+        '删除这条申诉记录？（不影响黑名单）': 'Delete this appeal record? (The block list is untouched)',
+        /* 前台被拦弹窗里的两个出口 */
+        '申请恢复访问': 'Request access',
+        '站点按下列规则拦截外部链接：': 'The site blocks external links under these rules:',
+        '被拦截的域名：': 'Blocked domain:',
+        '请说明你为什么需要访问它（例如：正常工作需要的文档、要查证的来源）。管理员审核通过后该域名会解除拦截。':
+            'Tell us why you need it (a work document, a source to verify, …). Admins unblock the domain once they approve.',
+        '申请说明': 'Reason',
+        '至少写一句，方便管理员判断': 'One line is enough — it helps the reviewer decide',
+        '提交申请': 'Submit appeal',
+        '请填写申请说明': 'Please fill in the reason',
+        '域名识别失败，请重新点击链接': 'Could not read the domain — please click the link again',
+        '申诉已提交，等待管理员处理': 'Appeal submitted — waiting for an admin',
+        '该域名当前未被拦截，无需申诉': 'This domain is not blocked right now',
+        '你已经申诉过这个域名，正在等待处理': 'You already appealed this domain — it is still pending',
+        '站点未开放访问申诉': 'Access appeals are not open on this site',
+        /* 通知模板（core/notice.php 的 spam_appeal） */
+        '{nick} 申诉被拦截的域名 {domain}，申请恢复访问。请到「后台 → 插件管理 → 垃圾信息控制 → 访问申诉」查看并处理。':
+            '{nick} appealed the blocked domain {domain} and asked to restore access. Handle it under Admin → Plugins → Spam control → Access appeals.',
         '你当前的 IP：': 'Your current IP:',
         '改动名单前先确认这个地址在名单里，否则保存后你自己也进不来。':
             'Before editing the list, make sure this address is in it — otherwise you will lock yourself out after saving.',
