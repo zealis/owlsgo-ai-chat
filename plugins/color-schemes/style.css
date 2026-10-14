@@ -64,7 +64,9 @@
     display: -webkit-flex; display: flex;
     flex-wrap: wrap; -webkit-flex-wrap: wrap;
     -webkit-align-items: center; align-items: center;
-    gap: 10px;
+    /* 组与组之间的间隙。必须**大于** .ow-scheme-color 内部的文字↔取色器间隙，
+       否则三组会连成一片、看不出「主色/悬浮/浅底」各自的归属（见下方那条注释）。 */
+    gap: 14px;
     margin-top: 12px; padding-top: 12px;
     border-top: 1px solid var(--ow-border);
 }
@@ -72,7 +74,9 @@
 .ow-scheme-color {
     display: -webkit-inline-flex; display: inline-flex;
     -webkit-align-items: center; align-items: center;
-    gap: 6px;
+    /* 文字与取色器之间的间隙。原 6px 比组与组之间的 10px 还小，
+       于是「主色」贴着色块、三组之间反而更松 —— 视觉上读不出归属。 */
+    gap: 10px;
     color: var(--ow-text-sub);
     font-size: 13px;
 }
