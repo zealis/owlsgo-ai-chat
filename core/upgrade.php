@@ -226,45 +226,73 @@ class Upgrade
      * 差异是 63 个还是 630 个都一样，未认证的 60 次/小时也永远够。
      *
      * 不做整包解压：解压要写几十 MB、要走目录树，而我们要的只是那几十个差异文件。
-     * 直接用 phar:// 按条目名读（读 .tar.gz 走 zlib，phar/zlib 都是默认扩展）。
-     * 失败返回 null，调用方回落逐文件拉 blob —— 那条路配了 token 才宽裕。
-     * @return array{file:string,top:string}|null
+     * 读法用**纯 PHP**（gzdecode + 顺序扫 tar 头，见 tarGzExtract）而不是 PharData：
+     * 线上是否启用 phar 扩展事先不知道，而这条路的价值就是「不挑环境」——
+     * zlib 的 gzdecode 是默认扩展（本机与线上都在），phar 反倒不一定。
+     * 失败返回 null，调用方回落逐文件拉 blob —— 那条路没 token 时很紧。
+     * @return array{file:string}|null
      */
     public static function fetchTarball(string $tmpDir, ?string &$err = null): ?array
     {
         $err = null;
-        if (!class_exists('PharData')) { $err = '服务器未启用 phar 扩展，无法整包下载'; return null; }
+        if (!function_exists('gzdecode')) { $err = '服务器没有 zlib 扩展，无法整包下载'; return null; }
         $bin = self::get('https://api.github.com/repos/' . self::REPO . '/tarball/' . self::BRANCH, $err);
         if ($bin === null) return null;
         return self::prepareTarball($bin, $tmpDir, $err);
     }
 
     /**
-     * 落盘 + 认出顶层目录（与网络无关的那一半，单独拆出来是为了能离线自检）。
+     * 落盘（与网络无关的那一半，单独拆出来是为了能离线自检）。
      * @param string $bin gzip 原始字节
      */
     public static function prepareTarball(string $bin, string $tmpDir, ?string &$err = null): ?array
     {
         $err = null;
-        if (!class_exists('PharData')) { $err = '服务器未启用 phar 扩展'; return null; }
+        if (!function_exists('gzdecode')) { $err = '服务器没有 zlib 扩展'; return null; }
         // gzip 魔数：codeload 给的是 .tar.gz；网关改写或拿到 JSON 错误页时在这里就拦住
         if (strlen($bin) < 100 || strncmp($bin, "\x1f\x8b", 2) !== 0) { $err = '整包响应不是 gzip（可能被网关改写）'; return null; }
         $file = $tmpDir . '/src.tar.gz';
         if (@file_put_contents($file, $bin) === false) { $err = '整包写入临时文件失败'; return null; }
-        // 顶层目录形如 zealis-owlsgo-ai-chat-<sha>：从包里现取，不猜 sha
-        $top = '';
-        foreach ((array)@scandir('phar://' . $file) as $n) {
-            if ($n !== '.' && $n !== '..') { $top = $n; break; }
-        }
-        if ($top === '') { $err = '整包结构异常（没有顶层目录）'; return null; }
-        return ['file' => $file, 'top' => $top];
+        return ['file' => $file];
     }
 
-    /** 从整包里读一个文件（路径相对仓库根）；不存在或读不出返回 null */
-    public static function tarRead(array $tar, string $path): ?string
+    /**
+     * 从 .tar.gz 里取出指定路径（相对仓库根）的内容：[path => 内容]，取不到的路径不在结果里。
+     *
+     * 纯 PHP 实现，只走两件事：gzdecode 解压、按 512 字节扫 tar 头。
+     *   · 仓库路径统一**去掉第一层目录**后匹配（GitHub 的包顶层是 zealis-owlsgo-ai-chat-<sha>，
+     *     sha 不固定不能猜；也**不能拿第一个条目当顶层** —— git archive 的包里第一个条目是
+     *     pax_global_header，那样推出来的「顶层」是它，全部文件都会对不上，实测 134 个一个都取不到）；
+     *   · 认 ustar 的 prefix 字段（长路径会被拆成 prefix + name，不认就取不到文件）；
+     *   · 只收普通文件（type '0' 或 NUL）—— 目录与 pax 头不占数据块，但仍要按 size 跳过。
+     * 一次扫描取全部需要的文件，不做「每文件一次解压」。
+     */
+    public static function tarGzExtract(string $gzFile, array $paths): array
     {
-        $d = @file_get_contents('phar://' . $tar['file'] . '/' . $tar['top'] . '/' . $path);
-        return $d === false ? null : $d;
+        $raw = @gzdecode((string)@file_get_contents($gzFile));
+        if ($raw === false || $raw === '') return [];
+        $want = array_flip($paths);
+        $out = [];
+        $off = 0;
+        $len = strlen($raw);
+        while ($off + 512 <= $len) {
+            $hdr = substr($raw, $off, 512);
+            if (rtrim($hdr, "\0") === '') break;                      // 结束块
+            $name = rtrim(substr($hdr, 0, 100), "\0");
+            $pre  = rtrim(substr($hdr, 345, 155), "\0");               // ustar prefix
+            if ($pre !== '') $name = $pre . '/' . $name;
+            $size = (int)octdec(trim(substr($hdr, 124, 12), "\0 "));
+            $type = substr($hdr, 156, 1);
+            $off += 512;
+            if ($type === '0' || $type === "\0") {
+                $slash = strpos($name, '/');
+                $rel = $slash === false ? $name : substr($name, $slash + 1);
+                if (isset($want[$rel])) $out[$rel] = substr($raw, $off, $size);
+                elseif (isset($want[$name])) $out[$name] = substr($raw, $off, $size);
+            }
+            $off += (int)(ceil($size / 512) * 512);
+        }
+        return $out;
     }
 
     /** 差异比对：added（远端有本地无）+ modified（sha 不同）。保护名单与非法路径跳过 */
@@ -398,28 +426,42 @@ class Upgrade
         $tree = self::fetchTree($err);
         if ($tree === null) return [false, '重新获取文件树失败：' . $err];
         $files = array_merge($chk['added'], $chk['modified']);
-        // v1.3.138：上限按有无 token 分档。没 token 时真正的出路是整包下载（只花 2 次调用），
-        // 但那条依赖 phar；这里保留上限是为了「phar 也缺、又没 token」时不要走到半程没额度。
-        $cap = self::fileLimit();
+        /* v1.3.139/v1.3.140：上限只该管「只能逐文件拉」那条路。
+           整包下载一次调用拿全部，与文件数无关 —— 有能力整包就不设上限，
+           否则 63 个文件明明能一次搬完，却被 45 这道闸挡在门外（v1.3.139 就是这个毛病：
+           整包逻辑写了，闸门却排在它前面）。有 token（5000 次/小时）时 blob 路也放宽。 */
+        $canTar = function_exists('gzdecode');
+        $cap = $canTar ? 2000 : self::fileLimit();
         if (count($files) > $cap) {
             return [false, '差异文件 ' . count($files) . ' 个，超过单次升级上限 ' . $cap
-                . '（GitHub 未认证 API 限流 60 次/小时）。可在「系统与维护 → 在线升级」填一个 GitHub token（5000 次/小时）后重试。'];
+                . '（服务器没有 zlib、只能逐文件拉取，未认证 API 限流 60 次/小时）。'
+                . '请在「系统与维护 → 在线升级」填一个 GitHub token（5000 次/小时）后重试。'];
         }
         $root = self::root();
         $tmpDir = $root . '/data/upgrade/tmp';
         @mkdir($tmpDir, 0775, true);
 
         // ---- 第一阶段：全部取内容 + 逐个复核 blob sha（此阶段不碰站点文件） ----
-        // 优先整包：一次 API 调用拿全部差异文件，63 个还是 630 个都一样；拿不到（无 phar、
-        // 网关拦了 codeload、gzip 被改写…）就回落逐文件拉 blob —— 那条路没 token 时会很紧。
+        // 优先整包：一次 API 调用拿全部差异文件，63 个还是 630 个都一样；拿不到
+        // （网关拦了 codeload、gzip 被改写…）才回落逐文件拉 blob —— 那条路没 token 时很紧，
+        // 所以「整包失败 + 差异超过 blob 路的预算」要在花掉额度之前就停住并说清原因。
         $tar = self::fetchTarball($tmpDir, $tarErr);
+        $bag = $tar !== null ? self::tarGzExtract($tar['file'], $files) : [];
+        if (!$bag) {
+            $blobCap = self::fileLimit();
+            if (count($files) > $blobCap) {
+                self::rrmdir($tmpDir);
+                return [false, '整包下载没成功（' . (string)$tarErr . '），而逐文件拉取的上限是 ' . $blobCap
+                    . ' 个、本次差异 ' . count($files) . ' 个（未认证 API 限流 60 次/小时）。'
+                    . '多半是服务器连不上 codeload.github.com；可填一个 GitHub token（5000 次/小时）后重试。'];
+            }
+        }
         $contents = [];
         foreach ($files as $path) {
-            $body = $tar !== null ? self::tarRead($tar, $path) : null;
-            if ($body === null) {
-                $body = self::fetchBlob($tree[$path], $e);
+            if (isset($bag[$path])) {
+                $body = self::toLf($bag[$path]);   // 包里就是 LF，这里只是与 sha 算法保持同一口径
             } else {
-                $body = self::toLf($body);   // 包里就是 LF，这里只是与 sha 算法保持同一口径
+                $body = self::fetchBlob($tree[$path], $e);
             }
             if ($body === null) { self::rrmdir($tmpDir); return [false, '下载失败：' . $path . '（' . $e . '）']; }
             if (sha1('blob ' . strlen($body) . "\0" . $body) !== $tree[$path]) {
