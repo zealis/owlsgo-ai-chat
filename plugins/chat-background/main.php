@@ -785,17 +785,34 @@ Plugin::on('page.head', function () {
         ? "background-image: url('" . $url . "'); background-repeat: repeat; background-size: auto;"
         : "background-image: url('" . $url . "'); background-repeat: no-repeat; background-size: cover; background-position: center;";
 
-    // 叠加层：::after 半透明（opacity 控制 .ow-main::after 自身的透明度，
+    // 叠加层：::after 半透明（opacity 控制 .ow-layout::after 自身的透明度，
     // 用 background + opacity 影响子元素，故改用「叠加色 + 半透明 alpha」合成）。
     // 这里用简化方案：直接把叠加色按 opacity 重新生成（渐变里的 alpha 已固定，外层再叠 opacity）。
     echo '<style id="ow-cb-style">'
-       . 'body.ow-chat-body .ow-main{position:relative;background-color:transparent;}'
-       . 'body.ow-chat-body .ow-main::before{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;' . $bgCss . '}'
+       // 背景层挂在 .ow-layout（100vh × 100%）上 = 铺满全屏；::before 画图、::after 画叠加色。
+       // .ow-layout 只加 position、不设 z-index，故不自建层叠上下文：两个伪元素的 z-index:0
+       // 落在根层叠上下文里 —— 高于 body/.ow-layout 的底色，低于被抬到 z-index:1 的正文内容。
+       . 'body.ow-chat-body .ow-layout{position:relative;}'
+       . 'body.ow-chat-body .ow-layout::before{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;' . $bgCss . '}'
        . ($ovrCss !== 'none'
-           ? 'body.ow-chat-body .ow-main::after{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;background:' . $ovrCss . ';opacity:' . number_format($opacity, 2, '.', '') . ';}'
+           ? 'body.ow-chat-body .ow-layout::after{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;background:' . $ovrCss . ';opacity:' . number_format($opacity, 2, '.', '') . ';}'
            : '')
-       . 'body.ow-chat-body .ow-main > *{position:relative;z-index:1;}'
+       // 只抬 .ow-layout 的**直接子级**（.ow-topbrand / .ow-body）：它们一旦 position+z-index 就自成
+       // 层叠上下文，内部（rail / 侧栏 / 主区 / 右栏）整体位于背景图之上，不必逐个再写 z-index。
+       . 'body.ow-chat-body .ow-layout > *{position:relative;z-index:1;}'
+       // 主区与消息区去掉自身不透明底色，露出全屏背景图
+       . 'body.ow-chat-body .ow-main{background-color:transparent;background-image:none;}'
        . 'body.ow-chat-body .ow-messages{background-color:transparent;background-image:none;}'
+       // 顶栏与输入栏半透明，让背景图在其下若隐若现。
+       // 用 color-mix 从主题变量 --ow-bg-chat 派生半透明色：不写死颜色、深浅色模式各自成立；
+       // 旧内核不支持 color-mix 时该声明会被丢弃，自动回退核心的不透明底色（不会出错）。
+       // 输入框加 :not(:focus) —— 否则本规则特异性高于 .ow-input:focus，会把聚焦态底色一并吃掉。
+       // 不用 backdrop-filter（毛玻璃）：项目样式规范明确「禁毛玻璃」。
+       . 'body.ow-chat-body .ow-main .ow-topbar,'
+       . 'body.ow-chat-body .ow-main .ow-inputbar{background-color:color-mix(in srgb, var(--ow-bg-chat) 78%, transparent);}'
+       . 'body.ow-chat-body .ow-main .ow-inputbar .ow-input:not(:focus){background-color:color-mix(in srgb, var(--ow-bg-chat) 72%, transparent);}'
+       // rail 与侧栏**不做任何覆盖** —— 保留核心的不透明底色 --ow-bg-chat，
+       // 于是背景图虽铺到它们底下，却被完全遮住，肉眼看不到。
        . '</style>';
 });
 

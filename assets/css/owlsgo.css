@@ -132,6 +132,41 @@
 }
 .ow-set-mail b { font-weight: 400; color: var(--ow-text); word-break: break-all; }
 
+/* ---------- 个人设置的分页标签（v1.3.112） ----------
+   版式参考站方给的第三方前台「个人中心」：顶部一排胶囊标签，一次只显示一组。
+   **只借结构不借配色** —— 那边写死橙粉（#ffb7b0 / #ffe0d2），深色模式下会瞎，
+   也不跟着色系插件走；这里全部取本站令牌。
+   .ow-set-pane 没有样式：它只是 JS 找面板的钩子，间距交给里面的 .ow-form-item。 */
+.ow-set-tabs {
+    display: flex; display: -webkit-flex;
+    flex-wrap: wrap; -webkit-flex-wrap: wrap;
+    gap: 6px; -webkit-gap: 6px;
+    margin: -2px 0 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--ow-border);
+}
+.ow-set-tab {
+    padding: 6px 14px;
+    font-size: 13px;
+    line-height: 1.2;
+    border: 1px solid var(--ow-border-control);
+    border-radius: 30px;
+    background: transparent;
+    color: var(--ow-text-sub);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background .15s, color .15s, border-color .15s;
+    -webkit-transition: background .15s, color .15s, border-color .15s;
+}
+/* hover 比底色深一档、active 再深一档：胶囊在白色弹窗上，浅灰叠浅灰会看不出选中 */
+.ow-set-tab:hover { background: var(--ow-hover-bg); color: var(--ow-text); }
+.ow-set-tab.active {
+    background: var(--ow-blue-light);
+    border-color: var(--ow-primary-strong);
+    color: var(--ow-primary-dark);
+    font-weight: 600;
+}
+
 /* ===================== 小红点（v1.3.53 通用轮子） =====================
    语义只有一个：「这里有新东西」，不表示数量 —— 要显示数量请用 .ow-cl-badge。
    现在两处共用：后台「系统维护 → 系统升级」有新版、rail「通知」有未读。

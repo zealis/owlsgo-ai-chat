@@ -655,6 +655,10 @@
         '未配置极验 captcha_id': 'GeeTest captcha_id is not configured',
         '接口返回通过（异常，请检查服务商设置）': 'The API reported success (unexpected — check your provider settings)',
 
+        /* ---------- 个人设置分页标签（v1.3.112） ---------- */
+        '资料': 'Profile',
+        '外观': 'Appearance',
+        '第三方授权': 'Connected apps',
         /* ---------- change password in personal settings (v1.3.55) ---------- */
         '个人设置': 'Settings',
         '账号安全': 'Account security',

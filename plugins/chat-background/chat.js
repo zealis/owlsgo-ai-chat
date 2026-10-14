@@ -68,11 +68,25 @@
             : "background-image:url('" + url + "');background-repeat:no-repeat;background-size:cover;background-position:center;";
         var ovr = state.overlays[st.overlay] || 'none';
         var op = (Math.max(0, Math.min(100, st.opacity || 50)) / 100).toFixed(2);
-        var css = 'body.ow-chat-body .ow-main{position:relative;background-color:transparent;}'
-            + 'body.ow-chat-body .ow-main::before{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;' + bgCss + '}'
-            + (ovr !== 'none' ? 'body.ow-chat-body .ow-main::after{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;background:' + ovr + ';opacity:' + op + ';}' : '')
-            + 'body.ow-chat-body .ow-main > *{position:relative;z-index:1;}'
-            + 'body.ow-chat-body .ow-messages{background-color:transparent;background-image:none;}';
+        var css = 'body.ow-chat-body .ow-layout{position:relative;}'
+            // 背景层挂在 .ow-layout（100vh×100%）上 = 铺满全屏；::before 画图、::after 画叠加色。
+            // .ow-layout 不设 z-index，不自建层叠上下文 → 伪元素的 z-index:0 落在根层叠上下文，
+            // 高于 body/.ow-layout 底色、低于被抬到 z-index:1 的正文内容。
+            + 'body.ow-chat-body .ow-layout::before{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;' + bgCss + '}'
+            + (ovr !== 'none' ? 'body.ow-chat-body .ow-layout::after{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;background:' + ovr + ';opacity:' + op + ';}' : '')
+            // 只抬 .ow-layout 的直接子级（.ow-topbrand / .ow-body），其内部整体位于背景图之上。
+            + 'body.ow-chat-body .ow-layout > *{position:relative;z-index:1;}'
+            // 主区与消息区去掉自身不透明底色，露出全屏背景图
+            + 'body.ow-chat-body .ow-main{background-color:transparent;background-image:none;}'
+            + 'body.ow-chat-body .ow-messages{background-color:transparent;background-image:none;}'
+            // 顶栏与输入栏半透明，让背景图在其下若隐若现（与 main.php 的 page.head 注入保持一致）。
+            // color-mix 从主题变量 --ow-bg-chat 派生半透明色：不写死颜色、深浅模式各自成立；
+            // 不支持时该声明被丢弃、自动回退核心的不透明底色。输入框加 :not(:focus) 以保住聚焦态底色。
+            // 不用 backdrop-filter（毛玻璃）：项目样式规范明确「禁毛玻璃」。
+            + 'body.ow-chat-body .ow-main .ow-topbar,'
+            + 'body.ow-chat-body .ow-main .ow-inputbar{background-color:color-mix(in srgb, var(--ow-bg-chat) 78%, transparent);}'
+            + 'body.ow-chat-body .ow-main .ow-inputbar .ow-input:not(:focus){background-color:color-mix(in srgb, var(--ow-bg-chat) 72%, transparent);}';
+            // rail 与侧栏不做覆盖 —— 保留核心不透明底色 --ow-bg-chat，背景图被完全遮住、肉眼看不到。
         var st2 = d.createElement('style');
         st2.id = 'ow-cb-style';
         st2.textContent = css;
@@ -80,16 +94,17 @@
     }
 
     /* ---------- 在「个人设置」弹窗里追加背景区块 ----------
-       做法：猴补丁 OwChat.openSettings —— 调原函数打开弹窗，
-       然后把背景区块插到保存按钮之前。 */
+       做法：猴补丁 OwChat.openSettings —— 调原函数打开弹窗，然后把背景区块并进「外观」那一页
+       （v1.3.112 起个人设置成分组标签，背景与日夜模式、色系是同一类偏好）。
+       老核心没有 data-setpane 这个结构，回落到「插到保存按钮之前」，两边都不报错。 */
     var origOpenSettings = OwChat.openSettings;
     OwChat.openSettings = function () {
         origOpenSettings.apply(this, arguments);
-        // 原弹窗已打开，#owModal 内有「保存」按钮；我们的区块插在按钮之前。
         var modal = $('owModal');
         if (!modal) return;
+        var host = modal.querySelector('[data-setpane="look"]');
         var saveBtn = modal.querySelector('button.ow-btn-primary.ow-btn-block');
-        if (!saveBtn) return;
+        if (!host && !saveBtn) return;
         if (modal.querySelector('.ow-cb-section')) return;   // 已注入
         var section = d.createElement('div');
         section.className = 'ow-cb-section';
@@ -101,7 +116,8 @@
             + '<div class="ow-cb-opacity"><span>遮罩透明度</span>'
             + '<input type="range" id="owCBOpacity" min="0" max="100" value="50">'
             + '<span id="owCBOpacityVal">50%</span></div>';
-        modal.insertBefore(section, saveBtn);
+        if (host) host.appendChild(section);
+        else modal.insertBefore(section, saveBtn);
 
         // 先以默认空数据渲染占位，再异步拉取并填充
         renderTabs('item');   // 默认 tab：item（内置背景库）
@@ -138,7 +154,7 @@
             var m = modes[i];
             h += '<button type="button" class="ow-cb-tab' + (m.k === activeMode ? ' is-active' : '') + '"'
                 + (m.disabled ? ' disabled title="' + esc(m.title || '') + '"' : '')
-                + ' onclick="OwCB.switchMode(\'' + m.k + '\')">' + esc(m.t) + '</button>';
+                + ' onclick="OwCBUser.switchMode(\'' + m.k + '\')">' + esc(m.t) + '</button>';
         }
         tabs.innerHTML = h;
     }
@@ -180,7 +196,7 @@
             var sel = (st.mode === 'item' && st.item_id === it.id);
             previews.push(it.preview || '');
             h += '<div class="ow-cb-card' + (it.kind === 'svg' ? ' ow-cb-tile' : '') + (sel ? ' is-selected' : '') + '"'
-                + ' onclick="OwCB.pickItem(' + it.id + ')">'
+                + ' onclick="OwCBUser.pickItem(' + it.id + ')">'
                 + '<div class="ow-cb-thumb" data-bg-idx="' + i + '"></div>'
                 + '<span class="ow-cb-check">✓</span>'
                 + '<div class="ow-cb-name">' + esc(it.name) + '</div>'
@@ -214,7 +230,7 @@
             h += '<div class="ow-cb-custom-url">'
                 + '<input class="ow-input" id="owCBCustomUrl" placeholder="https://example.com/bg.jpg" value="' + esc(curUrl) + '">'
                 + (canUpload
-                    ? '<button class="ow-btn ow-btn-ghost" onclick="OwCB.uploadCustom()">上传</button>'
+                    ? '<button class="ow-btn ow-btn-ghost" onclick="OwCBUser.uploadCustom()">上传</button>'
                         + '<input type="file" id="owCBFileInput" accept="image/jpeg,image/png,image/gif,image/webp" style="display:none">'
                     : '')
                 + '</div>';
@@ -258,7 +274,7 @@
         if (fileInput) {
             fileInput.onchange = function () {
                 if (!this.files || !this.files[0]) return;
-                OwCB.uploadCustom(this.files[0]);
+                OwCBUser.uploadCustom(this.files[0]);
                 this.value = '';
             };
         }
@@ -275,7 +291,7 @@
             var k = keys[i];
             var css = state.overlays[k] || 'none';
             var sel = (st.overlay === k);
-            h += '<div class="ow-cb-ovr' + (sel ? ' is-selected' : '') + '" onclick="OwCB.pickOverlay(\'' + k + '\')">'
+            h += '<div class="ow-cb-ovr' + (sel ? ' is-selected' : '') + '" onclick="OwCBUser.pickOverlay(\'' + k + '\')">'
                 + '<div class="ow-cb-ovr-fill"' + (css !== 'none' ? ' style="background:' + css + '"' : ' style="background:var(--ow-bg)"') + '></div>'
                 + '<div class="ow-cb-ovr-label">' + esc(OVR_LABELS[k] || k) + '</div>'
                 + '</div>';
@@ -283,8 +299,13 @@
         box.innerHTML = h;
     }
 
-    /* ---------- 全局对象 OwCB ---------- */
-    w.OwCB = {
+    /* ---------- 全局对象 OwCBUser ----------
+       注意：前台对象**不能**与 admin.js 同名 —— 两个文件都挂在 window 上，
+       而它们的资源会被 ?action=assets 合并成同一个总包、按注册顺序在**所有**页面加载，
+       admin.js 在后，会把前台这份整个覆盖掉；于是前台设置里注入的按钮
+       全部指向 admin 那份对象、找不到对应方法，表现为「怎么点都没反应」。
+       两个文件必须用互不相同的全局名。 */
+    w.OwCBUser = {
         /* 切模式（tab 点击） */
         switchMode: function (mode) {
             if (!state.setting) return;
@@ -352,7 +373,7 @@
        实现方式：包一层 wrapper。 */
     var origSaveSettings = OwChat.saveSettings;
     OwChat.saveSettings = function () {
-        OwCB.saveBg(function (ok) {
+        OwCBUser.saveBg(function (ok) {
             if (!ok) return;
             origSaveSettings.apply(OwChat, arguments);
             // 昵称保存后背景 CSS 可能被刷新页面，重新注入兜底样式

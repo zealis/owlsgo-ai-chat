@@ -5484,8 +5484,19 @@
         openSettings: function () {
             var me = this.cfg.me;
             if (!me) return;
+            // v1.3.112：一长条表单改成顶部分组标签（参考站方给的 ttt 前台「个人中心」版式，
+            // 只借结构：胶囊标签 + 一次只显示一组；配色全部走本站 --ow-* 令牌，
+            // 深色模式与色系插件才能跟着变）。
+            // ⚠️ 保存按钮**留在标签之外常驻**：它提交的是全部字段（插件注入的签名等
+            // 也挂在 saveSettings 上），放进某个标签里会让「在账号页点不到保存」变成新问题。
             this.openModal(
                 '<h3>个人设置</h3>'
+                + '<div class="ow-set-tabs" id="owSetTabs">'
+                + this.setTabHtml('prof', '资料')
+                + this.setTabHtml('look', '外观')
+                + this.setTabHtml('acct', '账号')
+                + '</div>'
+                + '<div class="ow-set-pane" data-setpane="prof">'
                 // 头像置顶：点击当前头像即触发上传（不另设上传按钮）
                 + '<div class="ow-set-avatar">'
                 + '<span id="owSetAvatarPreview" class="ow-set-avatar-btn" title="点击设置头像" onclick="OwChat.openAvatarDialog(\'me\')">'
@@ -5494,17 +5505,22 @@
                 + '</div>'
                 + '<div class="ow-form-item"><label>昵称</label><input class="ow-input" id="owSetNick" value="' + esc(me.nickname) + '">'
                 + '<p style="font-size:12px;color:var(--ow-text-sub);margin-top:4px">2-20 个字符，支持中英文、数字、下划线与短横线，不含空格或 @；允许重名。</p></div>'
+                + '</div>'
+                + '<div class="ow-set-pane" data-setpane="look" style="display:none">'
                 // v1.2.37：第三方应用授权已剥离为插件 oauth-core，**按需加载**。
                 // 入口按钮按 window.OwOauth 是否存在来渲染 —— 插件停用时它的 chat.js
                 // 不加载，这里自然什么都不显示，核心不需要任何开关判断。
                 // v1.3.25：日夜模式三选一（浅色 / 深色 / 跟随系统）。
                 // 主题是**本地偏好**，不随「保存」提交 —— 点了立即生效更符合直觉，
                 // 混进保存会让「改个主题还要点保存」显得莫名其妙。
+                // 这一页是「本机外观偏好」的落点：色系插件按 #owThemeSeg 锚点插到日夜模式后面，
+                // 聊天背景插件把自己的区块 append 到这一页（两个都是插件侧的接缝）。
                 + '<div class="ow-form-item"><label>日夜模式</label>'
                 + this.themeSegHtml()
-                + '<p class="ow-form-hint">跟随系统会随操作系统的深浅色设置自动切换。</p></div>'
-                // v1.3.51：色系段已剥离为 color-schemes 插件（它自己包装 openSettings 注入），
-                // 核心不再认识它 —— 插件停用时这里就只剩日夜模式。
+                + '<p class="ow-form-hint">跟随系统会随操作系统的深浅色设置自动切换。</p>'
+                + '</div>'
+                + '</div>'
+                + '<div class="ow-set-pane" data-setpane="acct" style="display:none">'
                 + ((w.OwOauth) ? '<div class="ow-form-item"><label>第三方授权</label>'
                     + '<button class="ow-btn ow-btn-ghost ow-btn-block" onclick="OwOauth.open()">管理应用授权</button>'
                     + '<p style="font-size:12px;color:var(--ow-text-sub);margin-top:4px">'
@@ -5522,6 +5538,7 @@
                         : '账号还没有可用邮箱，本次只验证当前密码。') + '</p>'
                 + (me.email ? '<div class="ow-set-mail"><span>账号邮箱</span><b>' + esc(owMaskEmail(me.email)) + '</b></div>' : '')
                 + '</div>'
+                + '</div>'
                 + '<button class="ow-btn ow-btn-primary ow-btn-block" onclick="OwChat.saveSettings()">保存</button>'
             );
             var self = this;
@@ -5532,6 +5549,41 @@
                 self.avatarCrop(this.files[0]);
                 this.value = '';
             };
+            this.bindSetTabs();
+            // 打开时归位到「资料」：选中态只由 settingsTab 一处负责，
+            // 不在 HTML 里预写 active —— 两处各写一份迟早出现「面板开着、标签没高亮」。
+            this.settingsTab('prof');
+        },
+
+        setTabHtml: function (name, label) {
+            return '<button type="button" class="ow-set-tab" data-settab="' + name + '" onclick="OwChat.settingsTab(\'' + name + '\')">'
+                + esc(label) + '</button>';
+        },
+
+        /** 事件委托：标签是弹窗 innerHTML 渲染的，逐个绑会在重绘后失效 */
+        bindSetTabs: function () {
+            var bar = $('owSetTabs');
+            if (!bar || bar._bound) return;
+            bar._bound = true;
+            var self = this;
+            bar.onclick = function (e) {
+                var t = e.target;
+                while (t && t !== bar && !(t.getAttribute && t.getAttribute('data-settab'))) t = t.parentNode;
+                if (t && t !== bar) self.settingsTab(t.getAttribute('data-settab'));
+            };
+        },
+
+        /** 切到某个分组：只改显隐，输入框始终在 DOM 里（切走再切回不丢未保存的编辑） */
+        settingsTab: function (name) {
+            var tabs = document.querySelectorAll('.ow-set-tab'), i;
+            for (i = 0; i < tabs.length; i++) {
+                var on = tabs[i].getAttribute('data-settab') === name;
+                tabs[i].className = 'ow-set-tab' + (on ? ' active' : '');
+            }
+            var panes = document.querySelectorAll('.ow-set-pane');
+            for (i = 0; i < panes.length; i++) {
+                panes[i].style.display = panes[i].getAttribute('data-setpane') === name ? '' : 'none';
+            }
         },
 
         /* ---------- 修改登录密码（v1.3.55） ----------
