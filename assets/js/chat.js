@@ -3071,8 +3071,12 @@
         /* ---------- 「视图切换」钩子（v1.1.0） ----------
            群聊与私聊共用同一套消息区/输入栏/顶部标题，但群级装饰（公告条、群设置入口等）
            只在群聊视图成立。核心不直接操作插件 DOM——由插件自己注册本钩子，
-           在 view='dm' 时清理自己的群级装饰，view='room' 时按 roomId 复原。
-           ctx: { view: 'room'|'dm', roomId, peer, ownerId, isAdmin }
+           在 view 不是 'room' 时清理自己的群级装饰，view='room' 时按 roomId 复原。
+           ctx: { view: 'room'|'dm'|'notice'|'none', roomId, peer, ownerId, isAdmin }
+             'room'   停在某个群聊
+             'dm'     私聊（room_id=0 的虚拟空间）
+             'notice' 系统通知流
+             'none'   没有任何会话：联系人名单、未点选会话
            注册时立即补发当前视图（插件脚本晚于 init 加载）。 */
         onViewChange: function (fn) {
             if (typeof fn !== 'function') return;
@@ -3082,8 +3086,12 @@
         _fireViewChangeTo: function (fn) {
             try {
                 fn({
-                    view: this.dm ? 'dm' : 'room',
-                    roomId: this.dm ? 0 : this.room,
+                    /* v1.3.133：这里原来只看 this.dm 一个布尔，于是「没有房间」的三种入口
+                       （系统通知、联系人、未选会话）统统被报成 'room' —— 插件按契约只在
+                       'dm' 时清理，公告条就留在了别人的页面上。现在只有真的停在某个群时
+                       才报 'room'，其余一律给出真实视图名。 */
+                    view: this.noticeMode ? 'notice' : (this.dm ? 'dm' : (this.room ? 'room' : 'none')),
+                    roomId: (this.noticeMode || this.dm) ? 0 : this.room,
                     peer: this.dm ? this.dm.peer : '',
                     ownerId: CUR_OWNER,
                     isAdmin: this.cfg && this.cfg.actor ? this.cfg.actor.role === 'admin' : false
@@ -4444,6 +4452,7 @@
             ChatList.activate('owRoomList', '');         // 取消任何一行的高亮
             this.renderRoomPanel();                      // 右侧栏回到「请先选择」空态
             this.applyInputGate('friend');
+            this._fireViewChange();                      // v1.3.133：同上，中间已经没有房间了
         },
 
         /* =====================================================================
@@ -4495,6 +4504,9 @@
             this.renderNoticeRow();
             this.paintNoticeChrome(true);
             this.applyInputGate('notice');
+            // v1.3.133：通知流复用了群聊那套消息区，但它是**独立视图** —— 不通知插件，
+            // 上一个群的公告条就会压在系统通知上面（站方截图里那条「公告 测试一下」）。
+            this._fireViewChange();
             var box = $('owMessages');
             if (box) box.innerHTML = '<div class="ow-notice-pending">加载中…</div>';
             OwApi.post('notices', {}, function (r) {

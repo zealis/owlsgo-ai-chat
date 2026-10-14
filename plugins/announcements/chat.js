@@ -38,9 +38,20 @@
     }
 
     /** 拉取当前群公告并渲染公告条 */
+    /* v1.1.11：加世代号。原来切群时公告条**不会立刻撤**，要等新群的接口回来才重画 ——
+       中间那一段（本机几十毫秒，走网络的站点几百毫秒到一秒以上）屏幕上挂着的就是
+       上一个群的公告，看起来像「公告串到了别的群」。更糟的是两个请求在途时，
+       先发的可能后回来，把 A 群的公告直接画在 B 群页面上、还不会自己恢复。
+       现在：进 load() 先清空重画（切群瞬间就没有残留），回来时只认最后一次请求。 */
+    var loadGen = 0;
     function load() {
-        if (!current.roomId) return;
-        OwApi.post('plugin_announcements_list', { room_id: current.roomId }, function (r) {
+        var my = ++loadGen;
+        var rid = current.roomId;
+        current.list = [];
+        renderBar();                        // 同步撤掉上一个群的公告条，不等接口
+        if (!rid) return;
+        OwApi.post('plugin_announcements_list', { room_id: rid }, function (r) {
+            if (my !== loadGen || current.roomId !== rid) return;   // 已切走：迟到响应丢弃
             current.list = r.ok ? (r.data || []) : [];
             renderBar();
             showPopupOnce();
@@ -204,10 +215,13 @@
         load();
     });
 
-    // 视图切换（v1.1.0）：私聊是 room_id=0 的虚拟空间，语义上不存在「群公告」。
-    // 群聊装饰只属于群聊视图 —— 进入私聊时移除公告条，切回群聊时由 onRoomSwitch 复原。
+    // 视图切换（v1.1.0）：公告只对具体群聊成立，room_id=0 的一切视图都不该有公告条 ——
+    // 私聊、系统通知流、联系人名单、还没点选会话，四种都是「没有房间」。
+    // v1.1.11：原来这里判的是 `!== 'dm'`，等于默认「非私聊即群聊」；核心补上真实视图名后
+    // 改成反向判定：只要不是 'room' 就清场，以后核心再加新视图（插件面板之类）也不会漏。
     w.OwChat.onViewChange(function (ctx) {
-        if (ctx.view !== 'dm') return;      // 群聊视图：onRoomSwitch 已经负责刷新
+        if (ctx.view === 'room') return;    // 群聊视图：onRoomSwitch 已经负责刷新
+        loadGen++;                          // 作废在途请求：切走之后不许再把公告画回来
         current.roomId = 0;
         current.list = [];
         renderBar();                        // list 为空时 renderBar 会自行移除 #oaBar

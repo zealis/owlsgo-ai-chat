@@ -332,7 +332,12 @@
         return sendRich(text);
     });
     // 切会话就丢弃待发区（注册时核心会立刻补发一次当前视图，那时 pend 还是空的，无害）
-    if (OwChat.onViewChange) OwChat.onViewChange(function () {
+    // v1.4.3：核心从 v1.3.133 起还会为「系统通知 / 联系人」这类**根本没有会话**的视图补发
+    // 一次钩子（那是给公告条这类群级装饰清场用的）。那种时候不能清待发区 —— 用户只是抬头
+    // 看了一眼通知，回来时图还在原来的群里等着发，不该被算成「换了会话」。
+    // 真正换会话（'room' / 'dm'）仍按 pendKey 对不上就清。
+    if (OwChat.onViewChange) OwChat.onViewChange(function (ctx) {
+        if (ctx && ctx.view && ctx.view !== 'room' && ctx.view !== 'dm') return;
         if (pend.length && pendKey !== nowKey()) clearPend();
     });
 
