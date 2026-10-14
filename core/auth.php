@@ -233,7 +233,8 @@ class Auth
      */
     public static function login(string $identity, string $password): array
     {
-        $key = strtolower($identity) . '|' . Sec::ip();
+        $ip = Sec::ip();
+        $key = strtolower($identity) . '|' . $ip;
         // 闭包统一收口：把「失败原因 / 剩余次数 / 命中的用户」补全后交给插件，
         // 保证各失败分支的钩子载荷形状一致，插件侧无需按 reason 做字段兼容。
         $fail = function (string $reason, string $msg, array $user = null, int $left = -1) use ($identity): array {
@@ -256,16 +257,27 @@ class Auth
             $user = DB::one('SELECT * FROM users WHERE id=?', [(int)$identity]);
         }
         if (!$user) $user = DB::one('SELECT * FROM users WHERE email=?', [self::normEmail($identity)]);
+        /* v1.3.131：计数与锁定都挂在「账号键」上（认不出账号时才退回提交的原文）。
+           原来只有 identity|IP 一条键，于是 `001`、邮箱、昵称是三份独立预算：
+           换一种写法就绕开锁定（防暴力是假的），而且管理员用 `001` 锁了、
+           用邮箱还能进 —— 站方 2026-10-14 被这个绕晕过一次。 */
+        $uidKey = $user ? 'u' . (int)$user['id'] . '|' . $ip : '';
+        $cntKey = $uidKey !== '' ? $uidKey : $key;
+        if ($uidKey !== '' && $uidKey !== $key && Sec::loginLocked($uidKey)) {
+            return $fail('locked', '失败次数过多，账号已临时锁定 15 分钟');
+        }
         if (!$user || !password_verify($password, $user['password'])) {
-            Sec::loginFail($key);
+            Sec::loginFail($cntKey);
             Sec::log('login_fail', $identity);
-            $left = 10 - Sec::loginFails($key);
+            $left = 10 - Sec::loginFails($cntKey);
             // ⚠️ 密码错时 $user 传 null：确认「账号存在」本身就是信息，
             // 交给插件就能变成账号枚举的侧信道，宁可少给一个字段。
             return $fail('fail', '邮箱或用户 ID 不正确，或密码错误' . ($left <= 3 ? "，剩余 $left 次尝试机会" : ''), null, $left);
         }
         if ((int)$user['status'] !== 1) return $fail('disabled', '账号已被禁用', $user);
+        // 成功一次就把两种键一起清掉：否则用邮箱登录成功，`001` 那条计数会永远留着
         Sec::loginOk($key);
+        if ($uidKey !== '') Sec::loginOk($uidKey);
         session_regenerate_id(true);
         $_SESSION['uid'] = $user['id'];
         // v1.2.56：连同最后登录 IP 一起回写（用户概览展示用）

@@ -165,7 +165,14 @@ class Sec
 
     public static function loginFail(string $identity): void
     {
-        $fails = self::loginFails($identity) + 1;
+        $row = DB::one('SELECT fails, locked_until FROM login_attempts WHERE identity=?', [$identity]);
+        $fails = (int)($row['fails'] ?? 0);
+        /* v1.3.131：上一轮锁定已经到期 → 重新起算。
+           原来 fails 只增不减：到过 10 之后，每次失败都再锁 15 分钟（171 行 fails>=lockAt 恒成立），
+           而清零只有「用同一个身份字符串登录成功」才会发生 —— 结果是管理员被永久锁在门外，
+           慢点快点都进不去（2026-10-14 实测 fails=11、锁到 18:44）。 */
+        if ($row && (int)($row['locked_until'] ?? 0) > 0 && (int)$row['locked_until'] <= time()) $fails = 0;
+        $fails++;
         $lockAt = (int)DB::setting('login_fail_lock', 10);      // 达此失败次数即锁定
         $mins   = (int)DB::setting('login_lock_minutes', 15);   // 锁定时长（分钟）
         $lock = ($lockAt > 0 && $fails >= $lockAt) ? time() + $mins * 60 : null;

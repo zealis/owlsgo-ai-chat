@@ -1325,7 +1325,35 @@
     /* ==========================================================================
        OwAuth：登录 / 注册 / 找回密码
        ========================================================================== */
+    /**
+     * 表单防重入（v1.3.131）：一次点击发出两个请求，代价是**失败计数翻倍**。
+     * 登录页尤其致命 —— 后台「失败 10 次锁 15 分钟」按次数算，
+     * 站方 2026-10-14 的日志里就有两对相隔 1 秒的 login_fail，点五六下就被锁在门外。
+     *
+     * @param {HTMLFormElement} form  被提交的表单
+     * @param {Function} run          run(done)：在里面发请求，请求一回来就调 done()
+     * @returns {boolean} 是否真的开始提交（false = 上一个请求还没回来，这次直接忽略）
+     */
+    function submitOnce(form, run) {
+        if (!form || form.__owBusy) return false;
+        form.__owBusy = true;
+        var off = [], i, all = form.getElementsByTagName('button');
+        // 只记录「本次被我们禁用」的按钮：本来就禁用的（例如倒计时中的「发验证码」）不能由我们放开
+        for (i = 0; i < all.length; i++) if (!all[i].disabled) { all[i].disabled = true; off.push(all[i]); }
+        var done = function () {
+            if (!form.__owBusy) return;
+            form.__owBusy = false;
+            for (var j = 0; j < off.length; j++) off[j].disabled = false;
+        };
+        setTimeout(done, 15000);   // 请求没回来也不能把按钮永久焊死（OwApi 无超时回调）
+        run(done);
+        return true;
+    }
+
     var OwAuth = {
+        /** 供插件复用：接管登录表单提交时同样要防重入（见 plugins/twofa/chat.js） */
+        submitOnce: submitOnce,
+
         init: function (opt) {
             OwApi.key = opt.key;
             OwApi.setServerTime(opt.ts);   // 用服务器时间校正本机时钟偏差
@@ -1375,25 +1403,31 @@
                     if (!els[i].name || els[i].name === 'ts' || els[i].name === 'sign') continue;
                     data[els[i].name] = els[i].value;
                 }
-                msg.innerHTML = '提交中…';
-                OwApi.post(mode === 'login' ? 'login' : mode, data, function (r) {
-                    if (r.ok) {
-                        msg.innerHTML = '<span style="color:var(--ow-green)">' + esc(r.msg) + '</span>';
-                        // 注册成功不进入聊天（后端注册本就不建会话）：跳登录页由用户手动登录。
-                        // v1.3.104 例外：嵌入授权弹窗（?embed_auth=1）里注册已自动登录，
-                        // 直接进聊天页——弹窗里的聊天页检测到授权标记后会完成「签发授权码」收尾。
-                        setTimeout(function () {
-                            location.href = mode === 'login' ? '?page=chat'
-                                : mode === 'reset' ? '?page=login'
-                                : (r.autologin ? '?page=chat' : '?page=login&registered=1');
-                        }, 800);
-                    } else {
+                // 上一个请求没回来之前，这次提交直接丢掉 —— 一次点击发两个请求，
+                // 失败计数就是翻倍地涨，登录页尤其致命（见 submitOnce 的注释）
+                submitOnce(form, function (done) {
+                    msg.innerHTML = '提交中…';
+                    OwApi.post(mode === 'login' ? 'login' : mode, data, function (r) {
+                        if (r.ok) {
+                            // 成功就不解禁了：800ms 后整页跳走，中间再点一下只会又发一次
+                            msg.innerHTML = '<span style="color:var(--ow-green)">' + esc(r.msg) + '</span>';
+                            // 注册成功不进入聊天（后端注册本就不建会话）：跳登录页由用户手动登录。
+                            // v1.3.104 例外：嵌入授权弹窗（?embed_auth=1）里注册已自动登录，
+                            // 直接进聊天页——弹窗里的聊天页检测到授权标记后会完成「签发授权码」收尾。
+                            setTimeout(function () {
+                                location.href = mode === 'login' ? '?page=chat'
+                                    : mode === 'reset' ? '?page=login'
+                                    : (r.autologin ? '?page=chat' : '?page=login&registered=1');
+                            }, 800);
+                            return;
+                        }
+                        done();
                         msg.innerHTML = '<span style="color:var(--ow-red)">' + esc(r.msg) + '</span>';
                         if (r.captcha && $('owCaptchaRow')) {
                             $('owCaptchaRow').style.display = 'block';
                             if (img) img.src = '?action=captcha&_=' + new Date().getTime();
                         }
-                    }
+                    });
                 });
             };
         }

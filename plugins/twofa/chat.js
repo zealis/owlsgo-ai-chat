@@ -267,22 +267,31 @@
             }
             var msg = form.querySelector('.ow-form-msg');
             if (msg) msg.innerHTML = '登录中…';
-            OwApi.post('login', data, function (r) {
-                if (!r.ok) {
-                    if (msg) msg.innerHTML = '<span style="color:var(--ow-red)">' + esc(r.msg) + '</span>';
-                    if (r.captcha && $('owCaptchaRow')) {
-                        $('owCaptchaRow').style.display = 'block';
-                        var img = $('owCaptchaImg');
-                        if (img) img.src = '?action=captcha&_=' + new Date().getTime();
+            /* v1.0.5：提交防重入。一次点击发两个请求 = 失败计数翻倍，
+               而核心「失败 10 次锁 15 分钟」是按次数的，用户会被自己的双击锁在门外。
+               老核心没有 OwAuth.submitOnce 时退回直接提交（宁可少一层保护也不能登不进）。 */
+            var send = function (done) {
+                OwApi.post('login', data, function (r) {
+                    if (!r.ok) {
+                        done();
+                        if (msg) msg.innerHTML = '<span style="color:var(--ow-red)">' + esc(r.msg) + '</span>';
+                        if (r.captcha && $('owCaptchaRow')) {
+                            $('owCaptchaRow').style.display = 'block';
+                            var img = $('owCaptchaImg');
+                            if (img) img.src = '?action=captcha&_=' + new Date().getTime();
+                        }
+                        return;
                     }
-                    return;
-                }
-                // 密码已通过：查询是否需要两步验证（钩子已撤销会话并置 pending）
-                OwApi.post('plugin_twofa_check', {}, function (c) {
-                    if (c.ok && c.need) { showTwoFAChallenge(form); return; }
-                    location.href = '?page=chat';
+                    // 密码已通过：查询是否需要两步验证（钩子已撤销会话并置 pending）
+                    // 成功分支不解禁：要么整页跳走，要么原地换成验证码表单，按钮随之消失
+                    OwApi.post('plugin_twofa_check', {}, function (c) {
+                        if (c.ok && c.need) { showTwoFAChallenge(form); return; }
+                        location.href = '?page=chat';
+                    });
                 });
-            });
+            };
+            if (w.OwAuth && OwAuth.submitOnce) OwAuth.submitOnce(form, send);
+            else send(function () { });
         };
     }
 
