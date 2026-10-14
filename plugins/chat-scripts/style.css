@@ -1,5 +1,5 @@
 /* ==========================================================================
-   chat-scripts · 群聊自动化（v1.1.1）— 前台话术面板 / 群聊设置·自动化 / 后台管理页共用样式
+   chat-scripts · 群聊自动化（v1.1.2）— 前台话术面板 / 群聊设置·自动化 / 后台管理页共用样式
    --------------------------------------------------------------------------
    颜色纪律：本文件不出现任何写死色值，一律引用核心 --ow-* 变量。
      全站深浅两套主题只靠重定义这些变量切换，插件写死颜色 = 深色模式下露亮斑。
@@ -41,16 +41,25 @@
 .ow-cs-q { flex: 1; -webkit-flex: 1; min-width: 0; padding: 6px 10px; font-size: 13px; }
 /* v1.1.0：头部右侧的 ✕ 关闭按钮已撤（用户要求），.ow-cs-x 一并删掉 —— 留着就是死规则。 */
 
-/* 分组页签（公共 / 我的）——与全站「选中 = 主色实心」同语言 */
+/* 分组页签（公共 / 群聊 / 我的）——与全站「选中 = 主色实心」同语言。
+   v1.1.2：整条加一层浅底圆角轨道，读起来是一组分段控件，而不是三个各自为政的按钮。
+   轨道与胶囊都引 --ow-bg-sub / --ow-primary-strong，深色模式跟着翻；
+   ⚠️ 未选中的页签必须 transparent —— 让轨道的颜色透上来，
+      否则哪天改了轨道色，页签会留下一块跟不上的死色。 */
 .ow-cs-tabs {
     display: flex; display: -webkit-flex;
     gap: 4px;
-    padding: 8px 8px 0;
+    background: var(--ow-bg-sub);
+    border-radius: 10px;
+    padding: 4px;
+    margin-bottom: 16px;            /* 后台页：与下方卡片隔开 */
 }
+/* 话术面板里那一条：左右各让出 8px，与搜索框落在同一条内边距线上 */
+.ow-cs-tabs-in { margin: 8px 8px 10px; }
 .ow-cs-tab {
     flex: 1; -webkit-flex: 1;
     border: none;
-    background: var(--ow-bg-sub);
+    background: transparent;
     color: var(--ow-text-sub);
     font-size: 12.5px;
     padding: 6px 0;
@@ -231,7 +240,7 @@
 /* --------------------------------------------------------------------------
    后台：页签 / 页签按钮 / 表单按钮行
    -------------------------------------------------------------------------- */
-.ow-cs-tabs { margin-bottom: 16px; }
+/* 轨道本身在上面的「前台」段统一定义了（含 margin-bottom）；这里只补后台页签的尺寸 */
 .ow-cs-tabs .ow-cs-tab { padding: 7px 16px; font-size: 13px; }
 .ow-cs-mf-btns { margin-top: 6px; }
 

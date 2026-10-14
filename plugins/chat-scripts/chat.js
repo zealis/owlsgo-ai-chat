@@ -1,5 +1,5 @@
 /**
- * chat-scripts · 群聊自动化 · 前台话术面板（v1.1.0）
+ * chat-scripts · 群聊自动化 · 前台话术面板（v1.1.2）
  *
  * 入口：往核心输入工具栏锚点 #owToolFirst 注入「话术」按钮（与表情包插件同一约定，
  *      核心零分支；插件停用则按钮不出现）。面板挂到 #owEmojiPanel 的父节点上，
@@ -102,7 +102,7 @@
               '<div class="ow-cs-head">'
             + '<input class="ow-input ow-cs-q" id="owCsQ" type="text" maxlength="30" autocomplete="off" placeholder="搜索话术标题或内容">'
             + '</div>'
-            + '<div class="ow-cs-tabs">'
+            + '<div class="ow-cs-tabs ow-cs-tabs-in">'
             + '<button class="ow-cs-tab is-active" type="button" data-t="public">公共</button>'
             + '<button class="ow-cs-tab" type="button" data-t="room" style="display:none">群聊</button>'
             + '<button class="ow-cs-tab" type="button" data-t="mine">我的</button>'

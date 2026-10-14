@@ -1,5 +1,5 @@
 /**
- * chat-scripts · 群聊自动化 · 后台交互（v1.1.1）
+ * chat-scripts · 群聊自动化 · 后台交互（v1.1.2）
  * 全局对象 OwCSAdmin。三个页签：公共话术 / 机器人账号 / 发送记录。
  *
  * ⚠️ v1.1.1 起后台**不再管规则与任务**：关键词自动回复、定时群发都跟着群走，
@@ -114,6 +114,46 @@
             if (!r || !r.ok) { toast((r && r.msg) || '加载失败'); return; }
             CS.data = r;
             CS.renderBot();
+            CS.renderAi();
+        });
+    };
+
+    /**
+     * AI 应答配置（v1.1.2）。
+     * ⚠️ 服务端**不下发密钥明文**（只给 key_set 与掩码），所以密钥输入框永远留空；
+     *    「留空保存 = 不修改」这条规矩必须在这里也讲一遍，否则管理员会以为保存把密钥清掉了。
+     */
+    CS.renderAi = function () {
+        if (!$('owCsAiOn')) return;                    // 还没渲染出 AI 那张卡
+        var ai = (CS.data && CS.data.ai) || {};
+        $('owCsAiOn').checked = !!ai.on;
+        $('owCsAiTimeout').value = ai.timeout || 10;
+        $('owCsAiDaily').value = ai.daily || 0;
+        $('owCsAiCtx').value = ai.ctx || 0;
+        $('owCsAiBase').value = ai.base || '';
+        $('owCsAiModel').value = ai.model || '';
+        $('owCsAiPrompt').value = ai.prompt || '';     // 空 = 用系统默认（保存时清掉即恢复）
+        $('owCsAiKey').value = '';
+        var k = $('owCsAiKeyInfo');
+        if (k) {
+            k.innerHTML = ai.key_set
+                ? '已设置密钥：<code>' + esc(ai.key_mask || '') + '</code>　重新输入即覆盖，留空表示不修改。'
+                : '<span style="color:var(--ow-text-sub)">尚未设置密钥 —— 少数本地接口不需要密钥，云端的一般都要。</span>';
+        }
+    };
+
+    /** 试一次 AI 配置：不落库、不发到群里，只把模型回的话显示出来 */
+    CS.aiTest = function () {
+        var st = $('owCsAiStat'), qEl = $('owCsAiTestQ');
+        if (!st) return;
+        st.innerHTML = '正在调用…（最多等 ' + int($('owCsAiTimeout').value, 10) + ' 秒）';
+        OwApi.post(A + 'ai_test', { q: qEl ? qEl.value : '' }, function (r) {
+            if (!r || !r.ok) {
+                st.innerHTML = '<span style="color:var(--ow-red)">' + esc((r && r.msg) || '调用失败') + '</span>';
+                return;
+            }
+            st.innerHTML = '<span style="color:var(--ow-green)">' + esc(r.msg || '通了') + '</span><br>'
+                + '<span style="color:var(--ow-text-sub)">' + esc(r.text || '') + '</span>';
         });
     };
 
@@ -142,7 +182,16 @@
         OwApi.secure(F + 'admin_cfg_save', {
             bot_uid: ($('owCsBotUid').value || '').replace(/^\s+|\s+$/g, ''),
             reply_limit: $('owCsReplyLimit').value,
-            reply_cooldown: $('owCsCool').value
+            reply_cooldown: $('owCsCool').value,
+            // AI 应答（v1.1.2）：ai_key 留空 = 不修改，ai_prompt 清空 = 恢复默认
+            ai_on: $('owCsAiOn').checked ? 1 : 0,
+            ai_base: $('owCsAiBase').value,
+            ai_key: $('owCsAiKey').value,
+            ai_model: $('owCsAiModel').value,
+            ai_prompt: $('owCsAiPrompt').value,
+            ai_timeout: $('owCsAiTimeout').value,
+            ai_daily: $('owCsAiDaily').value,
+            ai_ctx: $('owCsAiCtx').value
         }, function (r) {
             toast(r.msg || (r.ok ? '已保存' : '保存失败'));
             if (r.ok) CS.load();
@@ -359,7 +408,7 @@
             h += '<tr>'
                 + '<td><input type="checkbox" class="owCsLogChk" value="' + esc(l.id) + '" onchange="OwCSAdmin.logSync()"></td>'
                 + '<td>' + fmtTs(l.created_at) + '</td>'
-                + '<td>' + (l.kind === 'cast' ? '定时群发' : '自动回复') + '</td>'
+                + '<td>' + (l.kind === 'cast' ? '定时群发' : (l.kind === 'ai' ? 'AI 应答' : '自动回复')) + '</td>'
                 + '<td>' + esc(l.room_name || ('#' + l.room_id)) + '</td>'
                 + '<td title="' + esc(l.content) + '">' + esc(brief(l.content, 40)) + '</td>'
                 + '<td>' + (int(l.ok)
