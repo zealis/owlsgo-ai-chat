@@ -2202,12 +2202,26 @@ class Chat
         // 敏感词过滤（与发言同一套词库：命中替换）
         self::filterText($name, 'room_name', $actor);
         self::filterText($description, 'room_desc', $actor);
-        // 头像：仅接受本站头像目录下的相对路径（由上传接口产出），空串表示不修改
+        // 头像：仅接受本站头像目录下的相对路径（由上传接口产出），空串表示不修改。
+        // 前端提交的一律要是这个形态 —— 渲染用的完整 URL 不许回传（那是 rooms() 的产物，
+        // 把它写回去等于把「跟随群主头像」悄悄钉死成一张静态图，见 chat.js openRoomEdit）。
+        // ⚠️ 光比前缀挡不住上跳：'uploads/avatar/../../config.php' 也是以它开头的，
+        //    存进去之后 <img src> 会由浏览器解析到站点根的任意文件 —— 所以再钉一条：
+        //    带 .. 的一律拒。（.tools/room-avatar-test.php ④ 就是为这条加的）
         $avatar = trim($avatar);
-        if ($avatar !== '' && strpos($avatar, 'uploads/avatar/') !== 0) return [false, '头像路径不合法'];
+        if ($avatar !== '' && (strpos($avatar, 'uploads/avatar/') !== 0 || strpos($avatar, '..') !== false)) {
+            return [false, '头像路径不合法'];
+        }
 
         $sets = ['name' => $name, 'description' => $description];
-        if ($avatar !== '') $sets['avatar'] = $avatar;
+        if ($avatar !== '') {
+            $sets['avatar'] = $avatar;
+            /* v1.3.135：上传自定义头像必须同时把 avatar_type 落成 upload。
+               roomAvatarUrl() 只在 type 为 '' 或 'upload' 时才认这个路径 ——
+               原先只写 avatar、不动 type，于是「先用过生成式插图、之后上传自定义头像」的群
+               永远还在显示那张插图：上传成功、路径也入库了，界面上却看不出任何变化。 */
+            $sets['avatar_type'] = 'upload';
+        }
         // v1.3.11：生成式头像。传 avatarType=generated 时清空 avatar 路径并写风格/种子；
         //   传 restore=1 表示「回到默认」= 清空自定义 → 渲染时回落创建者头像。
         $avatarType = (string)($opt['avatar_type'] ?? '');

@@ -41,15 +41,18 @@
        核心的头像设置弹窗检测到注册后才显示「上传头像」选项，
        没启用插件时用户仍可用「浏览插图」（生成式头像），功能不会变成死路。 */
     if (OwChat.registerAvatarUploader && !OwChat._avatarUploader) {
-        OwChat.registerAvatarUploader(function (file, filename, onOk) {
+        OwChat.registerAvatarUploader(function (file, filename, onOk, opts) {
             // v1.3.30 修 bug：裁剪弹窗导出的是 canvas **Blob**（没有文件名），
             // FormData 会把 multipart 文件名写成 "blob" → 服务端扩展名校验全拒。
             if (filename && w.File && !(file instanceof w.File)) {
                 try { file = new w.File([file], filename, { type: (file && file.type) || 'image/jpeg' }); } catch (e) {}
             }
-            OwApi.upload('plugin_attachment_manager_upload_avatar', file, {}, function (r) {
+            // v1.4.4：target=room 时服务端只存文件、不动任何人的头像，回一个相对路径
+            // 给调用方去提交 room_update —— 群头像不该顺手把上传者自己的头像也换掉。
+            var target = (opts && opts.target === 'room') ? 'room' : 'me';
+            OwApi.upload('plugin_attachment_manager_upload_avatar', file, { target: target }, function (r) {
                 if (!r || !r.ok) { toast(r && r.msg ? r.msg : '头像上传失败'); return; }
-                onOk(r.url);
+                onOk(r.url, r.path);
             });
         });
     }

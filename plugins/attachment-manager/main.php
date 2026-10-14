@@ -586,10 +586,20 @@ function owATStoreAvatar(array $f, array $actor): array
     return Upload::handle($f, 'avatar');
 }
 
+/**
+ * 头像上传路由（v1.4.4 起分两种目标）。
+ *
+ * target=me（缺省，历史行为）：上传成功即写进 users 表 —— 核心自己不再保留任何头像写库入口。
+ * target=room：**只存文件，谁的头像都不动**，把相对路径回给调用方，由它走 room_update 提交。
+ *   加这一支的原因是这条路由原先无条件 Auth::setAvatar —— 于是前台「给群换头像」
+ *   在上传那一下就把当前用户自己的头像换掉了（站方实测）。群头像最终落在 rooms 表，
+ *   权限由 room_update 自己判（仅群主可改本群），这里代写用户头像属于越界副作用。
+ */
 Plugin::route('plugin_attachment_manager_upload_avatar', function (array $ctx) use ($atGuard) {
     if (!$atGuard($ctx)) Api::json(['ok' => false, 'msg' => '请先登录'], 403);
     if (empty($ctx['files']['file'])) Api::json(['ok' => false, 'msg' => '未接收到文件'], 400);
     if (($ctx['actor']['kind'] ?? '') !== 'user') Api::json(['ok' => false, 'msg' => '游客没有账号头像'], 403);
+    $forRoom = (string)($_POST['target'] ?? '') === 'room';
 
     // 复用上传闸门（等级信任插件等按等级限制），kind 传 'avatar' 与历史口径一致
     $allow = true; $reason = '';
@@ -599,12 +609,17 @@ Plugin::route('plugin_attachment_manager_upload_avatar', function (array $ctx) u
     [$ok, $urlOrMsg] = owATStoreAvatar($ctx['files']['file'], $ctx['actor']);
     if (!$ok) Api::json(['ok' => false, 'msg' => $urlOrMsg], 400);
 
+    if ($forRoom) {
+        Sec::log('upload_room_avatar', $ctx['actor']['nickname'], ['path' => $urlOrMsg]);
+        Api::json(['ok' => true, 'path' => $urlOrMsg, 'url' => Auth::avatarFileUrl($urlOrMsg),
+                   'msg' => '群头像已上传']);
+    }
     // 落库：上传成功即写入 users（核心只保留 avatar_save 接口给「生成式」用）
     [$ok2, $msg] = Auth::setAvatar($ctx['actor'], 'upload', $urlOrMsg);
     if (!$ok2) Api::json(['ok' => false, 'msg' => $msg], 400);
 
     Sec::log('upload_avatar', $ctx['actor']['nickname'], ['url' => $urlOrMsg]);
-    Api::json(['ok' => true, 'url' => Auth::avatarFileUrl($urlOrMsg), 'msg' => '头像已更新']);
+    Api::json(['ok' => true, 'path' => $urlOrMsg, 'url' => Auth::avatarFileUrl($urlOrMsg), 'msg' => '头像已更新']);
 });
 
 /* ============================ 后台配置路由 ============================ */

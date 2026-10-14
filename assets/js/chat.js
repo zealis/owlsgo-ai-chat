@@ -4289,12 +4289,13 @@
                 var isMe = self.cfg.actor.kind === 'user' && meId > 0 && meId === u.id;
                 // v1.1.0：资料卡加「发私信」入口，与头像右键菜单走同一条私聊路径
                 var canPm = self.cfg.actor.kind === 'user' && !isMe && self.cfg.actor.id !== u.id;
-                // 自己的卡片：头像包一层可点容器，点它=打开隐藏的 file input
+                // 自己的卡片：点头像走**与设置页同一个**头像设置弹窗（上传 / 浏览插图）。
+                // 原先这里直接点一个隐藏的 file input → 选完就裁剪上传，跳过了那层弹窗，
+                // 两条入口的交互不一致（站方实测反馈）。
                 var avHtml = avatarHtml(u.avatar, u.nickname, 'lg', u.role);
                 if (isMe) {
-                    avHtml = '<span class="ow-set-avatar-btn" id="owCardAvatarPreview" title="点击更换头像"'
-                        + ' onclick="OwChat.pickCardAvatar()">' + avHtml + '</span>'
-                        + '<input type="file" id="owCardAvatarFile" accept="image/*" style="display:none">';
+                    avHtml = '<span class="ow-set-avatar-btn" id="owCardAvatarPreview" title="点击设置头像"'
+                        + ' onclick="OwChat.openAvatarDialog(\'me\')">' + avHtml + '</span>';
                 }
                 var regDate = u.created_at ? new Date(u.created_at * 1000).toLocaleDateString() : '-';
                 var badges = roleTag(u.role, u.title, u.id, true);   // 资料卡=管理场景，显示真实身份
@@ -4352,22 +4353,7 @@
                     + '<div id="owCardExtras"></div>'
                     + (acts ? '<div class="ow-modal-actions">' + acts + '</div>' : '')
                 );
-                // 绑定隐藏 file input：选图后走**与设置页完全相同**的裁剪轮子
-                if (isMe) {
-                    var f = $('owCardAvatarFile');
-                    f.onchange = function () {
-                        if (!this.files || !this.files[0]) return;
-                        self.avatarCrop(this.files[0]);   // 轮子入口与 openSettings 一致
-                        this.value = '';
-                    };
-                }
             });
-        },
-
-        /** 资料卡里点击自己的头像 → 打开隐藏的 file input（与设置页 pickAvatar 同义） */
-        pickCardAvatar: function () {
-            var f = $('owCardAvatarFile');
-            if (f) f.click();
         },
 
         pmHint: function (nick) { toast('游客用户无法查看资料卡'); },
@@ -4866,10 +4852,16 @@
             // 这里同步禁用开关。已经是不公开的群则放行——改个名不该被总闸拦住。
             var canTogglePublic = (this.cfg.settings || {}).room_private_create !== '0'
                 || !isPublic || isAdmin;
-            // 待保存头像按群缓存：切群时必须重置，否则会把上一个群的头像带过来
+            // 待保存头像按群缓存：切群时必须重置，否则会把上一个群的头像带过来。
+            // v1.3.135：这里存的是**要提交给 room_update 的相对路径**，空串=本次不改头像。
+            // 原先初始化成 r.avatar —— 那是 rooms() 现算的**渲染用完整 URL**，
+            // 于是改个群名点保存，room_update 会收到一个不以 uploads/avatar/ 开头的值，
+            // 被服务端判「头像路径不合法」整条拒掉（改名根本存不进去）。
+            // 而且对「头像跟随群主」的群，那个 URL 就是群主自己的头像 —— 真存进去等于
+            // 把群头像悄悄钉死在保存那一刻的群主图片上。预览要的是地址，这里另取。
             if (this._roomAvatarRoom !== this.room) {
                 this._roomAvatarRoom = this.room;
-                this._roomAvatar = r.avatar || '';
+                this._roomAvatar = '';
             }
 
             this.openModal(
@@ -4879,8 +4871,7 @@
                 + (canEdit ? ' title="点击更换群头像" onclick="OwChat.roomAvatarPick()"' : '') + '>'
                 // v1.1.19：群头像改走 roomAvatarHtml —— 无自定义头像时显示默认剪影图，
                 // 不再是「群名首字 + 随机色块」（那个 role 传 'member' 走的是色盘分支）。
-                + roomAvatarHtml(this._roomAvatar, 'lg') + '</span>'
-                + '<input type="file" id="owRoomAvatarFile" accept="image/*" style="display:none">'
+                + roomAvatarHtml(this._roomAvatar || r.avatar, 'lg') + '</span>'
                 + '<div class="ow-card-id">'
                 + '<div class="ow-card-name">' + esc(r.name) + '</div>'
                 + '<div class="ow-card-badges"><span class="ow-tag ow-tag-green">' + typeName + '</span>'
@@ -4926,14 +4917,6 @@
                       + '<button class="ow-btn ow-btn-ghost ow-btn-block" onclick="OwChat.closeModal()">关闭</button></div>')
             );
             bindSwitches($('owModal'));
-
-            var f = $('owRoomAvatarFile');
-            if (f) f.onchange = function () {
-                if (!this.files || !this.files[0]) return;
-                var self2 = OwChat;
-                self2.roomAvatarCrop(this.files[0]);   // 裁剪浮层独立，弹窗主体保持完好
-                this.value = '';
-            };
         },
 
         /* ---------- 群成员管理（v1.1.11） ---------- */
@@ -5105,12 +5088,14 @@
             var me = this.cfg.me, actor = this.cfg.actor || {};
             var nick = me ? me.nickname : (actor.nickname || '');
             el.innerHTML = avatarHtml(me ? me.avatar : actor.avatar, nick, 'md', me ? me.role : 'guest');
-            el.title = nick;
+            // 提示语在这里是**事后写属性**，i18n 的 MutationObserver 只看新增节点、看不到它，
+            // 所以必须手动过 owTr，否则英文界面下 tooltip 仍是中文。
+            el.title = owTr(me ? '个人主页' : '登录') + (me ? ' · ' + nick : ' / ' + owTr('注册'));
         },
 
         /**
          * rail 顶部头像被点：注册用户 → 自己的资料卡（与别人点你头像同一张卡，
-         * 自己的卡自带「点击更换头像」与「编辑资料」）；游客 → 登录 / 注册菜单。
+         * 点头像进头像设置弹窗、底部有「编辑资料」）；游客 → 登录 / 注册菜单。
          */
         onRailMe: function (e) {
             e = e || w.event;
@@ -5996,12 +5981,18 @@
 
         avatarCrop: function (file) {
             this._cropTarget = 'me';
+            this._cropRoom = 0;
             this.cropForTarget(file);
         },
 
-        /** 群聊头像裁剪：复用同一裁剪弹窗，保存时上传到群聊头像 */
-        roomAvatarCrop: function (file) {
+        /**
+         * 群聊头像裁剪：复用同一裁剪弹窗，保存时上传到群聊头像。
+         * rid 记到 _cropRoom：裁剪是异步的（等选图、等浮层里点「确定」），
+         * 真到上传那一步时已经没有别的地方知道这张图是给哪个群的。
+         */
+        roomAvatarCrop: function (file, rid) {
             this._cropTarget = 'room';
+            this._cropRoom = parseInt(rid || this.room || 0, 10);
             this.cropForTarget(file);
         },
 
@@ -6198,7 +6189,11 @@
         */
         _avatarUploader: null,   // 由附件上传插件经 registerAvatarUploader 注入
 
-        /** 插件注册上传实现：fn(file, filename, onOk) —— 成功后回调 onOk(url) */
+        /**
+         * 插件注册上传实现：fn(file, filename, onOk, opts)
+         *   opts.target  'me'（默认，服务端顺手写入当前用户头像）| 'room'（只存文件，谁的头像都不动）
+         *   onOk(url, path)  url=渲染用的绝对地址，path=入库用的相对路径（room_update 只认这个）
+         */
         registerAvatarUploader: function (fn) {
             if (typeof fn === 'function') this._avatarUploader = fn;
         },
@@ -6231,29 +6226,18 @@
                 f.type = 'file'; f.accept = 'image/*';
                 f.onchange = function () {
                     if (!f.files || !f.files[0]) return;
-                    self.avatarCrop(f.files[0]);
+                    // ⚠️ 群头像必须走 roomAvatarCrop —— 它把 _cropTarget 设成 'room'。
+                    // 这里原先不分流，一律 avatarCrop，而 avatarCrop 内部硬设 'me'，
+                    // 于是「给群换头像」把自己账号的头像一起换掉了（站方实测的正是这条）。
+                    if (isRoom) self.roomAvatarCrop(f.files[0], rid);
+                    else self.avatarCrop(f.files[0]);
                 };
                 f.click();
             };
             var up = $('owAvUpload'); if (up) up.onclick = applyUpload;
             var rs = $('owAvReset');
             if (rs) rs.onclick = function () {
-                var room = self.cfg.rooms || [];
-                for (var i = 0; i < room.length; i++) {
-                    if (parseInt(room[i].id, 10) !== rid) continue;
-                    OwApi.post('room_update', {
-                        id: rid, name: room[i].name, description: room[i].description || '',
-                        avatar: '', avatar_type: 'default'
-                    }, function (r) {
-                        toast(r.msg);
-                        if (!r.ok) return;
-                        if (r.url) room[i].avatar = r.url;
-                        self.closeModal();
-                        self.renderConversations();
-                        self.renderRoomPanel();
-                    });
-                    return;
-                }
+                self.roomAvatarPost(rid, { avatar: '', avatar_type: 'default' });
             };
             var gal = $('owAvGallery');
             if (gal) gal.onclick = function () { self.openAvatarGallery(isRoom ? rid : 0); };
@@ -6345,27 +6329,41 @@
         },
 
         /** 保存生成式头像。rid>0 表示群头像，0 表示本人 */
+        /**
+         * 群头像三种改法（上传 / 生成式插图 / 恢复默认）共用的一次提交。
+         * 名称与简介必须随房带上 —— room_update 服务端要校验这两项，
+         * 只发改头像那几个字段，用户收到的会是莫名其妙的「群名称需 1-30 个字符」。
+         * @param int    rid    群 id
+         * @param object extra  头像相关字段（avatar / avatar_type / avatar_style / avatar_seed）
+         */
+        roomAvatarPost: function (rid, extra) {
+            var self = this, list = this.cfg.rooms || [], i, k;
+            rid = parseInt(rid || 0, 10);
+            for (i = 0; i < list.length; i++) {
+                if (parseInt(list[i].id, 10) !== rid) continue;
+                var data = { id: rid, name: list[i].name, description: list[i].description || '' };
+                for (k in extra) if (extra.hasOwnProperty(k)) data[k] = extra[k];
+                OwApi.post('room_update', data, function (r) {
+                    toast(r.msg);
+                    if (!r.ok) return;
+                    if (r.url) list[i].avatar = r.url;   // 就地更新，避免重拉整份列表
+                    self.closeModal();
+                    self.renderConversations();
+                    self.renderRoomPanel();
+                });
+                return true;
+            }
+            toast('群聊信息已变化，请重新打开');
+            return false;
+        },
+
         saveAvatarStyle: function (slug, rid, seed) {
             var self = this;
             // v1.3.14：seed 由二级界面给出（1..45 固定档），不再随机 —— 所见即所得
             if (parseInt(rid || '0', 10) > 0) {
-                var room = this.cfg.rooms || [];
-                for (var i = 0; i < room.length; i++) {
-                    if (parseInt(room[i].id, 10) !== parseInt(rid, 10)) continue;
-                    OwApi.post('room_update', {
-                        id: rid, name: room[i].name, description: room[i].description || '',
-                        avatar: '', avatar_type: 'generated', avatar_style: slug, avatar_seed: seed
-                    }, function (r) {
-                        toast(r.msg);
-                        if (!r.ok) return;
-                        if (r.url) room[i].avatar = r.url;   // 就地更新，避免重拉整份列表
-                        self.closeModal();
-                        self.renderConversations();
-                        self.renderRoomPanel();
-                    });
-                    return;
-                }
-                toast('群聊信息已变化，请重新打开');
+                this.roomAvatarPost(rid, {
+                    avatar: '', avatar_type: 'generated', avatar_style: slug, avatar_seed: seed
+                });
                 return;
             }
             OwApi.post('avatar_save', {
@@ -6519,30 +6517,33 @@
                     if (cv) cv.innerHTML = avatarHtml(url, self.cfg.me ? self.cfg.me.nickname : '', 'lg', 'user');
                     self.renderMe();
                     toast('头像已上传');
-                });
+                }, { target: 'me' });
             } catch (e) {
                 toast('上传失败，请重试');
             }
         },
 
-        /** 上传群聊头像：右侧栏内回显（保存时随 room_update 提交） */
+        /**
+         * 上传群聊头像：拿到相对路径后**立即写入**（v1.3.135）。
+         * 原先这里只回填预览 + toast「群头像已上传，点击保存生效」，可那颗「保存」按钮
+         * 在底下的群聊信息弹窗里 —— 而头像设置弹窗是 openModal 换掉整个 #owModal 的，
+         * 弹窗一开，带保存的那张表单就已经不在了，图等于白传。
+         * 现在与「浏览插图」「恢复默认」同口径：点一下即生效，走同一个 roomAvatarPost。
+         */
         roomAvatarUpload: function (file, filename) {
             var self = this;
             if (!this._avatarUploader) { toast('上传群头像需要启用「附件上传」插件；也可以选「浏览插图」'); return; }
-            this._avatarUploader(file, filename, function (url) {
-                self._roomAvatar = url;
-                var pv = $('owRoomAvatarPreview');
-                if (pv) {
-                    // 侧栏用头像组件，后台表单用图片预览（裁剪浮层独立，两者都完好）
-                    // v1.1.19：群头像统一走 roomAvatarHtml（此处必有 url，行为与原来一致，
-                    // 只是组件口径统一，将来加默认图时不会漏掉这一处）。
-                    if (pv.getAttribute('class').indexOf('ow-set-avatar-btn') >= 0)
-                        pv.innerHTML = roomAvatarHtml(url, false);
-                    else
-                        pv.innerHTML = '<img src="' + esc(url) + '" alt="">';
-                }
-                toast('群头像已上传，点击保存生效');
-            });
+            var rid = parseInt(this._cropRoom || this.room || 0, 10);
+            if (!(rid > 0)) { toast('群聊信息已变化，请重新打开'); return; }
+            this._avatarUploader(file, filename, function (url, path) {
+                // 提交的是**相对路径**：room_update 只认 uploads/avatar/ 开头，
+                // 渲染用的绝对 URL 递过去会被服务端判「头像路径不合法」。
+                if (!path) { toast('上传接口没有回头像路径，请更新「附件上传」插件'); return; }
+                self._roomAvatar = path;
+                // 只交相对路径：avatar_type 由服务端在这一步一并落成 upload
+                // （roomAvatarUrl 只在 type 为 ''/upload 时才认这个路径，两边各写迟早漂移）
+                self.roomAvatarPost(rid, { avatar: path });
+            }, { target: 'room' });
         },
 
         saveSettings: function () {
