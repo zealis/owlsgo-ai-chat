@@ -254,7 +254,11 @@
         var section = d.createElement('div');
         section.id = 'owUbSection';
         section.style.cssText = 'border-top:1px solid var(--ow-border,#e8e8e8);margin-top:16px;padding-top:16px';
-        saveBtn.parentNode.insertBefore(section, saveBtn.nextSibling);
+        // v1.3.117：屏蔽列表属于「账号」这一页。插在弹窗根节点会让它在每页都露出来，
+        // 还要跟固定 640px 的窗口抢高度。老核心没有 [data-pane] 时回落到插在保存按钮后面。
+        var host = w.owTabs && owTabs.pane(modal, 'acct');
+        if (host) host.appendChild(section);
+        else saveBtn.parentNode.insertBefore(section, saveBtn.nextSibling);
 
         section.innerHTML = '<h3 style="margin:0 0 10px;font-size:15px">已屏蔽用户</h3>'
             + '<div id="owUbList"><div style="color:var(--ow-text-sub);font-size:13px">加载中…</div></div>';

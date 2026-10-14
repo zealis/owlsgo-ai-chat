@@ -377,7 +377,13 @@
         }
 
         section.innerHTML = title + body;
-        saveBtn.parentNode.insertBefore(section, saveBtn.nextSibling);
+        // v1.3.117：个人设置已经分成「资料 / 外观 / 账号」三页，两步验证属于账号安全，
+        // 必须塞进「账号」这一页。插到弹窗根节点会让它在每一页都露出来，
+        // 还跟固定 640px 的窗口抢高度，把内容区压成一个滚动小框。
+        // 老核心没有 [data-pane] 结构 → owTabs.pane 返回 null，回落到旧写法插在保存按钮后面。
+        var host = w.owTabs && owTabs.pane(modal, 'acct');
+        if (host) host.appendChild(section);
+        else saveBtn.parentNode.insertBefore(section, saveBtn.nextSibling);
     }
 
     /* ---------- 2FA 管理操作 ---------- */

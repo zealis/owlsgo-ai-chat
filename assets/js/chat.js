@@ -1237,6 +1237,20 @@
             if (t && t !== bar) owTabs.show(bar, t.getAttribute('data-tab'));
         },
         /**
+         * 找某一页的容器 —— 插件往分组式弹窗（个人设置）塞区块时用这个，**别插到弹窗根节点**：
+         * 根节点上的东西不属于任何一页，会在每个分组里都露一遍，还要跟固定高度抢地方，
+         * 结果就是内容区被压扁、面板内部滚动（v1.3.114 锁死高度之后，2FA 与屏蔽列表正是这样翻的车）。
+         * 老核心没有 [data-pane] 结构时返回 null，调用方自己回落到旧写法，两边都不报错。
+         */
+        pane: function (root, name) {
+            if (!root || !root.querySelectorAll) return null;
+            var all = root.querySelectorAll('[data-pane]');
+            for (var i = 0; i < all.length; i++) {
+                if (all[i].getAttribute('data-pane') === name) return all[i];
+            }
+            return null;
+        },
+        /**
          * 只加减 is-active，绝不重写 className —— 顶部标签（.ow-pagetab）与
          * 侧边导航（.ow-navset-item）共用这一个函数，重写基类会把对方的样式全丢掉。
          * 老内核没有 classList 时走字符串分支，并顺手压掉多余空格。
