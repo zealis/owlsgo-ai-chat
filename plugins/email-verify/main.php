@@ -54,6 +54,7 @@ function owEVKinds(): array
         'register' => '注册账号',
         'reset'    => '找回密码',
         'chpwd'    => '修改密码',
+        'chemail'  => '修改登录邮箱',
     ];
 }
 
@@ -858,4 +859,68 @@ Plugin::on('page.head', function (): void {
 });
 
 Plugin::asset('js', 'email-verify/admin.js');
+Plugin::asset('js', 'email-verify/chat.js');
 Plugin::asset('css', 'email-verify/style.css');
+
+/* ======================================================================
+ * 修改登录邮箱（v1.1.0，站方要求「个人设置里能改登录邮箱」）
+ *
+ * 为什么放在本插件而不是核心：发码要邮件通道、限流与模板，三样都在这儿；
+ * 核心只负责在「个人设置 → 账号」里按 window.OwEvEmail 是否存在渲染入口，
+ * 插件一停用，入口自然消失（与第三方授权入口同一套按需渲染思路）。
+ *
+ * 两道闸缺一不可：
+ *   ① **当前密码**先过 —— 不过的话，拿到别人未锁屏的浏览器就能往任意邮箱发信
+ *      （发信通道会被服务商封，还能把受害者的登录邮箱悄悄换掉 = 账号接管）。
+ *   ② **新邮箱的验证码**再过 —— 证明收件人真的收得到，否则改完直接登不进去。
+ * 密码一律读 $_POST 原值：$ctx['post'] 是清洗过的，含特殊字符的密码会被改坏。
+ * ==================================================================== */
+
+/** 两道校验共用：必须是登录用户且当前密码正确，返回 [uid, 改之前的邮箱] */
+function owEVEmailActor(array $ctx): array
+{
+    $a = $ctx['actor'] ?? [];
+    if (($a['kind'] ?? '') !== 'user') Api::json(['ok' => false, 'msg' => '请先登录'], 403);
+    $uid = (int)($a['id'] ?? 0);
+    $u = DB::one('SELECT email, password FROM users WHERE id=?', [$uid]);
+    if (!$u) Api::json(['ok' => false, 'msg' => '账号不存在'], 404);
+    if (!password_verify((string)($_POST['current'] ?? ''), (string)$u['password'])) {
+        // 只记昵称与原因，绝不记密码
+        Sec::log('user_email_fail', (string)($a['nickname'] ?? ''), ['why' => 'password']);
+        Api::json(['ok' => false, 'msg' => '当前密码不正确']);
+    }
+    return [$uid, (string)$u['email']];
+}
+
+/** 第一步：往**新邮箱**发验证码（发码本身的限流在 Mailer::sendCode 里） */
+Plugin::route('plugin_email_verify_email_send', function (array $ctx) {
+    [$uid, $now] = owEVEmailActor($ctx);
+    $new = Auth::normEmail((string)($_POST['email'] ?? ''));
+    if ($new === '' || !filter_var($new, FILTER_VALIDATE_EMAIL)) {
+        Api::json(['ok' => false, 'msg' => '新邮箱格式不正确']);
+    }
+    if ($new === strtolower($now)) Api::json(['ok' => false, 'msg' => '新邮箱与当前登录邮箱相同']);
+    if ((int)DB::val('SELECT COUNT(*) FROM users WHERE email=? AND id<>?', [$new, $uid]) > 0) {
+        Api::json(['ok' => false, 'msg' => '这个邮箱已经被别的账号使用']);
+    }
+    [$ok, $msg, $info] = Mailer::sendCode($new, 'chemail', [], ['name' => (string)($ctx['actor']['nickname'] ?? '')]);
+    if ($ok) Sec::log('user_email_send', (string)($ctx['actor']['nickname'] ?? ''), ['to' => $new]);
+    Api::json(['ok' => $ok, 'msg' => $msg, 'wait' => (int)($info['wait'] ?? 0), 'remain' => (int)($info['remain'] ?? 0)]);
+});
+
+/** 第二步：验证码通过才落库。新邮箱已实际收到过邮件 → email_verified 置 1 */
+Plugin::route('plugin_email_verify_email_commit', function (array $ctx) {
+    [$uid, $now] = owEVEmailActor($ctx);
+    $new = Auth::normEmail((string)($_POST['email'] ?? ''));
+    $code = trim((string)($_POST['code'] ?? ''));
+    if ($new === '' || !Mailer::verifyCode($new, 'chemail', $code)) {
+        Sec::log('user_email_fail', (string)($ctx['actor']['nickname'] ?? ''), ['why' => 'code', 'to' => $new]);
+        Api::json(['ok' => false, 'msg' => '验证码不正确或已过期，请重新发送']);
+    }
+    DB::run('UPDATE users SET email=?, email_verified=1 WHERE id=?', [$new, $uid]);
+    Sec::log('user_email_change', (string)($ctx['actor']['nickname'] ?? ''), ['from' => $now, 'to' => $new]);
+    Api::json(['ok' => true, 'msg' => '登录邮箱已更新，下次登录请用新邮箱']);
+});
+
+Plugin::sensitive('plugin_email_verify_email_send');
+Plugin::sensitive('plugin_email_verify_email_commit');

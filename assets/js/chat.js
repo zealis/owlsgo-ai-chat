@@ -5606,6 +5606,8 @@
         initTheme: function () {
             var self = this;
             this.applyTheme(this.getTheme(), false);
+            // v1.3.132：字号档同样是本机偏好，跟着一起落地（不写回 localStorage）
+            this.applyFont(this.getFont(), false);
             if (w.matchMedia) {
                 var mq = w.matchMedia('(prefers-color-scheme: dark)');
                 // ⚠️ 用 addListener 兼容老 Safari(<14)，它没有 addEventListener 版 API
@@ -5658,6 +5660,92 @@
             }
         },
 
+        /* ---------- 本机偏好：字号 / 语言（v1.3.132） ----------
+           与日夜模式、色系同一类：**不随「保存」提交**（存 localStorage / cookie，点了立即生效）。
+           混进保存按钮会让「改个字号还要点保存」显得莫名其妙。 */
+        fontKey: 'owl_fontsize',
+        FONTS: [
+            { v: 'site', b: 'A', t: '站点原始字号' },
+            { v: 'compact', b: 'A', t: '紧凑' },
+            { v: 'standard', b: 'A', t: '标准' },
+            { v: 'comfortable', b: 'A', t: '舒适' }
+        ],
+        getFont: function () {
+            var v = '';
+            try { v = w.localStorage.getItem(this.fontKey) || ''; } catch (e) {}
+            for (var i = 0; i < this.FONTS.length; i++) if (this.FONTS[i].v === v) return v;
+            return 'site';
+        },
+        /** 应用字号档：site = 不写属性，等于完全跟随站点自己的字号 */
+        applyFont: function (v, persist) {
+            var el = document.documentElement;
+            if (!v || v === 'site') el.removeAttribute('data-fontsize');
+            else el.setAttribute('data-fontsize', v);
+            if (!persist) return;
+            try {
+                if (v && v !== 'site') w.localStorage.setItem(this.fontKey, v);
+                else w.localStorage.removeItem(this.fontKey);
+            } catch (e) {}
+        },
+        fontPick: function (card) {
+            var v = card.getAttribute('data-val');
+            this.applyFont(v, true);
+            this.paintGrid(card.parentNode, v);
+        },
+        /** 选项卡片组的选中态：只加减 is-active（借 owTabs.set，整体重写会抹掉插件自加的类） */
+        paintGrid: function (grid, v) {
+            if (!grid) return;
+            for (var i = 0; i < grid.children.length; i++) {
+                var c = grid.children[i];
+                if (c.getAttribute && c.getAttribute('data-val') !== null) {
+                    owTabs.set(c, c.getAttribute('data-val') === v);
+                }
+            }
+        },
+        /** 通用选项卡片组 HTML（结构与配色见 owlsgo.css 的 .ow-optgrid） */
+        optGridHtml: function (opts, cur, handler) {
+            var h = '<div class="ow-optgrid">';
+            for (var i = 0; i < opts.length; i++) {
+                h += '<button type="button" class="ow-optcard' + (opts[i].v === cur ? ' is-active' : '')
+                    + '" data-val="' + esc(opts[i].v) + '" onclick="' + handler + '(this)">'
+                    + (opts[i].b ? '<b>' + esc(opts[i].b) + '</b>' : '')
+                    + '<span>' + esc(opts[i].t) + '</span></button>';
+            }
+            return h + '</div>';
+        },
+        /**
+         * 语言档：跟随站点默认 / 简体中文 / 各已安装语言包。
+         * 「跟随站点默认」= 删掉 ow_lang cookie，让 index.php 的 ow_lang() 回落到后台默认语言。
+         * 没装任何语言包时整组不渲染（与第三方授权入口同一套按需渲染思路）。
+         */
+        langGridHtml: function () {
+            var packs = (w.OwI18n && OwI18n.list) ? OwI18n.list() : [];
+            if (!packs.length) return '';
+            var cur = '';
+            try {
+                var mm = /(?:^|; )ow_lang=([^;]*)/.exec(document.cookie);
+                cur = mm ? decodeURIComponent(mm[1]) : '';
+            } catch (e) {}
+            var opts = [{ v: 'site', t: '跟随站点默认' }, { v: 'zh', t: '简体中文' }];
+            for (var i = 0; i < packs.length; i++) opts.push({ v: packs[i].code, t: packs[i].label });
+            return '<div class="ow-form-item"><label>语言</label>'
+                + this.optGridHtml(opts, cur, 'OwChat.langPick')
+                + '<p class="ow-form-hint">只影响你自己的界面；改完会刷新一次页面，服务端文案才跟着换。</p>'
+                + '</div>';
+        },
+        langPick: function (card) {
+            var v = card.getAttribute('data-val');
+            // 与登录页右上角切换器共用同一份 cookie（100 天）。必须刷新：
+            // 通知、报错这类服务端文案是按 <body data-lang> 输出的，不刷新只有前端会翻。
+            try {
+                document.cookie = (v === 'site')
+                    ? 'ow_lang=;path=/;max-age=0;SameSite=Lax'
+                    : 'ow_lang=' + encodeURIComponent(v) + ';path=/;max-age=8640000;SameSite=Lax';
+            } catch (e) {}
+            this.paintGrid(card.parentNode, v);
+            w.location.reload();
+        },
+
         openSettings: function () {
             var me = this.cfg.me;
             if (!me) return;
@@ -5696,6 +5784,12 @@
                 + this.themeSegHtml()
                 + '<p class="ow-form-hint">跟随系统会随操作系统的深浅色设置自动切换。</p>'
                 + '</div>'
+                + '<div class="ow-form-item"><label>字体大小</label>'
+                + this.optGridHtml(this.FONTS, this.getFont(), 'OwChat.fontPick')
+                + '<p class="ow-form-hint">只调消息正文、输入框和两侧列表这几处；'
+                + '「站点原始字号」= 不启用本偏好。只影响这台浏览器，不随「保存」提交。</p>'
+                + '</div>'
+                + this.langGridHtml()
                 + '</div>'
                 + '<div class="ow-pagetab-panel" data-pane="acct" style="display:none">'
                 + ((w.OwOauth) ? '<div class="ow-form-item"><label>第三方授权</label>'
@@ -5714,6 +5808,11 @@
                         ? '需要当前密码与邮箱验证码；改完当前设备不会掉线。'
                         : '账号还没有可用邮箱，本次只验证当前密码。') + '</p>'
                 + (me.email ? '<div class="ow-set-mail"><span>账号邮箱</span><b>' + esc(owMaskEmail(me.email)) + '</b></div>' : '')
+                // v1.3.132：改登录邮箱的能力在「邮箱验证」插件里（它才有发码通道与限流）。
+                // 插件停用/没装时它的 chat.js 不加载，这里自然什么都不显示 —— 核心不需要开关判断。
+                + (w.OwEvEmail ? '<button class="ow-btn ow-btn-ghost ow-btn-block" style="margin-top:8px"'
+                    + ' onclick="OwEvEmail.open()">修改登录邮箱</button>'
+                    + '<p class="ow-form-hint">改完要用新邮箱收一次验证码；下次登录起用新邮箱或用户 ID 都可以。</p>' : '')
                 + '</div>'
                 + '</div>'
                 + '</div>'

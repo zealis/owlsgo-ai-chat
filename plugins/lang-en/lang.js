@@ -610,6 +610,19 @@
         '深色': 'Dark',
         '跟随系统': 'System',
         '跟随系统会随操作系统的深浅色设置自动切换。': 'Follows your operating system’s light or dark setting.',
+        /* ---------- font size + language in personal settings (v1.3.132) ---------- */
+        '字体大小': 'Font size',
+        '站点原始字号': 'Site default',
+        '紧凑': 'Compact',
+        '标准': 'Standard',
+        '舒适': 'Comfortable',
+        '只调消息正文、输入框和两侧列表这几处；「站点原始字号」= 不启用本偏好。只影响这台浏览器，不随「保存」提交。':
+            'Applies to message text, inputs and the two side lists. “Site default” turns the preference off. This is a per-browser setting — “Save” does not submit it.',
+        '语言': 'Language',
+        '跟随站点默认': 'Follow site default',
+        '简体中文': '简体中文',
+        '只影响你自己的界面；改完会刷新一次页面，服务端文案才跟着换。':
+            'Affects only your own view. The page reloads once, because server-side text is rendered per language.',
         '色系': 'Color scheme',
         '经典蓝': 'Classic blue',
         '翡翠绿': 'Emerald',
@@ -663,6 +676,17 @@
         '个人设置': 'Settings',
         '账号安全': 'Account security',
         '修改登录密码': 'Change password',
+        /* ---------- change login email (email-verify 1.1.0) ---------- */
+        '修改登录邮箱': 'Change login email',
+        '改完要用新邮箱收一次验证码；下次登录起用新邮箱或用户 ID 都可以。':
+            'You will confirm the new address with an emailed code. From the next sign-in on, use the new email or your user ID.',
+        '新邮箱': 'New email',
+        '新邮箱验证码': 'Code for the new email',
+        '发送验证码': 'Send code',
+        '确认修改': 'Confirm',
+        '确认是本人操作': 'Confirms this is you',
+        'you@example.com': 'you@example.com',
+        '6 位验证码': '6-digit code',
         '需要当前密码与邮箱验证码；改完当前设备不会掉线。': 'Needs your current password plus an emailed code. This device stays signed in.',
         '账号还没有可用邮箱，本次只验证当前密码。': 'This account has no usable email address, so only the current password is checked.',
         '账号邮箱': 'Account email',
