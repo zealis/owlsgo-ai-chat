@@ -1,6 +1,6 @@
 /**
  * gif-stickers · 样式（v1.3.76）
- * 布局参考 ChatNet 的表情包面板：搜索行在最上（含 ✕），下面是**按百分比铺的缩略图格**，
+ * 布局参考 ChatNet 的表情包面板：搜索行在最上，下面是**按百分比铺的缩略图格**，
  * 悬停用一圈主色描边表示可点。差别只有两处：
  *   - 缩略图用百分比列宽而不是固定 104px —— 面板宽度会随窗口变，固定宽度在窄面板里
  *     会挤出一列留白；ChatNet 用的是 bootstrap 的 col-xs-6 / col-md-2，这里用等价的分栏。
@@ -28,12 +28,6 @@
 }
 .ow-gif-search .ow-input { flex: 1; -webkit-flex: 1; padding: 6px 10px; font-size: 13px; }
 .ow-gif-search .ow-btn { padding: 6px 12px; font-size: 13px; }
-.ow-gif-close {
-    width: 26px; height: 26px; line-height: 24px; padding: 0; flex-shrink: 0; -webkit-flex-shrink: 0;
-    border: 1px solid var(--ow-border-control); border-radius: 6px;
-    background: var(--ow-bg); color: var(--ow-text-sub); font-size: 13px; cursor: pointer;
-}
-.ow-gif-close:hover { background: var(--ow-bg-chat-hover); color: var(--ow-text); }
 
 .ow-gif-grid {
     flex: 1; -webkit-flex: 1;

@@ -1,5 +1,5 @@
 /* ==========================================================================
-   chat-scripts · 群聊脚本（v1.0.0）— 前台话术面板 / 后台管理页共用样式
+   chat-scripts · 群聊自动化（v1.1.0）— 前台话术面板 / 群聊设置·自动化 / 后台管理页共用样式
    --------------------------------------------------------------------------
    颜色纪律：本文件不出现任何写死色值，一律引用核心 --ow-* 变量。
      全站深浅两套主题只靠重定义这些变量切换，插件写死颜色 = 深色模式下露亮斑。
@@ -39,18 +39,7 @@
     border-bottom: 1px solid var(--ow-border);
 }
 .ow-cs-q { flex: 1; -webkit-flex: 1; min-width: 0; padding: 6px 10px; font-size: 13px; }
-.ow-cs-x {
-    border: none;
-    background: transparent;
-    color: var(--ow-text-sub);
-    font-size: 14px;
-    line-height: 1;
-    padding: 6px 8px;
-    cursor: pointer;
-    border-radius: 6px;
-    flex-shrink: 0; -webkit-flex-shrink: 0;
-}
-.ow-cs-x:hover { background: var(--ow-hover-bg); color: var(--ow-text-title); }
+/* v1.1.0：头部右侧的 ✕ 关闭按钮已撤（用户要求），.ow-cs-x 一并删掉 —— 留着就是死规则。 */
 
 /* 分组页签（公共 / 我的）——与全站「选中 = 主色实心」同语言 */
 .ow-cs-tabs {
@@ -189,6 +178,33 @@
     margin-top: 8px;
 }
 .ow-cs-mg-list { max-height: 260px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+
+/* --------------------------------------------------------------------------
+   群聊设置里的「自动化」弹窗（v1.1.0）
+   骨架全部复用上面的 .ow-cs-mg-* （子页签 / 表单 / 列表），这里只补一条提示条：
+   机器人没配 / 不在本群 / 站点关了自动回复时，用站点自己的警示色说出来 ——
+   否则群主配完规则等半天没反应，会以为功能坏了。
+   -------------------------------------------------------------------------- */
+.ow-ca-notice {
+    margin: 0 0 10px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.6;
+}
+/* 纯说明（中性） */
+.ow-ca-notice.is-info {
+    background: var(--ow-bg-sub);
+    border: 1px solid var(--ow-border);
+    color: var(--ow-text-sub);
+}
+/* 需要群主动手或功能确实不可用（警示）——色值一律走站点令牌，不写死 */
+.ow-ca-notice.is-warn {
+    background: var(--ow-warn-bg);
+    border: 1px solid var(--ow-warn-border);
+    color: var(--ow-text-title);
+}
+.ow-ca-notice .ow-btn { margin-top: 6px; }
 
 /* --------------------------------------------------------------------------
    后台：页签 / 页签按钮 / 表单按钮行

@@ -1,9 +1,13 @@
 /**
- * chat-scripts · 群聊脚本 · 前台话术面板（v1.0.1）
+ * chat-scripts · 群聊自动化 · 前台话术面板（v1.1.0）
  *
  * 入口：往核心输入工具栏锚点 #owToolFirst 注入「话术」按钮（与表情包插件同一约定，
  *      核心零分支；插件停用则按钮不出现）。面板挂到 #owEmojiPanel 的父节点上，
  *      复用 .ow-emoji-panel 那套绝对定位坐标系（移动端核心已有 92% 宽适配）。
+ *
+ * ⚠️ 按钮的 title 是「话术」而不是插件名「群聊自动化」：这颗按钮只开话术面板。
+ *    插件的另半个能力（关键词自动回复 / 定时群发）不在这里，而是在**群聊设置**里
+ *    的「自动化」入口（见 auto.js），群主在群里直接管。
  *
  * 三档话术（v1.0.1 起群主可在前台自管群档）：
  *   · 公共  scope=public  管理员后台维护，全站只读可用；
@@ -55,8 +59,8 @@
         btn.className = 'ow-icon-btn';
         btn.id = 'owBtnCs';
         btn.type = 'button';
-        btn.title = '群聊脚本';
-        btn.setAttribute('aria-label', '群聊脚本');
+        btn.title = '话术';
+        btn.setAttribute('aria-label', '话术');
         btn.innerHTML = icon();
         // ⚠️ 必须是 appendChild 追加，不能 box.innerHTML 整体覆盖：
         //    #owToolFirst 是**共享锚点**，表情包等插件也往这里注入按钮，
@@ -92,10 +96,12 @@
         p.className = 'ow-cs-panel';
         p.id = 'owCsPanel';
         p.style.display = 'none';
+        // v1.1.0：头部右侧的 ✕ 关闭按钮撤掉（用户要求）。关闭改由「点面板与按钮
+        // 以外的地方」（onDocClick）与再点一次工具栏那颗按钮（toggle）承担。
         p.innerHTML =
               '<div class="ow-cs-head">'
             + '<input class="ow-input ow-cs-q" id="owCsQ" type="text" maxlength="30" autocomplete="off" placeholder="搜索话术标题或内容">'
-            + '<button class="ow-cs-x" id="owCsClose" type="button" title="关闭" aria-label="关闭">✕</button></div>'
+            + '</div>'
             + '<div class="ow-cs-tabs">'
             + '<button class="ow-cs-tab is-active" type="button" data-t="public">公共</button>'
             + '<button class="ow-cs-tab" type="button" data-t="room" style="display:none">群聊</button>'
@@ -109,7 +115,6 @@
         // 挂在表情面板的同一个父节点上，才能复用那套绝对定位
         var anchor = $('owEmojiPanel');
         (anchor && anchor.parentNode ? anchor.parentNode : d.body).appendChild(p);
-        $('owCsClose').onclick = close;
         $('owCsQ').oninput = function () { CS.q = (this.value || '').replace(/^\s+|\s+$/g, ''); render(); };
         $('owCsManage').onclick = function () { close(); mgOpen(); };
         var tabs = p.querySelectorAll('.ow-cs-tab'), i;

@@ -49,11 +49,13 @@
         p.className = 'ow-gif-panel';
         p.id = 'owGifPanel';
         p.style.display = 'none';
+        // v1.0.2：搜索行右侧的 ✕ 关闭按钮撤掉（用户要求）。
+        // 关闭改为**只靠点面板与工具栏按钮以外的地方**：onDocClick 那套本来就在，
+        // 再点一次工具栏 GIF 图标也会 toggle 关掉，够用且不必多一颗抢视线的钮。
         p.innerHTML =
             '<div class="ow-gif-search">'
             + '<input class="ow-input" type="text" id="owGifQ" autocomplete="off" maxlength="60">'
-            + '<button class="ow-btn ow-btn-primary" id="owGifGo" type="button">搜索</button>'
-            + '<button class="ow-gif-close" id="owGifClose" type="button" aria-label="关闭" title="关闭">✕</button></div>'
+            + '<button class="ow-btn ow-btn-primary" id="owGifGo" type="button">搜索</button></div>'
             + '<div class="ow-gif-grid" id="owGifGrid"></div>'
             + '<div class="ow-gif-foot"><button class="ow-btn ow-btn-ghost" id="owGifMore" type="button" style="display:none">加载更多</button>'
             + '<span id="owGifPowered" style="display:none"></span></div>';
@@ -61,7 +63,6 @@
         var anchor = $('owEmojiPanel');
         (anchor && anchor.parentNode ? anchor.parentNode : d.body).appendChild(p);
         $('owGifGo').onclick = function () { search(); };
-        $('owGifClose').onclick = function () { close(); };
         $('owGifQ').onkeydown = function (e) {
             e = e || w.event;
             if (e.keyCode === 13) { e.preventDefault ? e.preventDefault() : (e.returnValue = false); search(); }
@@ -402,7 +403,7 @@
         btn.setAttribute('aria-label', '表情包');
         btn.innerHTML = icon();
         // ⚠️ 必须是 appendChild 追加，不能 box.innerHTML 整体覆盖：
-        //    #owToolFirst 是**共享锚点**，群聊脚本等插件也往这里注入按钮，
+        //    #owToolFirst 是**共享锚点**，群聊自动化等插件也往这里注入按钮，
         //    覆盖写法下「谁后加载谁赢」——本插件曾被后加载的插件整个冲掉过。
         box.appendChild(btn);
         btn.onclick = function (e) {

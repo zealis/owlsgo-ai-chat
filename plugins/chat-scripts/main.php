@@ -1,15 +1,28 @@
 <?php
 /**
- * 群聊脚本插件（chat-scripts v1.0.0）
+ * 群聊自动化插件（chat-scripts v1.1.0）
  *
- * ── 三个模块 ──────────────────────────────────────────────────
+ * 插件显示名 v1.1.0 起为「群聊自动化」（目录名与路由/表名前缀 chat-scripts 保持
+ * 不动 —— 那是标识不是文案，改了会丢启用状态、丢数据、断掉已发出去的资源地址）。
+ *
+ * ── 四个模块 ──────────────────────────────────────────────────
  *   A 快捷话术：输入工具栏 #owToolFirst 注入「话术」按钮（chat.js），面板里
- *     「公共话术」（后台维护，全站只读）+「我的话术」（前台自建，仅本人可见）。
+ *     「公共话术」（后台维护，全站只读）+「群话术」（群主前台自管）+「我的话术」。
  *     点击条目 = 插入输入框光标处；点「发」= 经 OwChat.send 直接发出。
  *   B 关键词自动回复：message.after_send 钩子按规则匹配，以机器人账号身份
  *     调用核心 Chat::send 回复。防循环 + 双限流，见下方注释。
  *   C 定时群发：Plugin::cron 每分钟扫描到期任务，机器人账号发送；
  *     支持「周期循环」与「一次性定时」两种模式。
+ *   D 房间级自动化管理（v1.1.0 新增）：B/C 的管理入口从「只有后台」扩到
+ *     「群聊设置 → 自动化」，**群主在自己群里就能配**。auto.js 走
+ *     OwChat.onRoomEdit 把入口挂在群公告那一行下面（见 auto.js 文件头）。
+ *
+ * ── B/C 的两套作用域（v1.1.0 起）──────────────────────────────
+ *   · room_id = 0   全局规则，**只有管理员能建**（后台页）。对所有群生效。
+ *   · room_id > 0   某群的规则。管理员在后台能选任意群；群主只能管自己那个群，
+ *                   且只能通过 plugin_chat_scripts_room_* 这一组路由 ——
+ *                   那组路由把 room_id 钉死在「鉴权通过的那个群」上，
+ *                   POST 里没有第二个房间参数可以塞。见 csRoomScope()。
  *
  * ── 安全设计（本插件的第一优先级）────────────────────────────
  *   1. 一切自动发送都走核心 Chat::send：敏感词过滤、禁言判定、发言频率限制、
@@ -24,8 +37,11 @@
  *      机器人可进（免密），角色房按角色等级判定。房间选择在保存时服务端复核。
  *   6. 后台路由一律管理员鉴权；个人话术只能本人增改删；SQL 全参数化。
  *   7. 私聊（room_id=0）不触发自动回复与群发——那是两个具体的人之间的事。
+ *   8. 房间级路由（D）的三条硬约束见 csRoomScope()：room_id 必须 > 0、
+ *      鉴权只看「这个群是不是你的」、写操作强制写进鉴权通过的那个群。
+ *      删除/修改一律带 `AND room_id=?` 条件 —— 否则群主改个 id 就能动别人的群（IDOR）。
  *
- * 约束：零依赖；样式只引 --ow-* 变量（见 style.css 头注）；ES5 兼容（chat.js/admin.js）；
+ * 约束：零依赖；样式只引 --ow-* 变量（见 style.css 头注）；ES5 兼容（chat.js/auto.js/admin.js）；
  *       main.php 顶层只做 Plugin::* 注册与函数定义，副作用全部懒执行。
  */
 if (!defined('OWLSGO_VERSION')) exit;   // 禁止直接 HTTP 访问本文件
@@ -495,7 +511,237 @@ Plugin::cron('chat_scripts_cast', 60, function () {
         $done++;
     }
     return $done ? ('执行群发任务 ' . $done . ' 个') : null;
-}, '群聊脚本：按计划用机器人账号在群聊里发送预设消息（每分钟检查一次到期任务；发送走核心 Chat::send，与普通消息同样受敏感词/禁言/频率限制）');
+}, '群聊自动化：按计划用机器人账号在群聊里发送预设消息（每分钟检查一次到期任务；发送走核心 Chat::send，与普通消息同样受敏感词/禁言/频率限制）');
+
+/* ============================ D：房间级自动化（群主在前台自管本群，v1.1.0） ============================ */
+
+/** 单个群的自动化条数上限：防群主灌数据把插件表撑大（值同时下发给前端做文案） */
+function csRoomRuleCap(): int { return 20; }
+function csRoomCastCap(): int { return 10; }
+
+/**
+ * 机器人能否真的在本群发出消息。三项都要过：
+ *   ① 站点配了机器人账号且它是启用状态；
+ *   ② 机器人进得去这个群（公开性 / 房型 / 角色等级，与保存时复核同一口径）；
+ *   ③ 机器人是**本群成员** —— Chat::send 对注册用户强制要求「已加入该群聊后再发言」，
+ *      而群主与超管才天生算成员，机器人账号两者都不是。
+ * 任何一项不过就带人话直接结束请求：群主配完规则等半天没反应，比当场被拒还难受。
+ */
+function csBotReadyForRoom(array $room): array
+{
+    $bot = csBot();
+    if (!$bot) Api::json(['ok' => false, 'msg' => '站长还没有配置机器人账号，自动化暂时用不了']);
+    if (!csRoomOkForBot($room, $bot)) {
+        Api::json(['ok' => false, 'msg' => '机器人进不了本群（只支持公开群聊；密码房需要机器人本人是超级管理员，角色房按角色等级判定）']);
+    }
+    $botActor = ['kind' => 'user', 'id' => (int)$bot['id'], 'role' => (string)$bot['role']];
+    if (!Chat::isMember($room, $botActor)) {
+        Api::json(['ok' => false, 'msg' => '机器人还不是本群成员，请先点「让机器人加入本群」']);
+    }
+    return $bot;
+}
+
+/**
+ * 房间级自动化的公共守卫。返回**鉴权通过的那个群行**，调用方后续一律以它的 id 为目标。
+ *
+ * ⚠️ 这是本插件 v1.1.0 最关键的一段，三条硬约束缺一不可：
+ *   1. room_id 必须 > 0。0 是「全部群聊」的全局作用域，**只属于管理员**；
+ *      群主传 0 一律拒 —— 否则他能给全站每一个群都挂上规则。
+ *   2. 权限判定只信服务端：csRoomAdmin() 查的是 rooms.owner_id 是不是这个 actor
+ *      （或 actor 是超管），与请求体里写什么都不相干。
+ *   3. 返回的 $room 就是唯一允许操作的目标群；改动/删除 SQL 必须带 `AND room_id=?`
+ *      条件，否则群主改个 id 就能动别的群的规则（IDOR）。
+ *
+ * $write=true 时叠加写入限流：挡住群主脚本化刷接口灌规则（30 次/分钟）。
+ */
+function csRoomScope(array $ctx, bool $write = false): array
+{
+    $actor  = $ctx['actor'];
+    $roomId = (int)($ctx['post']['room_id'] ?? 0);
+    if ($roomId <= 0) Api::json(['ok' => false, 'msg' => '缺少群聊 ID'], 400);
+    $room = DB::one('SELECT * FROM rooms WHERE id=? AND status=1', [$roomId]);
+    if (!$room) Api::json(['ok' => false, 'msg' => '群聊不存在或已关闭'], 404);
+    if (!csRoomAdmin($roomId, $actor)) Api::json(['ok' => false, 'msg' => '仅群主可以管理本群的自动化'], 403);
+    if ($write && !Sec::rateLimit('cs_room_write', ($actor['kind'] ?? 'g') . (int)($actor['id'] ?? 0), 60, 30)) {
+        Api::json(['ok' => false, 'msg' => '操作太频繁了，稍等一下再试'], 429);
+    }
+    return $room;
+}
+
+/** 本群自动化的当前状态：机器人可用性 + 本群规则/任务 + 站点总开关 */
+Plugin::route('plugin_chat_scripts_room_auto', function (array $ctx) {
+    csBoot();
+    $room = csRoomScope($ctx);
+    $roomId = (int)$room['id'];
+    $bot = csBot();
+    $botOk = ($bot && csRoomOkForBot($room, $bot)) ? 1 : 0;
+    $botMember = 0;
+    if ($botOk) {
+        $botMember = Chat::isMember($room, [
+            'kind' => 'user', 'id' => (int)$bot['id'], 'role' => (string)$bot['role'],
+        ]) ? 1 : 0;
+    }
+    Api::json([
+        'ok'   => true,
+        'room' => ['id' => $roomId, 'name' => (string)$room['name']],
+        'bot'  => $bot ? ['id' => (int)$bot['id'], 'nickname' => (string)$bot['nickname'], 'role' => (string)$bot['role']] : null,
+        'bot_ok'     => $botOk,
+        'bot_member' => $botMember,
+        // 站点把「每房每分钟自动回复上限」设成 0 = 全站关闭自动回复。那是站长的总闸，
+        // 群主不能反着开；如实告诉群主，别让他对着自己的规则反复找问题。
+        'site_off' => csCfgInt('reply_limit') <= 0 ? 1 : 0,
+        // 后台还有全局规则（room_id=0）在本群同样生效，条数给前端做只读提示
+        'global_rules' => (int)DB::val('SELECT COUNT(*) FROM plugin_chat_scripts_rule WHERE room_id=0 AND enabled=1'),
+        'limits' => ['rule' => csRoomRuleCap(), 'cast' => csRoomCastCap()],
+        // ⚠️ 只取 room_id=? 的行：全局规则不在群主的管理范围里，一条都不能给他
+        'rules' => DB::all('SELECT * FROM plugin_chat_scripts_rule WHERE room_id=? ORDER BY sort ASC, id ASC', [$roomId]),
+        'casts' => DB::all('SELECT * FROM plugin_chat_scripts_cast WHERE room_id=? ORDER BY id DESC', [$roomId]),
+    ]);
+});
+
+/**
+ * 让机器人加入本群（仅本群群主/超管）。
+ * 为什么群主需要这个按钮：Chat::send 要求注册用户「已加入该群聊」才能发言，
+ * 机器人账号不是群主也不是超管，不加进来它一条都发不出（公开群也一样）。
+ * 口径与 csRoomOkForBot 一致：只处理公开群，其余情况让它去后台办。
+ */
+Plugin::route('plugin_chat_scripts_room_bot_join', function (array $ctx) {
+    csBoot();
+    $room = csRoomScope($ctx, true);
+    $bot = csBot();
+    if (!$bot) Api::json(['ok' => false, 'msg' => '站长还没有配置机器人账号']);
+    if (!csRoomOkForBot($room, $bot)) Api::json(['ok' => false, 'msg' => '机器人进不了本群（只支持公开群聊）']);
+    $roomId = (int)$room['id'];
+    // 先查后插：room_members 的唯一约束随核心版本演变，不能依赖 INSERT IGNORE 去重
+    $has = (int)DB::val('SELECT 1 FROM room_members WHERE room_id=? AND user_id=?', [$roomId, (int)$bot['id']]);
+    if ($has) Api::json(['ok' => true, 'msg' => '机器人已在本群中']);
+    DB::insert('room_members', [
+        'room_id' => $roomId, 'user_id' => (int)$bot['id'],
+        'invited_by' => 0, 'created_at' => time(),
+    ]);
+    Sec::log('cs_room_bot_join', $ctx['actor']['nickname'], ['room' => $roomId, 'bot' => (int)$bot['id']]);
+    Api::json(['ok' => true, 'msg' => '机器人已加入本群']);
+});
+Plugin::sensitive('plugin_chat_scripts_room_bot_join');
+
+/** 自动回复规则：保存（新增 / 修改本群的规则）。校验口径与后台那条完全一致 —— 同一套规则不该有两套标准 */
+Plugin::route('plugin_chat_scripts_room_rule_save', function (array $ctx) {
+    csBoot();
+    $room = csRoomScope($ctx, true);
+    $roomId = (int)$room['id'];
+    $post = $ctx['post'];
+    $id   = (int)($post['id'] ?? 0);
+
+    $mode = ($post['match_mode'] ?? '') === 'exact' ? 'exact' : 'include';
+    $kws  = json_decode((string)($post['keywords'] ?? ''), true);
+    if (!is_array($kws) || !$kws) Api::json(['ok' => false, 'msg' => '至少填写一个关键词']);
+    $clean = [];
+    foreach ($kws as $kw) {
+        $kw = trim((string)$kw);
+        if ($kw === '') continue;
+        if (mb_strlen($kw) > 20) Api::json(['ok' => false, 'msg' => '单个关键词不超过 20 字']);
+        $clean[] = $kw;
+        if (count($clean) >= 10) break;
+    }
+    if (!$clean) Api::json(['ok' => false, 'msg' => '至少填写一个关键词']);
+    $reply = trim((string)($post['reply'] ?? ''));
+    if ($reply === '' || mb_strlen($reply) > 2000) Api::json(['ok' => false, 'msg' => '回复内容 1-2000 字']);
+
+    csBotReadyForRoom($room);      // 机器人发不出话就先说清，别让群主配完才发现不生效
+
+    $enabled = (int)($post['enabled'] ?? 1) ? 1 : 0;
+    $now = time();
+    $kwJson = json_encode($clean, JSON_UNESCAPED_UNICODE);
+    if ($id > 0) {
+        // ⚠️ `AND room_id=?` 不能省：少了它，群主改个 id 就能改别人群的规则（IDOR）
+        $row = DB::one('SELECT id FROM plugin_chat_scripts_rule WHERE id=? AND room_id=?', [$id, $roomId]);
+        if (!$row) Api::json(['ok' => false, 'msg' => '规则不存在或不属于本群'], 403);
+        // room_id 不参与 UPDATE：规则不能被改挂到别的群去
+        DB::run('UPDATE plugin_chat_scripts_rule SET keywords=?, match_mode=?, reply=?, enabled=?, updated_at=? WHERE id=?',
+            [$kwJson, $mode, $reply, $enabled, $now, $id]);
+        Api::json(['ok' => true, 'msg' => '已保存']);
+    }
+    $cnt = (int)DB::val('SELECT COUNT(*) FROM plugin_chat_scripts_rule WHERE room_id=?', [$roomId]);
+    if ($cnt >= csRoomRuleCap()) Api::json(['ok' => false, 'msg' => '本群自动回复最多 ' . csRoomRuleCap() . ' 条，请先清理']);
+    DB::insert('plugin_chat_scripts_rule', [
+        'room_id' => $roomId, 'keywords' => $kwJson, 'match_mode' => $mode,
+        'reply' => $reply, 'hit_count' => 0, 'enabled' => $enabled, 'sort' => 0,
+        'created_at' => $now, 'updated_at' => $now,
+    ]);
+    Sec::log('cs_room_rule_add', $ctx['actor']['nickname'], ['room' => $roomId]);
+    Api::json(['ok' => true, 'msg' => '已添加']);
+});
+Plugin::sensitive('plugin_chat_scripts_room_rule_save');
+
+/** 自动回复规则：删除（敏感操作；只能删本群的） */
+Plugin::route('plugin_chat_scripts_room_rule_del', function (array $ctx) {
+    csBoot();
+    $room = csRoomScope($ctx, true);
+    $id = (int)($ctx['post']['id'] ?? 0);
+    $row = DB::one('SELECT id FROM plugin_chat_scripts_rule WHERE id=? AND room_id=?', [$id, (int)$room['id']]);
+    if (!$row) Api::json(['ok' => false, 'msg' => '规则不存在或不属于本群'], 403);
+    DB::run('DELETE FROM plugin_chat_scripts_rule WHERE id=?', [$id]);
+    Api::json(['ok' => true, 'msg' => '已删除']);
+});
+Plugin::sensitive('plugin_chat_scripts_room_rule_del');
+
+/** 定时群发任务：保存（目标群恒为本群，前端根本没有第二个房间参数可以传） */
+Plugin::route('plugin_chat_scripts_room_cast_save', function (array $ctx) {
+    csBoot();
+    $room = csRoomScope($ctx, true);
+    $roomId = (int)$room['id'];
+    $post = $ctx['post'];
+    $id      = (int)($post['id'] ?? 0);
+    $content = trim((string)($post['content'] ?? ''));
+    $mode    = ($post['mode'] ?? '') === 'once' ? 'once' : 'loop';
+    if ($content === '' || mb_strlen($content) > 2000) Api::json(['ok' => false, 'msg' => '内容 1-2000 字']);
+
+    csBotReadyForRoom($room);
+
+    $now = time();
+    if ($mode === 'once') {
+        $sendAt = (int)($post['send_at'] ?? 0);
+        if ($sendAt < $now + 30) Api::json(['ok' => false, 'msg' => '定时时间至少设为 30 秒以后']);
+        $interval = 0;
+        $next = $sendAt;
+    } else {
+        $interval = max(300, min(86400 * 7, (int)($post['interval_sec'] ?? 3600)));
+        $sendAt = 0;
+        $next = $now + $interval;
+    }
+    if ($id > 0) {
+        // ⚠️ 同样必须带 `AND room_id=?`：否则群主能改别的群的任务
+        $row = DB::one('SELECT id FROM plugin_chat_scripts_cast WHERE id=? AND room_id=?', [$id, $roomId]);
+        if (!$row) Api::json(['ok' => false, 'msg' => '任务不存在或不属于本群'], 403);
+        // room_id / room_name 不参与 UPDATE：任务不能改挂到别的群
+        DB::run('UPDATE plugin_chat_scripts_cast SET content=?, mode=?, interval_sec=?, send_at=?, next_run_at=?, updated_at=? WHERE id=?',
+            [$content, $mode, $interval, $sendAt, $next, $now, $id]);
+        Api::json(['ok' => true, 'msg' => '已保存']);
+    }
+    $cnt = (int)DB::val('SELECT COUNT(*) FROM plugin_chat_scripts_cast WHERE room_id=?', [$roomId]);
+    if ($cnt >= csRoomCastCap()) Api::json(['ok' => false, 'msg' => '本群定时群发最多 ' . csRoomCastCap() . ' 条，请先清理']);
+    DB::insert('plugin_chat_scripts_cast', [
+        'room_id' => $roomId, 'room_name' => mb_substr((string)$room['name'], 0, 190),
+        'content' => $content, 'mode' => $mode, 'interval_sec' => $interval,
+        'send_at' => $sendAt, 'next_run_at' => $next, 'last_run_at' => 0, 'last_status' => '',
+        'run_count' => 0, 'enabled' => 1, 'created_at' => $now, 'updated_at' => $now,
+    ]);
+    Sec::log('cs_room_cast_add', $ctx['actor']['nickname'], ['room' => $roomId, 'mode' => $mode]);
+    Api::json(['ok' => true, 'msg' => '已添加']);
+});
+Plugin::sensitive('plugin_chat_scripts_room_cast_save');
+
+/** 定时群发任务：删除（敏感操作；只能删本群的） */
+Plugin::route('plugin_chat_scripts_room_cast_del', function (array $ctx) {
+    csBoot();
+    $room = csRoomScope($ctx, true);
+    $id = (int)($ctx['post']['id'] ?? 0);
+    $row = DB::one('SELECT id FROM plugin_chat_scripts_cast WHERE id=? AND room_id=?', [$id, (int)$room['id']]);
+    if (!$row) Api::json(['ok' => false, 'msg' => '任务不存在或不属于本群'], 403);
+    DB::run('DELETE FROM plugin_chat_scripts_cast WHERE id=?', [$id]);
+    Api::json(['ok' => true, 'msg' => '已删除']);
+});
+Plugin::sensitive('plugin_chat_scripts_room_cast_del');
 
 /* ============================ 后台 ============================ */
 
@@ -504,9 +750,10 @@ $csGuard = function (array $ctx): void {
     if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);
 };
 
-Plugin::adminPage('chat-scripts', '群聊脚本', function () {
-    return '<h2>群聊脚本</h2>'
-        . '<p class="ow-admin-desc">快捷话术、关键词自动回复与定时群发。机器人自动发送的消息与普通用户消息走完全相同的服务端校验（敏感词、禁言、频率限制）。</p>'
+Plugin::adminPage('chat-scripts', '群聊自动化', function () {
+    return '<h2>群聊自动化</h2>'
+        . '<p class="ow-admin-desc">快捷话术、关键词自动回复与定时群发。机器人自动发送的消息与普通用户消息走完全相同的服务端校验（敏感词、禁言、频率限制）。'
+        . '<b>群主也能配：</b>自动回复与定时群发的入口同时开在「群聊设置 → 自动化」里，群主在自己群里直接管理本群规则（只能管本群）；这个后台页负责「全部群聊」的全局规则与全站设置。</p>'
         . '<div class="ow-cs-tabs">'
         . '<button class="ow-btn ow-cs-tab is-active" type="button" data-tab="snip">快捷话术</button>'
         . '<button class="ow-btn ow-cs-tab" type="button" data-tab="rule">自动回复</button>'
@@ -535,7 +782,8 @@ Plugin::adminPage('chat-scripts', '群聊脚本', function () {
         . '<button class="ow-btn" type="button" onclick="OwCSAdmin.botJoin()">加入所有公开群</button>'
         . '</div><div id="owCsBotInfo" style="margin-top:8px"></div></div>'
         . '<div class="ow-card"><h3 style="margin-bottom:10px">回复规则</h3>'
-        . '<p style="font-size:12px">群聊里有人说的话命中关键词时，机器人自动回复一次。「包含」= 消息里出现任一关键词即命中；「全等」= 整条消息（去首尾空白）与关键词完全相同才命中。同一条消息只会触发一条规则（按排序取第一条）。</p>'
+        . '<p style="font-size:12px">群聊里有人说的话命中关键词时，机器人自动回复一次。「包含」= 消息里出现任一关键词即命中；「全等」= 整条消息（去首尾空白）与关键词完全相同才命中。同一条消息只会触发一条规则（按排序取第一条）。'
+        . '适用群聊选「全部群聊」时是全站生效的全局规则，只有这里能改；群主在自己群的「群聊设置 → 自动化」里加的规则只作用于他那一个群，同样会出现在下面的列表里。</p>'
         . '<div id="owCsRules"></div>'
         . '<button class="ow-btn ow-btn-primary" type="button" style="margin-top:10px" onclick="OwCSAdmin.ruleEdit(0)">新增规则</button>'
         . '</div></div>'
@@ -543,7 +791,7 @@ Plugin::adminPage('chat-scripts', '群聊脚本', function () {
         /* ---- 定时群发 ---- */
         . '<div class="ow-cs-pane" id="owCsPane-cast" style="display:none">'
         . '<div class="ow-card"><h3 style="margin-bottom:10px">群发任务</h3>'
-        . '<p style="font-size:12px">到时间用机器人账号在选定群聊发送预设内容。机器人只能进公开群聊（密码房需要机器人本人是超级管理员，角色房按角色等级判定）；「加入所有公开群」按钮在「自动回复」页。周期任务最短 5 分钟一次，一次性任务到点发送后自动停用。</p>'
+        . '<p style="font-size:12px">到时间用机器人账号在选定群聊发送预设内容。机器人只能进公开群聊（密码房需要机器人本人是超级管理员，角色房按角色等级判定），而且必须是该群成员才能发言；「加入所有公开群」按钮在「自动回复」页。周期任务最短 5 分钟一次，一次性任务到点发送后自动停用。群主在自己群的「群聊设置 → 自动化」里建的任务只发他那一个群，也会列在下面。</p>'
         . '<div id="owCsCasts"></div>'
         . '<button class="ow-btn ow-btn-primary" type="button" style="margin-top:10px" onclick="OwCSAdmin.castEdit(0)">新增任务</button>'
         . '</div></div>'
@@ -804,4 +1052,5 @@ Plugin::sensitive('plugin_chat_scripts_admin_log_clear');
 
 Plugin::asset('css', 'chat-scripts/style.css');
 Plugin::asset('js', 'chat-scripts/chat.js');      // 前台：话术面板（后台页自动退出）
+Plugin::asset('js', 'chat-scripts/auto.js');      // 前台：群聊设置里的「自动化」入口（后台页自动退出）
 Plugin::asset('js', 'chat-scripts/admin.js');     // 后台：管理页交互（前台页自动退出）
