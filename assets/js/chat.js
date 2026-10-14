@@ -5596,7 +5596,9 @@
                 + (me.email ? '<div class="ow-set-mail"><span>账号邮箱</span><b>' + esc(owMaskEmail(me.email)) + '</b></div>' : '')
                 + '</div>'
                 + '</div>'
-                + '<button class="ow-btn ow-btn-primary ow-btn-block" onclick="OwChat.saveSettings()">保存</button>'
+                + '<button class="ow-btn ow-btn-primary ow-btn-block" onclick="OwChat.saveSettings()">保存</button>',
+                // 第三个参数锁死整窗高度：三页内容差得多，不锁就会点一下标签胀一截
+                null, 'ow-modal-fixed'
             );
             var self = this;
             this.bindThemeSeg();   // v1.3.25：日夜模式分段控件
@@ -6282,7 +6284,7 @@
 
         /* ---------- 弹层 ---------- */
         /** 打开弹窗；width 可选（px），供内容较宽的弹窗（如群公告页面）覆盖默认 380px */
-        openModal: function (html, width) {
+        openModal: function (html, width, cls) {
             // 后台页（OwAdmin）没有静态浮层：动态补建（closeModal 同样兼容）
             if (!$('owModalMask') || !$('owModal')) {
                 var mask = document.createElement('div');
@@ -6292,8 +6294,12 @@
                 mask.innerHTML = '<div class="ow-modal" id="owModal"></div>';
                 document.body.appendChild(mask);
             }
-            $('owModal').style.maxWidth = width ? (parseInt(width, 10) + 'px') : '';
-            $('owModal').innerHTML = '<button class="ow-modal-close" onclick="OwChat.closeModal()">✕</button>' + html;
+            var m = $('owModal');
+            // class 每次重设：上一个弹窗可能是固定尺寸（.ow-modal-fixed 带 height + overflow:hidden），
+            // 不清掉就会把高度和裁剪带到下一个普通弹窗上。
+            m.className = 'ow-modal' + (cls ? ' ' + cls : '');
+            m.style.maxWidth = width ? (parseInt(width, 10) + 'px') : '';
+            m.innerHTML = '<button class="ow-modal-close" onclick="OwChat.closeModal()">✕</button>' + html;
             $('owModalMask').style.display = '-webkit-flex';
             $('owModalMask').style.display = 'flex';
         },

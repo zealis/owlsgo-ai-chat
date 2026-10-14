@@ -2099,6 +2099,29 @@ span.ow-panel-entry-ico.ow-avatar { width: 16px; height: 16px; line-height: 16px
 }
 .ow-modal h3 { font-size: 18px; font-weight: 600; color: var(--ow-text-title); margin-bottom: 16px; }
 .ow-modal-close { float: right; border: none; background: none; font-size: 18px; color: var(--ow-text-sub); }
+/* ---------- 固定尺寸的弹窗（v1.3.114，个人设置用） ----------
+   有分组标签的弹窗里，各页内容差很多（实测个人设置三页分别是 323 / 584 / 236 高），
+   跟着内容长就会「点一下标签弹窗胀一截」。这里把整窗高度锁死，
+   超出部分交给面板自己滚，标题、标签条、底部按钮都不跟着动。
+   ⚠️ 两条坑：
+   ① 改成 flex 列后，原来靠 float:right 浮在标题行的 ✕ 会变成独立一行 —— 所以这里改成绝对定位；
+   ② 面板必须留 min-height:0，否则 flex 子项不肯收缩，滚动条永远出不来。
+   height 先给一个定值再被 min() 覆盖：老内核不认 min() 时退回固定 640px，不会变成自动高度。 */
+.ow-modal.ow-modal-fixed {
+    position: relative;
+    display: flex; display: -webkit-flex;
+    flex-direction: column; -webkit-flex-direction: column;
+    height: 640px;
+    height: min(85vh, 640px);
+    max-height: none;
+    overflow: hidden;
+}
+.ow-modal-fixed .ow-modal-close { float: none; position: absolute; top: 18px; right: 18px; z-index: 1; }
+.ow-modal-fixed .ow-pagetab-panel {
+    -webkit-flex: 1 1 auto; flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto; overflow-x: hidden;
+}
 /* 弹窗说明文字与底部按钮行（密码房弹窗等复用） */
 .ow-modal-desc { font-size: 13px; color: var(--ow-text-sub); line-height: 1.6; margin-bottom: 14px; }
 .ow-modal-actions { display: flex; display: -webkit-flex; justify-content: flex-end; -webkit-justify-content: flex-end; gap: 8px; margin-top: 16px; }   /* 与上方输入框/说明文字保持一致间隔（相邻兄弟 margin 折叠取大值） */
