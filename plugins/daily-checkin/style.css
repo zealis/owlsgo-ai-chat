@@ -1,0 +1,521 @@
+/* ==========================================================================
+   每日签到（daily-checkin v1.0.0）— 前台侧栏面板 / 后台页共用样式
+   --------------------------------------------------------------------------
+   颜色纪律：本文件**不出现任何写死色值**，一律引用核心 --ow-* 变量。
+   全站深浅两套主题只靠重定义这些变量切换，插件写死颜色 = 深色模式下必然露出亮斑。
+   布局纪律：侧栏面板宽 240px（窄屏抽屉 250px），所有区块按这个宽度设计，
+   不用 px 级横向滚动，月历用 7 等分弹性格子，超窄屏再整体收紧一档。
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   面板容器（#owSidePanels / .ow-tab-panels）必须自己接管「撑满剩余空间」。
+   ⚠️ 核心 CSS 里 .ow-tab-panels **没有定义任何尺寸规则**：侧栏靠 #owRoomList 的
+      flex:1 把底部资料区 .ow-me 顶到底。切到插件面板时列表被 hidden、失去 flex:1，
+      容器又没有接班 → 高度变成「内容多高就多高」，.ow-me 随之被顶下去（窄屏直接滚出视野）。
+      所以这里补上它缺的那一半：容器 flex:1 + min-height:0，面板自己再 overflow 滚动。
+      插件停用时本文件不加载，侧栏自动回到核心原样。
+   ⚠️ display 写 CSS 而不是 inline：核心用 inline style 设 none/'' 控制显隐，
+      inline 优先级更高 —— 隐藏照常生效，显示时空串回落到这里的 flex，两不相扰。
+   -------------------------------------------------------------------------- */
+.ow-sidebar > .ow-tab-panels {
+    display: flex; display: -webkit-flex;
+    flex-direction: column; -webkit-flex-direction: column;
+    flex: 1; -webkit-flex: 1;
+    min-height: 0;
+}
+#owExtPanel-checkin {
+    display: flex; display: -webkit-flex;
+    flex-direction: column; -webkit-flex-direction: column;
+    flex: 1; -webkit-flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.ow-ci { padding: 12px; }
+
+/* ---------- 通用小卡（侧栏内的独立区块）---------- */
+.ow-ci-card {
+    background: var(--ow-surface);
+    border: 1px solid var(--ow-border);
+    border-radius: 14px;
+    padding: 12px;
+    margin-bottom: 10px;
+}
+.ow-ci-card:last-child { margin-bottom: 0; }
+.ow-ci-h {
+    margin: 0 0 10px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ow-text-title);
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    justify-content: space-between; -webkit-justify-content: space-between;
+}
+.ow-ci-h em {
+    font-style: normal;
+    font-size: 11.5px;
+    font-weight: 400;
+    color: var(--ow-text-sub);
+}
+
+/* ---------- 顶部：签到主卡 ---------- */
+.ow-ci-hero { text-align: center; }
+.ow-ci-hero-top {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    justify-content: space-between; -webkit-justify-content: space-between;
+    margin-bottom: 2px;
+}
+.ow-ci-hero-t { font-size: 13px; font-weight: 600; color: var(--ow-text-title); }
+/* 积分余额徽标：白字压在主色实心块上（--ow-on-accent 深浅两档都是白，核心保证过对比度） */
+.ow-ci-pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: var(--ow-primary-strong);
+    color: var(--ow-on-accent);
+    font-size: 11px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+.ow-ci-hero-sub {
+    font-size: 11.5px;
+    color: var(--ow-text-sub);
+    margin-bottom: 6px;
+}
+
+/* ---------- 圆形签到按钮 + 进度环 ----------
+   只有**两层**圆：外层是「灰底环 + 彩色进度弧」，内层是「淡填充圆」。
+   内层刻意不用描边圆：描边圆会与外环再划出一道界线，三层同心圆叠在一起显乱；
+   淡填充圆借底色与环分开，彩色只由进度弧一种元素承担。 */
+.ow-ci-ring {
+    position: relative;
+    width: 104px; height: 104px;
+    margin: 4px auto 2px;
+}
+.ow-ci-ring svg {
+    position: absolute; left: 0; top: 0;
+    width: 104px; height: 104px;
+    /* -90° 让进度从 12 点方向起算（SVG 默认 3 点方向） */
+    transform: rotate(-90deg);
+    -webkit-transform: rotate(-90deg);
+}
+.ow-ci-ring-bg { fill: none; stroke: var(--ow-bg-sub); stroke-width: 4; }
+.ow-ci-ring-fg {
+    fill: none;
+    stroke: var(--ow-primary-strong);
+    stroke-width: 4;
+    stroke-linecap: round;
+    transition: stroke-dashoffset .6s ease;
+    -webkit-transition: stroke-dashoffset .6s ease;
+}
+/* 已签到：进度弧与按钮同取成功色 —— 完成态只留一种颜色语言（原先是蓝弧 + 绿圆混排） */
+.ow-ci-ring-fg.is-done { stroke: var(--ow-green); }
+.ow-ci-btn {
+    position: absolute; left: 12px; top: 12px;
+    width: 80px; height: 80px;
+    border-radius: 50%;
+    border: none;
+    background: var(--ow-bg-sub);
+    color: var(--ow-primary-strong);
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.2;
+    cursor: pointer;
+    display: flex; display: -webkit-flex;
+    flex-direction: column; -webkit-flex-direction: column;
+    align-items: center; -webkit-align-items: center;
+    justify-content: center; -webkit-justify-content: center;
+    gap: 2px; -webkit-gap: 2px;
+    padding: 0;
+    transition: transform .18s ease, background-color .18s ease, color .18s ease;
+    -webkit-transition: -webkit-transform .18s ease, background-color .18s ease, color .18s ease;
+}
+/* hover 只换淡蓝底，不再整体填实主色 —— 避免与外环的蓝弧撞成一片 */
+.ow-ci-btn:hover { background: var(--ow-blue-light); color: var(--ow-primary-dark); }
+.ow-ci-btn:active { transform: scale(.97); }
+.ow-ci-btn:focus-visible { outline: 2px solid var(--ow-primary-dark); outline-offset: 2px; }
+/* 小字（「+N 积分」）：不抢主文案的视觉重量 */
+.ow-ci-btn i { font-style: normal; font-size: 11px; font-weight: 400; opacity: .9; }
+.ow-ci-btn .ow-ico { display: block; }
+/* 已签到：只换文字色，填充与未签一致 —— 状态差异交给颜色，不交给形状 */
+.ow-ci-btn.is-done { color: var(--ow-green); cursor: default; font-size: 13px; }
+.ow-ci-btn.is-done:hover { background: var(--ow-bg-sub); color: var(--ow-green); transform: none; }
+.ow-ci-btn:disabled { opacity: .55; cursor: not-allowed; transform: none; }
+/* 勾：纯 CSS 画（左边 + 下边两条边旋转 -45°）。
+   不引 SVG —— 老内核里 <button> 内嵌 svg 的渲染本来就脆，少一个 DOM 节点也少一处错位风险。 */
+.ow-ci-btn.is-done::before {
+    content: '';
+    display: block;
+    width: 16px; height: 8px;
+    border-left: 2px solid var(--ow-green);
+    border-bottom: 2px solid var(--ow-green);
+    transform: rotate(-45deg);
+    -webkit-transform: rotate(-45deg);
+    margin-bottom: 5px;
+}
+
+/* 签到成功的「+N 分」上浮提示：动画结束后由 JS 移除节点 */
+.ow-ci-fly {
+    position: absolute; left: 0; right: 0; top: 14px;
+    text-align: center;
+    font-size: 18px; font-weight: 700;
+    color: var(--ow-primary-strong);
+    pointer-events: none;
+    animation: owCiFly 1.15s ease-out forwards;
+    -webkit-animation: owCiFly 1.15s ease-out forwards;
+}
+@keyframes owCiFly {
+    0%   { opacity: 0; transform: translateY(8px); }
+    25%  { opacity: 1; transform: translateY(0); }
+    100% { opacity: 0; transform: translateY(-28px); }
+}
+@-webkit-keyframes owCiFly {
+    0%   { opacity: 0; -webkit-transform: translateY(8px); }
+    25%  { opacity: 1; -webkit-transform: translateY(0); }
+    100% { opacity: 0; -webkit-transform: translateY(-28px); }
+}
+
+/* ---------- 三项统计 ---------- */
+.ow-ci-stats {
+    display: flex; display: -webkit-flex;
+    gap: 8px; -webkit-gap: 8px;
+    margin-top: 12px;
+}
+.ow-ci-stat {
+    flex: 1; -webkit-flex: 1;
+    min-width: 0;
+    background: var(--ow-bg-sub);
+    border-radius: 10px;
+    padding: 8px 4px;
+    text-align: center;
+}
+.ow-ci-stat b {
+    display: block;
+    font-size: 16px;
+    color: var(--ow-text-title);
+    font-variant-numeric: tabular-nums;
+}
+.ow-ci-stat span { font-size: 11px; color: var(--ow-text-sub); }
+
+/* ---------- 连续天数点阵（一个点 = 一个周期内的第 N 天）---------- */
+.ow-ci-dots {
+    display: flex; display: -webkit-flex;
+    justify-content: center; -webkit-justify-content: center;
+    gap: 5px; -webkit-gap: 5px;
+    margin-top: 12px;
+}
+.ow-ci-dot {
+    width: 13px; height: 13px;
+    border-radius: 50%;
+    border: 1px solid var(--ow-border-control);
+    background: transparent;
+    box-sizing: border-box;
+}
+.ow-ci-dot.on { background: var(--ow-primary-strong); border-color: var(--ow-primary-strong); }
+/* 周期大奖所在的那一格：浅蓝底外圈提示「这一格有大奖」 */
+.ow-ci-dot.hit { box-shadow: 0 0 0 3px var(--ow-blue-light); }
+.ow-ci-tip {
+    margin-top: 8px;
+    font-size: 11.5px;
+    color: var(--ow-text-sub);
+    line-height: 1.5;
+}
+.ow-ci-tip b { color: var(--ow-text); font-weight: 600; }
+
+/* ---------- 月历 ---------- */
+.ow-ci-cal-head {
+    display: flex; display: -webkit-flex;
+    flex-wrap: wrap; -webkit-flex-wrap: wrap;
+    margin-bottom: 2px;
+}
+.ow-ci-cal-head span {
+    width: 14.2857%;
+    text-align: center;
+    font-size: 11px;
+    color: var(--ow-text-sub);
+}
+.ow-ci-cal {
+    display: flex; display: -webkit-flex;
+    flex-wrap: wrap; -webkit-flex-wrap: wrap;
+}
+.ow-ci-cell { width: 14.2857%; padding: 2px; box-sizing: border-box; }
+.ow-ci-cell i {
+    display: block;
+    font-style: normal;
+    font-size: 11px;
+    line-height: 22px;
+    text-align: center;
+    border-radius: 8px;
+    color: var(--ow-text-sub);
+    background: var(--ow-bg-sub);
+    font-variant-numeric: tabular-nums;
+}
+.ow-ci-cell.on i { background: var(--ow-primary-strong); color: var(--ow-on-accent); font-weight: 600; }
+/* 「今天」用内描边而不是换底色：已签与未签两态都要能看出今天是哪一天 */
+.ow-ci-cell.today i { box-shadow: inset 0 0 0 2px var(--ow-primary-strong); }
+.ow-ci-cell.blank i { background: transparent; box-shadow: none; }
+
+/* ---------- 排行榜 ---------- */
+/* ⚠️ 四边 padding 与圆角必须**所有行一致**，me 行只多一层底色。
+   曾经给 .me 单独加 padding-left/right + border-radius，结果「自己」那一行比别行宽、
+   还鼓出一块浅蓝，尺寸直接对不上（用户截图反馈）。 */
+.ow-ci-rank-i {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    gap: 8px; -webkit-gap: 8px;
+    padding: 6px;
+    border-top: 1px solid var(--ow-border);
+    border-radius: 8px;
+}
+.ow-ci-rank-i:first-child { border-top: none; }
+/* 我在本榜的位置：只换底色，不换尺寸 */
+.ow-ci-rank-i.me { background: var(--ow-blue-light); }
+.ow-ci-rank-n {
+    width: 18px;
+    flex: none; -webkit-flex: none;
+    font-size: 12px;
+    color: var(--ow-text-sub);
+    font-variant-numeric: tabular-nums;
+}
+/* 前三名用语义色（称号金 / 副文本灰 / VIP 橙），深浅两档都可读 */
+.ow-ci-rank-n.t1 { color: var(--ow-yellow); font-weight: 700; }
+.ow-ci-rank-n.t2 { color: var(--ow-text-sub); font-weight: 700; }
+.ow-ci-rank-n.t3 { color: var(--ow-orange); font-weight: 700; }
+.ow-ci-rank-av {
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    background: var(--ow-bg-sub);
+    flex: none; -webkit-flex: none;
+    object-fit: cover;
+}
+.ow-ci-rank-t {
+    flex: 1; -webkit-flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    color: var(--ow-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.ow-ci-rank-d {
+    flex: none; -webkit-flex: none;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ow-primary-strong);
+    font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 空态 / 游客 / 关闭态 ---------- */
+.ow-ci-empty {
+    padding: 18px 8px;
+    text-align: center;
+    font-size: 12.5px;
+    color: var(--ow-text-sub);
+    line-height: 1.6;
+}
+.ow-ci-empty .ow-ico { display: block; margin: 0 auto 8px; color: var(--ow-text-sub); }
+
+/* ---------- 补签 ---------- */
+.ow-ci-patch { margin-top: 10px; display: block; width: 100%; }
+
+/* ---------- 每日首次打开自动弹出的签到弹窗 ----------
+   仿移动端「签到成功」弹层：圆形图标骑在弹窗上沿、标题、奖励明细、连续天数、
+   一个大按钮 + 底部次级链接。
+   ⚠️ 核心 .ow-modal 是 overflow-y:auto，会把探出上沿的图标裁掉，所以给本弹窗单独
+      一个 class 放掉 overflow（内容固定且矮，不会冒出滚动条）。
+   ⚠️ 标题选择器必须写成 .ow-modal .ow-ci-pop-t：核心 .ow-modal h3 的特异性
+     比单个类名高，直接用 .ow-ci-pop-t 会被核心的 18px/600 覆盖掉。 */
+.ow-modal.ow-ci-modal { overflow: visible; }
+.ow-ci-pop { position: relative; padding: 48px 6px 4px; text-align: center; }
+.ow-ci-pop-ico {
+    position: absolute; top: -34px; left: 50%; margin-left: -32px;
+    width: 64px; height: 64px;
+    border-radius: 50%;
+    background: var(--ow-surface);
+    border: 1px solid var(--ow-border);
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    justify-content: center; -webkit-justify-content: center;
+}
+.ow-modal .ow-ci-pop-t {
+    margin: 0 0 16px;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--ow-text-title);
+}
+.ow-ci-pop-rewards {
+    display: flex; display: -webkit-flex;
+    justify-content: center; -webkit-justify-content: center;
+    gap: 26px; -webkit-gap: 26px;
+    margin-bottom: 12px;
+}
+.ow-ci-pop-r {
+    display: flex; display: -webkit-flex;
+    flex-direction: column; -webkit-flex-direction: column;
+    align-items: center; -webkit-align-items: center;
+    gap: 3px; -webkit-gap: 3px;
+}
+.ow-ci-pop-r b { font-size: 19px; font-weight: 700; color: var(--ow-text-title); font-variant-numeric: tabular-nums; line-height: 1.2; }
+.ow-ci-pop-r i { font-style: normal; font-size: 11.5px; color: var(--ow-text-sub); }
+.ow-ci-pop-sub { margin: 0 0 20px; font-size: 13px; color: var(--ow-text-sub); line-height: 1.6; }
+.ow-ci-pop-sub b { color: var(--ow-text); font-weight: 600; }
+.ow-ci-pop-btn {
+    display: block; width: 100%; height: 46px;
+    border: none; border-radius: 12px;
+    background: var(--ow-primary-strong);
+    color: var(--ow-on-accent);
+    font-family: inherit; font-size: 15.5px; font-weight: 600;
+    cursor: pointer;
+    transition: background-color .15s ease;
+    -webkit-transition: background-color .15s ease;
+}
+.ow-ci-pop-btn:hover { background: var(--ow-primary-dark); }
+.ow-ci-pop-btn:disabled { opacity: .6; cursor: default; }
+.ow-ci-pop-link {
+    display: block; margin-top: 14px;
+    font-size: 12.5px; color: var(--ow-text-sub);
+    text-decoration: none; cursor: pointer;
+}
+.ow-ci-pop-link:hover { color: var(--ow-primary-strong); }
+
+/* ==========================================================================
+   后台页
+   ========================================================================== */
+.ow-ci-kpis {
+    display: flex; display: -webkit-flex;
+    gap: 10px; -webkit-gap: 10px;
+    flex-wrap: wrap; -webkit-flex-wrap: wrap;
+}
+.ow-ci-kpi {
+    flex: 1; -webkit-flex: 1;
+    min-width: 110px;
+    background: var(--ow-bg-sub);
+    border-radius: 10px;
+    padding: 10px 12px;
+}
+.ow-ci-kpi b { display: block; font-size: 20px; color: var(--ow-text-title); font-variant-numeric: tabular-nums; }
+.ow-ci-kpi span { font-size: 12px; color: var(--ow-text-sub); }
+/* 趋势柱状图：纯 CSS，柱高按百分比内联（内联的是数字不是颜色） */
+.ow-ci-bars {
+    display: flex; display: -webkit-flex;
+    align-items: flex-end; -webkit-align-items: flex-end;
+    gap: 4px; -webkit-gap: 4px;
+    height: 120px;
+    padding-top: 6px;
+}
+.ow-ci-bar { flex: 1; -webkit-flex: 1; min-width: 0; text-align: center; }
+.ow-ci-bar i {
+    display: block;
+    width: 100%;
+    min-height: 2px;
+    border-radius: 3px 3px 0 0;
+    background: var(--ow-primary-strong);
+}
+.ow-ci-bar i.zero { background: var(--ow-border); }
+.ow-ci-bar em {
+    display: block;
+    font-style: normal;
+    font-size: 10px;
+    color: var(--ow-text-sub);
+    margin-top: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+}
+.ow-ci-bar-num { font-size: 10px; color: var(--ow-text-sub); }
+
+/* 后台：用户档案里的当月小月历（比前台更紧凑） */
+.ow-ci-mini { display: flex; display: -webkit-flex; flex-wrap: wrap; -webkit-flex-wrap: wrap; }
+.ow-ci-mini span {
+    width: 14.2857%;
+    font-size: 11px;
+    text-align: center;
+    line-height: 20px;
+    color: var(--ow-text-sub);
+}
+.ow-ci-mini span.on { color: var(--ow-on-accent); }
+.ow-ci-mini span.on b {
+    display: inline-block;
+    min-width: 20px;
+    border-radius: 6px;
+    background: var(--ow-primary-strong);
+    font-weight: 600;
+}
+
+/* ---------- 今日任务（等级信任插件数据，v1.1.0 接入） ----------
+   进度条 + 完成数，与前台等级页 ?page=level 的今日任务同一口径；
+   完成态只换颜色不换形状（--ow-green），零值不特殊处理。 */
+.ow-ci-tasks { margin-top: 2px; }
+.ow-ci-task {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    gap: 8px; -webkit-gap: 8px;
+    padding: 4px 0;
+    font-size: 12.5px;
+}
+.ow-ci-task-k {
+    width: 76px; -webkit-flex-shrink: 0; flex-shrink: 0;
+    color: var(--ow-text-sub);
+}
+.ow-ci-task-bar {
+    flex: 1; -webkit-flex: 1;
+    min-width: 0;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--ow-bg-sub);
+    overflow: hidden;
+}
+.ow-ci-task-bar > i {
+    display: block;
+    height: 100%;
+    border-radius: 3px;
+    background: var(--ow-primary-strong);
+}
+.ow-ci-task-bar > i.done { background: var(--ow-green); }
+.ow-ci-task-v {
+    width: 44px; -webkit-flex-shrink: 0; flex-shrink: 0;
+    text-align: right;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+.ow-ci-task-v.done { color: var(--ow-green); }
+/* 「可替代」小标：与等级页的 ow-lv-task-alt 同一套警示色变量 */
+.ow-ci-task-alt {
+    font-style: normal;
+    font-size: 10px;
+    color: var(--ow-yellow);
+    background: var(--ow-warn-bg);
+    border: 1px solid var(--ow-warn-border);
+    border-radius: 2px;
+    padding: 0 3px;
+    margin-left: 4px;
+}
+
+/* ==========================================================================
+   窄屏（≤720px：侧栏变 250px 抽屉）与超窄屏（≤360px）
+   ========================================================================== */
+@media (max-width: 720px) {
+    .ow-ci { padding: 10px; }
+    .ow-ci-card { padding: 10px; border-radius: 12px; }
+    /* 触摸目标：月历格子与按钮都在 40px 以上才不误触 */
+    .ow-ci-cell i { line-height: 26px; font-size: 11.5px; }
+    .ow-ci-stat b { font-size: 15px; }
+    .ow-ci-kpi { min-width: 92px; }
+    .ow-ci-bars { height: 100px; }
+    /* 今日任务：抽屉 250px，标签列收一档给进度条让位 */
+    .ow-ci-task-k { width: 64px; }
+    .ow-ci-task { font-size: 12px; }
+}
+@media (max-width: 360px) {
+    .ow-ci-hero { padding: 2px; }
+    .ow-ci-ring { width: 92px; height: 92px; }
+    .ow-ci-ring svg { width: 92px; height: 92px; }
+    /* (92-70)/2 = 11：按钮与进度环在超窄屏同样保持同心、四周等距 */
+    .ow-ci-btn { width: 70px; height: 70px; left: 11px; top: 11px; font-size: 14px; }
+    .ow-ci-btn.is-done { font-size: 12px; }
+    /* 勾同步缩小一档，别在 70px 的圆里显得突兀 */
+    .ow-ci-btn.is-done::before { width: 14px; height: 7px; margin-bottom: 4px; }
+    .ow-ci-stats { gap: 6px; -webkit-gap: 6px; }
+}
