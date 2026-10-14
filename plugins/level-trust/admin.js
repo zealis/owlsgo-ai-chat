@@ -36,31 +36,45 @@
             + '</span><span class="ow-card-meta-v">' + (v == null ? '' : v) + '</span></div>';
     }
 
-    /* ================= 概览 ================= */
-    function renderStats(r) {
-        var names = { 1: '新手 1-5', 2: '日常', 3: '活跃', 4: '核心', 5: '荣誉' };
-        var html = '<h3 style="margin:0 0 8px">概览</h3>'
-            + '<div class="ow-card-meta">'
-            + row('有等级记录', (r.users || 0) + ' 人')
-            + row('等级中位数', 'Lv.' + (r.median || 1))
-            + row('平均等级', 'Lv.' + (r.avg || 0))
-            + row('等级限制', String(r.gating) === '1' ? '已开启' : '已关闭')
-            + '</div><div class="ow-lt-tasks">';
-        for (var i = 1; i <= 5; i++) {
-            html += '<div class="ow-lt-task"><span class="ow-lt-task-k">' + names[i]
-                + '</span><span class="ow-lt-task-v">' + ((r.dist && r.dist[i]) || 0) + ' 人</span></div>';
-        }
-        var box = $('owLTStats');
-        if (box) box.innerHTML = html + '</div>';
+    /* ================= 概览（v1.1.5：改 KPI 卡片，与全站后台统计风格统一） ================= */
+    function kpi(v, label) {
+        return '<div class="ow-lt-kpi"><b>' + v + '</b><span>' + esc(label) + '</span></div>';
     }
 
-    /* ================= 活跃趋势（纯 CSS 柱状图，不引图表库） ================= */
+    function renderStats(r) {
+        var box = $('owLTStats');
+        if (!box) return;
+        var html = '<h3 style="margin:0 0 10px">概览</h3><div class="ow-lt-kpis">'
+            + kpi((r.users || 0), '有等级记录（人）')
+            + kpi('Lv.' + (r.median || 1), '等级中位数')
+            + kpi('Lv.' + (r.avg || 0), '平均等级')
+            + kpi(String(r.gating) === '1' ? '已开启' : '已关闭', '等级限制')
+            + '</div>';
+        // 阶段分布：圆点色 = 阶段色（数据性质色板，见 style.css 顶部注释）；
+        // 名称与区间由服务端按当前配置现算（stage_meta），改阈值后这里自动跟着变。
+        var metas = r.stage_meta || [];
+        if (metas.length) {
+            html += '<div class="ow-lt-kpis ow-lt-dist">';
+            for (var i = 0; i < metas.length; i++) {
+                var m = metas[i];
+                html += '<div class="ow-lt-kpi"><b><i class="ow-lt-dot ow-lt-s' + m.no + '"></i>'
+                    + ((r.dist && r.dist[m.no]) || 0) + '</b><span>'
+                    + esc(m.name) + ' ' + esc(m.range) + '</span></div>';
+            }
+            html += '</div>';
+        }
+        box.innerHTML = html;
+    }
+
+    /* ================= 活跃趋势（v1.1.5：改竖条小倍数图，与全站图表风格统一） =================
+       每个指标一张小图、各自归一化（放一张图共用一个刻度的话，人数会把「建群」压成一条平线）。
+       柱色一律 --ow-primary-strong，零值柱 --ow-border；不再有写死色值。 */
     var TREND_FIELDS = [
-        { k: 'actives', label: '活跃用户', color: '#0099FF' },
-        { k: 'upgrades', label: '升级次数', color: '#13A8A8' },
-        { k: 'msgs', label: '有效发言', color: '#7A5AF8' },
-        { k: 'files', label: '文件操作', color: '#D4A017' },
-        { k: 'rooms', label: '建群', color: '#9AA5B1' }
+        { k: 'actives', label: '活跃用户', unit: '人' },
+        { k: 'upgrades', label: '升级次数', unit: '次' },
+        { k: 'msgs', label: '有效发言', unit: '条' },
+        { k: 'files', label: '文件操作', unit: '次' },
+        { k: 'rooms', label: '建群', unit: '个' }
     ];
 
     function renderTrend(trend, note) {
@@ -68,7 +82,6 @@
         if (!box) return;
         if (!trend || !trend.length) { box.innerHTML = '<p class="ow-panel-empty">暂无数据</p>'; return; }
 
-        // 各指标**各自**归一化：放一张图里共用一个刻度的话，人数会把「建群」压成一条平线
         var maxes = {};
         TREND_FIELDS.forEach(function (f) {
             var m = 0;
@@ -78,16 +91,19 @@
 
         var html = '<div class="ow-lt-trend">';
         TREND_FIELDS.forEach(function (f) {
-            html += '<div class="ow-lt-trow"><div class="ow-lt-tname">' + f.label
-                + '</div><div class="ow-lt-tbars">';
+            html += '<div class="ow-lt-tchart">'
+                + '<div class="ow-lt-tchart-h"><span>' + f.label + '</span><em>峰值 '
+                + maxes[f.k] + ' ' + f.unit + '</em></div>'
+                + '<div class="ow-lt-tbars">';
             for (var i = 0; i < trend.length; i++) {
                 var v = trend[i][f.k] || 0;
-                var h = v > 0 ? Math.max(6, Math.round(v / maxes[f.k] * 100)) : 2;
-                html += '<i title="' + esc(trend[i].day) + '：' + v + '" style="height:' + h
-                    + '%;background:' + f.color + '"></i>';
+                var h = v > 0 ? Math.max(4, Math.round(v / maxes[f.k] * 100)) : 2;
+                html += '<i class="' + (v > 0 ? '' : 'zero') + '" style="height:' + h + '%" title="'
+                    + esc(trend[i].day) + '：' + v + ' ' + f.unit + '"></i>';
             }
-            html += '</div><div class="ow-lt-tmax">峰值 ' + maxes[f.k] + '</div></div>';
+            html += '</div></div>';
         });
+        // 五张图柱位完全一致（同一组日期、同一套 flex），共用一条日期轴即可
         html += '</div>'
             + '<div class="ow-lt-tx"><span>' + esc(trend[0].day) + '</span>'
             + '<span>' + esc(trend[trend.length - 1].day) + '</span></div>'

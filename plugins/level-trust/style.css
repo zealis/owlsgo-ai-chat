@@ -161,6 +161,13 @@
        只作用于 .ow-lv-card-scroll 内的表，「各阶段任务一览」那种长文字表照常折行。 */
     .ow-lv-card-scroll .ow-lv-table th, .ow-lv-card-scroll .ow-lv-table td { white-space: nowrap; }
     .ow-lv-task-k { width: 96px; }
+    /* 后台概览/趋势移动端收档（v1.1.5）：KPI 每行至少两张，趋势图矮一档，
+       30 根柱在 360px 窄屏下每根仍有 ~9px，不会被压没 */
+    .ow-lt-kpi { min-width: 92px; padding: 8px 10px; }
+    .ow-lt-kpi b { font-size: 18px; }
+    .ow-lt-dist .ow-lt-kpi b { font-size: 15px; }
+    .ow-lt-tbars { height: 56px; }
+    .ow-lt-tchart-h span { font-size: 11.5px; }
     .ow-lv-stage-connector { top: 13px; left: 4%; right: 4%; }
     .ow-lv-stage-dot-wrap { height: 26px; }
     .ow-lv-stage-dot { width: 10px; height: 10px; }
@@ -187,28 +194,85 @@
 .ow-lt-row-link { padding-top: 3px; padding-bottom: 3px; }
 .ow-lt-row-link:hover { background: var(--ow-bg-sub); }
 
-/* ---------- 后台：参数分组标题 + 活跃趋势柱状图（v1.2.44） ---------- */
+/* ---------- 后台：参数分组标题（v1.2.44） ---------- */
 .ow-lt-cap {
     margin: 16px 0 8px; font-size: 13px; color: var(--ow-text-sub); font-weight: 600;
     padding-left: 8px; border-left: 3px solid var(--ow-primary-strong);
 }
 .ow-lt-cap:first-child { margin-top: 0; }
 
-.ow-lt-trend { margin-top: 8px; }
-.ow-lt-trow { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
-.ow-lt-tname { width: 76px; flex-shrink: 0; font-size: 12px; color: var(--ow-text-sub); }
+/* ---------- 后台：概览 KPI 卡片（v1.1.5，与全站后台统计风格统一） ---------- */
+.ow-lt-kpis {
+    display: flex; display: -webkit-flex;
+    flex-wrap: wrap; -webkit-flex-wrap: wrap;
+    gap: 10px; -webkit-gap: 10px;
+}
+.ow-lt-kpis + .ow-lt-kpis { margin-top: 10px; }
+.ow-lt-kpi {
+    flex: 1; -webkit-flex: 1;
+    min-width: 110px;
+    background: var(--ow-bg-sub);
+    border-radius: 10px;
+    padding: 10px 12px;
+}
+.ow-lt-kpi b {
+    display: block;
+    font-size: 20px;
+    color: var(--ow-text-title);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.ow-lt-kpi span { font-size: 12px; color: var(--ow-text-sub); }
+/* 阶段分布圆点：底色复用 .ow-lt-s1..s5 阶段色板（数据性质色板，见文件顶部注释），
+   这里只定义形状，不引入任何色值 */
+.ow-lt-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: middle;
+}
+/* 分布卡数字比主 KPI 小一档：一行五个，与主指标行分出层级 */
+.ow-lt-dist .ow-lt-kpi b { font-size: 17px; }
+
+/* ---------- 后台：活跃趋势（v1.1.5：竖条小倍数图，与全站图表风格统一） ----------
+   每个指标一张小图、各自归一化（共用一个刻度的话，人数会把「建群」压成一条平线）。
+   柱色一律 --ow-primary-strong，零值柱 --ow-border —— 不再有写死色值。 */
+.ow-lt-tchart + .ow-lt-tchart { margin-top: 14px; }
+.ow-lt-tchart-h {
+    display: flex; display: -webkit-flex;
+    align-items: baseline; -webkit-align-items: baseline;
+    justify-content: space-between; -webkit-justify-content: space-between;
+    margin-bottom: 4px;
+}
+.ow-lt-tchart-h span { font-size: 12px; color: var(--ow-text-sub); }
+.ow-lt-tchart-h em {
+    font-style: normal; font-size: 11px; color: var(--ow-text-sub);
+    font-variant-numeric: tabular-nums;
+}
 .ow-lt-tbars {
-    flex: 1; height: 46px; display: flex; align-items: flex-end; gap: 2px;
-    background: var(--ow-bg-sub); border-radius: 3px; padding: 3px 4px;
+    display: flex; display: -webkit-flex;
+    align-items: flex-end; -webkit-align-items: flex-end;
+    gap: 2px; -webkit-gap: 2px;
+    height: 72px;
+    padding: 4px 2px 0;
+    background: var(--ow-bg-sub);
+    border-radius: 4px;
 }
 .ow-lt-tbars > i {
-    flex: 1; min-width: 2px; border-radius: 1px 1px 0 0; display: block;
+    flex: 1; -webkit-flex: 1;
+    min-width: 2px;
+    display: block;
+    border-radius: 2px 2px 0 0;
+    background: var(--ow-primary-strong);
     -webkit-transition: height .2s; transition: height .2s;
 }
-.ow-lt-tmax { width: 68px; flex-shrink: 0; font-size: 11px; color: var(--ow-text-sub); text-align: right; }
+.ow-lt-tbars > i.zero { background: var(--ow-border); }
+/* 五张图柱位完全一致（同一组日期、同一套 flex），共用一条日期轴即可 */
 .ow-lt-tx {
-    display: flex; justify-content: space-between;
-    margin: 4px 0 0 86px; padding-right: 78px;
+    display: flex; display: -webkit-flex;
+    justify-content: space-between; -webkit-justify-content: space-between;
+    margin-top: 4px;
     font-size: 11px; color: var(--ow-text-sub);
 }
 

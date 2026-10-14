@@ -1169,6 +1169,22 @@ Plugin::route('plugin_level_trust_stats', function (array $ctx) use ($ltGuard) {
     $sum = 0;
     foreach ($rows as $r) { $dist[owLTStageNo((int)$r['level'])]++; $sum += (int)$r['level']; }
 
+    // 阶段名 + 等级区间随配置现算：后台改了阶段阈值，概览里的分布标签要跟着变，
+    // 不能像旧版那样把「新手 1-5」写死在前端（v1.1.5）。
+    $b = owLTStageBounds();
+    $ranges = [];
+    $prev = 1;
+    foreach ($b as $start) {
+        $end = $start - 1;
+        $ranges[] = $prev === $end ? (string)$prev : $prev . '-' . $end;
+        $prev = $start;
+    }
+    $ranges[] = $b[3] . '+';
+    $stageMeta = [];
+    foreach ([1, 2, 3, 4, 5] as $no) {
+        $stageMeta[] = ['no' => $no, 'name' => owLTStageName($no), 'range' => $ranges[$no - 1]];
+    }
+
     // 近 30 天趋势（含今天）。补齐空白天，否则折线会在没数据的日子断开。
     $days = (int)($ctx['post']['days'] ?? 30);
     $days = max(7, min(90, $days));
@@ -1198,6 +1214,7 @@ Plugin::route('plugin_level_trust_stats', function (array $ctx) use ($ltGuard) {
         'median' => owLTMedian(),
         'avg' => $rows ? round($sum / count($rows), 1) : 0,
         'dist' => $dist,
+        'stage_meta' => $stageMeta,
         'gating' => owLTCfg('gating'),
         'trend' => $trend,
         // 口径说明随数据一起下发，前端直接展示 —— 写死在 JS 里日后容易与实际脱节
