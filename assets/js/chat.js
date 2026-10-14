@@ -2328,6 +2328,17 @@
                 if (tab === self.view) { self.toggleSidebar(); return; }
                 self.switchTab(tab);
             };
+            /* v1.3.134：rail 顶部的头像与底部沉下去的 ☰ **不是切面板的入口**，
+               没有 data-tab，上面的委托对它们是空转，所以各绑一次。
+               #owRailMenu 只对注册用户渲染，游客那条分支本来就取不到。 */
+            var meBtn = $('owRailMe');
+            if (meBtn) meBtn.onclick = function (e) { self.onRailMe(e); };
+            var menuBtn = $('owRailMenu');
+            if (menuBtn) menuBtn.onclick = function (e) {
+                e = e || w.event;
+                if (e.stopPropagation) e.stopPropagation(); else e.cancelBubble = true;
+                self.toggleAccountMenu();
+            };
             this._tabsInited = true;
         },
 
@@ -2403,6 +2414,10 @@
             if (bar) {
                 var btns = bar.getElementsByClassName('ow-rail-btn'), i;
                 for (i = 0; i < btns.length; i++) {
+                    // v1.3.134：rail 里现在还有两个「不是标签」的 .ow-rail-btn（顶部头像、底部 ☰），
+                    // 它们没有 data-tab。高亮逻辑必须跳过它们 —— 否则下面那条无 classList 的回落分支
+                    // 会整体重写 className，把 ow-rail-me / ow-rail-menu 一起抹掉。
+                    if (!btns[i].getAttribute('data-tab')) continue;
                     var on = btns[i].getAttribute('data-tab') === this.view;
                     // ⚠️ 用 classList 逐项增删而不是整体赋值 ——
                     //   插件可能在自己入口上加了自己的类（如角标定位类），
@@ -5078,30 +5093,32 @@
         },
 
         /* ---------- 我的面板 / 设置 ---------- */
+        /**
+         * 画 rail 顶部的当前身份头像（v1.3.134 起取代侧栏底部的个人栏 #owMe）。
+         * 昵称 / ID / 头衔这些文字不再常驻 —— 都在点开的资料卡里。
+         * 仍被 init / 进私聊 / 切群三处调用：切群时要重取的是「本群身份」，
+         * 头像本身不变，但 cfg.me.role 变了，角色描边要跟着换。
+         */
         renderMe: function () {
-            var self = this, me = this.cfg.me, el = $('owMe');
+            var el = $('owRailMe');
             if (!el) return;
-            if (me) {
-                // 昵称与身份标签同行；整块可点击 → 弹出操作菜单（创建群聊/设置/管理后台/退出）
-                // v1.0.93：侧栏不展示任何身份标签（群主/会员只在消息区、在线成员列表、资料卡显示）
-                el.className = 'ow-me ow-me-click';
-                el.innerHTML = avatarHtml(me.avatar, me.nickname, false, me.role)
-                    + '<div class="ow-me-info">'
-                    + '<div class="ow-me-line"><span class="ow-me-name">' + esc(me.nickname) + '</span>' + (me.title ? '<span class="ow-tag ow-tag-title">' + esc(me.title) + '</span>' : '') + '</div>'
-                    + '<div style="font-size:11px;color:var(--ow-text-sub)">ID ' + esc(fmtUid(me.id || 0)) + '</div></div>';
-                el.onclick = function (e) {
-                    // 阻止冒泡：否则 document 级「点击菜单外关闭」会立刻把刚打开的菜单关掉
-                    e = e || w.event;
-                    if (e.stopPropagation) e.stopPropagation(); else e.cancelBubble = true;
-                    self.toggleMeMenu();
-                };
-            } else {
-                el.className = 'ow-me';
-                el.onclick = null;
-                // v1.3.14：游客头像来自服务端下发的 cfg.actor.avatar（默认豆苗 sprouts）
-                el.innerHTML = avatarHtml(this.cfg.actor.avatar, this.cfg.actor.nickname, false, 'guest')
-                    + '<div><div class="ow-me-name">' + esc(this.cfg.actor.nickname) + '</div></div>';
-            }
+            var me = this.cfg.me, actor = this.cfg.actor || {};
+            var nick = me ? me.nickname : (actor.nickname || '');
+            el.innerHTML = avatarHtml(me ? me.avatar : actor.avatar, nick, 'md', me ? me.role : 'guest');
+            el.title = nick;
+        },
+
+        /**
+         * rail 顶部头像被点：注册用户 → 自己的资料卡（与别人点你头像同一张卡，
+         * 自己的卡自带「点击更换头像」与「编辑资料」）；游客 → 登录 / 注册菜单。
+         */
+        onRailMe: function (e) {
+            e = e || w.event;
+            // 阻止冒泡：否则 document 级「点菜单外关闭」会立刻把刚打开的菜单关掉
+            if (e && e.stopPropagation) e.stopPropagation(); else if (e) e.cancelBubble = true;
+            var me = this.cfg.me;
+            if (me && me.id) { this.userCard(me.id, me.nickname); return; }
+            this.toggleAuthMenu();
         },
 
 
@@ -5109,7 +5126,7 @@
            v1.2.31 之前这里是 onBrandMenu 扩展点 + toggleBrandMenu（头像+昵称/联系人/插件项）。
            用户要求删除并改成搜索：**默认搜「当前聊天」**，下方可切换搜索范围。
            ⚠️ onBrandMenu 扩展点一并删除（全项目零引用，plugins/ 下无任何调用）；
-              打开自己资料卡仍有入口 —— 侧栏底部资料区 #owMe（toggleMeMenu）。 */
+              打开自己资料卡的入口 —— v1.3.134 起是 rail 顶部头像（onRailMe）。 */
 
         /**
          * 搜索范围（v1.2.32 调整顺序：找人/群 挪到最后）。
@@ -5546,13 +5563,47 @@
         },
 
         /**
-         * 个人资料区操作菜单：复用消息右键菜单（owCtxMenu）的展示 / 委托点击 /
-         * 点击外部与 Esc 关闭，向上弹出（资料区位于侧栏底部）。
-         */        toggleMeMenu: function () {
+         * 把菜单开在 rail 某个按钮的**右侧**（rail 贴在最左边，只能往右开）。
+         * align='bottom' 给沉底的 ☰：菜单往上长、底边与按钮底边对齐；
+         * align='top'    给顶部的头像：菜单往下长。两种都夹在视口里，别盖到品牌条上面。
+         */
+        _ctxOpenAt: function (items, from, anchor, align) {
+            var menu = $('owCtxMenu');
+            if (!menu || !anchor) return;
+            this._ctxItems = items;
+            menu._from = from;
+            menu.innerHTML = ctxItemsHtml(items);
+            menu.style.display = 'block';
+            var r = anchor.getBoundingClientRect();
+            var vh = w.innerHeight || document.documentElement.clientHeight;
+            var mh = menu.offsetHeight || items.length * 34;
+            var top = align === 'top' ? r.top : r.bottom - mh;
+            if (top < 8) top = 8;
+            if (top + mh > vh - 8) top = Math.max(8, vh - 8 - mh);
+            menu.style.left = (r.right + 8) + 'px';
+            menu.style.top = top + 'px';
+        },
+
+        /** 游客点 rail 顶部头像：只有「登录 / 注册」两项（原先是侧栏底部那两个按钮） */
+        toggleAuthMenu: function () {
+            var menu = $('owCtxMenu');
+            if (!menu) return;
+            if (menu.style.display !== 'none' && menu._from === 'auth') { this.hideCtxMenu(); return; }
+            this._ctxOpenAt([
+                { t: '登录', icon: 'user', run: function () { location.href = '?page=login'; } },
+                { t: '注册', icon: 'plus', run: function () { location.href = '?page=register'; } },
+            ], 'auth', $('owRailMe'), 'top');
+        },
+
+        /**
+         * rail 底部 ☰ 的账号菜单：复用消息右键菜单（owCtxMenu）那套展示 / 委托点击 /
+         * 点外部与 Esc 关闭。四项与原先点开侧栏个人栏完全一致，只是入口挪了位置。
+         */
+        toggleAccountMenu: function () {
             var self = this, me = this.cfg.me, menu = $('owCtxMenu');
             if (!me || !menu) return;
-            // 再次点击资料区 = 收起
-            if (menu.style.display !== 'none' && menu._from === 'me') { this.hideCtxMenu(); return; }
+            // 再次点击同一个按钮 = 收起
+            if (menu.style.display !== 'none' && menu._from === 'account') { this.hideCtxMenu(); return; }
             var items = [
                 { t: '创建群聊', run: function () { self.roomCreateModal(); } },
                 { t: '设置', run: function () { self.openSettings(); } },
@@ -5563,15 +5614,7 @@
                     OwApi.secure('logout', {}, function () { location.href = '?page=login'; });
                 });
             } });
-            this._ctxItems = items;
-            menu._from = 'me';
-            menu.innerHTML = ctxItemsHtml(items);
-            menu.style.display = 'block';
-            // 定位：贴着资料区上缘，左边对齐侧栏
-            var r = $('owMe').getBoundingClientRect();
-            var mh = menu.offsetHeight || items.length * 34;
-            menu.style.left = Math.max(4, r.left) + 'px';
-            menu.style.top = Math.max(4, r.top - mh - 8) + 'px';
+            this._ctxOpenAt(items, 'account', $('owRailMenu'), 'bottom');
         },
 
         /* ---------- 日夜模式（v1.3.25） ---------- */

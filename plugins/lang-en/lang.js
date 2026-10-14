@@ -623,6 +623,9 @@
         '简体中文': '简体中文',
         '只影响你自己的界面；改完会刷新一次页面，服务端文案才跟着换。':
             'Affects only your own view. The page reloads once, because server-side text is rendered per language.',
+        /* ---------- left rail avatar + account menu (v1.3.134) ---------- */
+        '个人主页': 'Profile',
+        '账号菜单': 'Account menu',
         '色系': 'Color scheme',
         '经典蓝': 'Classic blue',
         '翡翠绿': 'Emerald',

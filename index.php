@@ -1635,6 +1635,12 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
     // v1.3.71：联系人栏的同一个小红点 —— 有待处理好友请求时亮起来（与通知同一轮子 .ow-dot）。
     $friendPending = ($actor['kind'] ?? '') === 'user' ? Chat::friendReqPending((int)($actor['id'] ?? 0)) : 0;
     echo '<nav class="ow-rail" id="owRail">'
+       // v1.3.134：rail 顶部 = 当前身份的头像，取代侧栏底部那条个人栏（#owMe 已撤销）。
+       // 点它：注册用户开自己的资料卡（就是别人点你头像看到的那张卡，换头像/编辑资料都在里面），
+       // 游客开「登录 / 注册」菜单。
+       // ⚠️ 按钮本体是空的，头像由前端 renderMe() 填：cfg.me / cfg.actor 本来就在前端手里，
+       //   服务端再拼一遍头像 URL 生成逻辑，两处必然漂移。
+       . '<button class="ow-rail-btn ow-rail-me" id="owRailMe" type="button" aria-label="个人主页"></button>'
        . '<button class="ow-rail-btn is-active" data-tab="chat" type="button" title="消息" aria-label="消息">' . ow_icon('chat', 20) . '<span class="ow-rail-lb">消息</span></button>'
        . '<button class="ow-rail-btn" data-tab="friends" type="button" title="联系人"'
          . ' aria-label="联系人' . ($friendPending > 0 ? '（' . $friendPending . ' 个待处理好友请求）' : '') . '">'
@@ -1649,6 +1655,13 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
              . '<span class="ow-dot" id="owNoticeDot" aria-hidden="true"' . ($noticeUnread > 0 ? '' : ' style="display:none"') . '></span></button>'
            : '')
        . Plugin::collect('sidebar.rail')
+       // v1.3.134：底部 ☰ = 账号菜单，装的就是原先点开侧栏个人栏的那四项
+       // （创建群聊 / 设置 / 管理后台 / 退出登录）。.ow-rail-foot 的 margin-top:auto 负责沉底，
+       // 所以它排在插件入口之后也没关系。游客没有账号可管，整颗按钮不渲染。
+       . (($actor['kind'] ?? '') === 'user'
+           ? '<div class="ow-rail-foot"><button class="ow-rail-btn ow-rail-menu" id="owRailMenu" type="button"'
+             . ' title="账号菜单" aria-label="账号菜单">' . ow_icon('menu', 20) . '</button></div>'
+           : '')
        . '</nav>';
 
     // 左侧栏
@@ -1673,9 +1686,9 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
        . '<ul class="ow-room-list ow-tab-panel" id="owNoticeList" data-panel="notice" style="display:none"></ul>'
        // 插件面板容器：由 OwChat 在切换时创建/复用，插件标签对应的内容挂这里
        . '<div class="ow-tab-panels" id="owSidePanels" style="display:none"></div>'
-       . '<div class="ow-me" id="owMe"></div>'
-       // 登录用户的操作入口收进个人资料区菜单（点击 owMe 弹出）；游客仍直接给登录按钮
-       . ($user ? '' : '<div class="ow-side-actions"><a class="ow-btn ow-btn-ghost" href="?page=register">注册</a><a class="ow-btn ow-btn-primary" href="?page=login">登录</a></div>')
+       // v1.3.134：侧栏底部的个人栏（#owMe：头像+昵称+ID，点开操作菜单）整块撤销 ——
+       // 头像上移到 rail 顶部（#owRailMe），操作菜单下移到 rail 底部（#owRailMenu），
+       // 游客原先放在这里的「注册 / 登录」两个按钮一并撤掉，入口改走 rail 顶部头像。
        . '</aside>';
 
     // 主聊天区

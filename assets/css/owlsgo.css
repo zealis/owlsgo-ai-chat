@@ -1054,6 +1054,14 @@ input[type=range] {
     align-items: center; -webkit-align-items: center;
     gap: 4px;
 }
+/* v1.3.134：rail 顶部 = 当前身份头像（侧栏底部个人栏搬上来的）。按钮完全沿用
+   .ow-rail-btn 的 40×40 与 hover 灰底（灰底方块 + 圆头像，和下面那组入口同一套语言），
+   头像本身取 .ow-avatar-md（32px）档，四周各留 4px。
+   与「消息」之间在 gap 4px 之上再多 2px —— 它不是切面板的入口，得跟那一组拉开一点。
+   描边用 inset box-shadow 而不是 border：加 border 会改变盒子尺寸（这里没开
+   box-sizing:border-box），32px 的头像会被挤成 30px。 */
+.ow-rail-me { margin-bottom: 2px; }
+.ow-rail-me .ow-avatar { box-shadow: inset 0 0 0 1px var(--ow-border); }
 
 /* v1.3.6：三栏主体容器 —— 品牌条之下的全部横向空间。
    min-height:0 与 .ow-main 的 min-height:0 是同一条链上的规矩：
@@ -1530,46 +1538,10 @@ input[type=range] {
     border-radius: 3px;
     vertical-align: 2px;
 }
-.ow-me {
-    display: flex; display: -webkit-flex;
-    align-items: center; -webkit-align-items: center;
-    gap: 10px;
-    padding: 12px 16px;
-    border-top: 1px solid var(--ow-border);
-}
-/* v1.2.39：昵称强制单行，超出省略号。
-   原先 `.ow-me-name` 没有任何截断规则，昵称长一点就**在资料区里换行**，
-   把下面的「ID」那行整块往下顶，资料区高度也跟着变 —— 侧栏底部会忽然变高。
-   三个条件缺一不可：
-     min-width:0      在 flex 容器里允许收缩到内容宽度以下（否则 flex 项不肯缩）
-     white-space:nowrap  不换行
-     overflow:hidden + text-overflow:ellipsis  溢出画省略号
-   `flex:0 1 auto` = 可缩不可扩：短昵称照原样，长昵称才截断。 */
-.ow-me-name {
-    font-weight: 600;
-    color: var(--ow-text-title);
-    flex: 0 1 auto; -webkit-flex: 0 1 auto;
-    min-width: 0; -webkit-min-width: 0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-/* 登录用户的资料区可点击（弹出操作菜单） */
-.ow-me-click { cursor: pointer; transition: background .15s; }
-/* v1.2.55：资料区在灰底侧栏里，hover 改 --ow-bg-chat-hover（原 --ow-bg-sub 与底色同色） */
-.ow-me-click:hover { background: var(--ow-bg-chat-hover); }
-.ow-me-info { min-width: 0; flex: 1; -webkit-flex: 1; }
-/* 昵称行**不换行**：头衔标签固定在昵称右侧（原来 wrap 会让标签掉到第二行） */
-.ow-me-line {
-    display: flex; display: -webkit-flex;
-    align-items: center; -webkit-align-items: center;
-    gap: 6px;
-    flex-wrap: nowrap; -webkit-flex-wrap: nowrap;
-    min-width: 0; -webkit-min-width: 0;
-}
-/* 头衔标签不参与收缩：昵称被截断时标签仍要完整可读 */
-.ow-me-line .ow-tag { flex-shrink: 0; -webkit-flex-shrink: 0; }
-.ow-side-actions { display: flex; display: -webkit-flex; gap: 8px; padding: 0 16px 14px; flex-wrap: wrap; -webkit-flex-wrap: wrap; }
+/* v1.3.134：侧栏底部个人栏（.ow-me / .ow-me-click / .ow-me-info / .ow-me-line /
+   .ow-me-name）与游客的 .ow-side-actions 整块删除 —— 头像搬到 rail 顶部（.ow-rail-me），
+   操作菜单搬到 rail 底部（.ow-rail-foot + .ow-rail-menu），游客的登录/注册改走头像点开
+   的菜单。原先那套「昵称强制单行截断、否则资料区忽然变高」的规则随容器一起作废。 */
 
 /* 主区域 */
 .ow-main {
