@@ -2288,9 +2288,37 @@
                 while (t && t !== bar && !t.getAttribute('data-tab')) t = t.parentNode;
                 if (!t || t === bar) return;
                 var tab = t.getAttribute('data-tab');
-                if (tab) self.switchTab(tab);
+                if (!tab) return;
+                // v1.3.126：点的就是当前那个入口 → 收起/展开左侧栏（再点一次放回来）。
+                // switchTab 对同一个标签是直接 return 的，所以这一支必须在它前面判。
+                if (tab === self.view) { self.toggleSidebar(); return; }
+                self.switchTab(tab);
             };
             this._tabsInited = true;
+        },
+
+        /**
+         * 收起 / 展开左侧栏（宽屏）。收起后 240px 让给消息区，rail 仍留在原地。
+         * 窄屏（≤720px）直接不管：那边侧栏本来就是左移离屏的抽屉，由顶栏汉堡
+         * #owToggleSide 与遮罩开合，再叠一层状态只会互相打架。
+         */
+        setSidebarCollapsed: function (on) {
+            var s = $('owSidebar');
+            if (!s) return;
+            if ((d.documentElement.clientWidth || w.innerWidth || 1024) <= 720) return;
+            var has = (' ' + s.className + ' ').indexOf(' ow-side-collapsed ') >= 0;
+            if (has === !!on) return;
+            // 只加减这一个类：侧栏上还可能挂着别的类（窄屏的 open、插件自加的样式类），
+            // 整体重写 className 会把它们抹掉。
+            if (s.classList) { s.classList[on ? 'add' : 'remove']('ow-side-collapsed'); return; }
+            s.className = trimCls(s.className.replace(/\bow-side-collapsed\b/g, '') + (on ? ' ow-side-collapsed' : ''));
+        },
+
+        /** 当前是展开就收起、是收起就展开 */
+        toggleSidebar: function () {
+            var s = $('owSidebar');
+            if (!s) return;
+            this.setSidebarCollapsed((' ' + s.className + ' ').indexOf(' ow-side-collapsed ') < 0);
         },
 
         /** @deprecated v1.3.4：控件已改为 rail，保留旧名仅为兼容外部/插件调用 */
@@ -2299,6 +2327,9 @@
         /** 切到指定标签（核心与插件标签统一入口） */
         switchTab: function (tab) {
             if (!tab) return;
+            // v1.3.126：任何「切到某入口」的调用都先把侧栏放出来 —— 收起状态下从顶栏点通知
+            // 红点、或插件直接调 switchTab，面板还藏在 display:none 里，等于点了没反应。
+            this.setSidebarCollapsed(false);
             if (tab === this.view) return;
             this.view = tab;
             // 离开「联系人」标签时，好友通知页随之作废（顶栏那几样要还回房间）

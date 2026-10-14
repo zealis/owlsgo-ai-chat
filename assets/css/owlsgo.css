@@ -1000,6 +1000,13 @@ input[type=range] {
     flex-direction: column; -webkit-flex-direction: column;
     flex-shrink: 0; -webkit-flex-shrink: 0;
 }
+/* v1.3.126：rail 上再点当前入口 = 收起整条侧栏（OwChat.setSidebarCollapsed 挂这个类），
+   240px 让给消息区，rail 留在原地当开关。
+   ⚠️ 只在 >720px 生效：窄屏 .ow-sidebar 是左移离屏的抽屉（.open 开出），
+   这里再 display:none 就把抽屉彻底焊死了，那边的开合仍归顶栏汉堡 #owToggleSide 管。 */
+@media (min-width: 721px) {
+    .ow-sidebar.ow-side-collapsed { display: none; }
+}
 .ow-brand {
     display: flex; display: -webkit-flex;
     align-items: center; -webkit-align-items: center;
