@@ -47,6 +47,9 @@
        因为后者还被 .ow-msg.mine（自己消息气泡底色）共用 —— 那是**非选中**场景，
        跟「当前选中行」语义无关，不能一起改。 */
     --ow-active-bg: #E4E4E4;
+    /* v1.3.120：设置弹窗左侧导航栏的底色（站方指定 #F7F7F7）。
+       比白卡片深一档、又比 hover(#E8E8E8) 浅一档 —— 底色/hover/选中三层要拉得开。 */
+    --ow-navset-bg: #F7F7F7;
     --ow-font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
     --ow-mono: Consolas, Monaco, "Courier New", monospace;
     /* v1.1.17：顶栏高度带。实测 = padding 10+10 + 图标钮 36 + 下边框 1 = 57px。
@@ -196,6 +199,7 @@
     flex-direction: column; -webkit-flex-direction: column;
     gap: 4px; -webkit-gap: 4px;
     flex: 0 0 128px; -webkit-flex: 0 0 128px;
+    background: var(--ow-navset-bg);
 }
 .ow-navset-item {
     display: flex; display: -webkit-flex;
@@ -215,7 +219,10 @@
     -webkit-transition: background .15s;
 }
 .ow-navset-item:hover { background: var(--ow-hover-bg); }
-.ow-navset-item.is-active { background: var(--ow-bg-sub); font-weight: 600; }
+/* 选中态用 --ow-active-bg 而不是 --ow-bg-sub：导航栏整条有底色(#F7F7F7)之后，
+   #F5F5F5 与它只差 2 档、几乎看不出来；#E4E4E4 才拉得开，且比 hover(#E8E8E8) 更深一档
+   —— 这条写在 :hover 后面，鼠标停在已选中项上不会「越悬停越浅」。 */
+.ow-navset-item.is-active { background: var(--ow-active-bg); font-weight: 600; }
 .ow-navset-ico { display: block; -webkit-flex: none; flex: none; opacity: .8; }
 .ow-navset > .ow-pagetab-panel {
     flex: 1 1 auto; -webkit-flex: 1 1 auto;
@@ -291,6 +298,7 @@
     --ow-blue-light: #14323F;       /* 浅蓝底 → 深青底 */
     --ow-hover-bg: #303035;         /* hover（同上，深底更亮） */
     --ow-active-bg: #35353B;        /* 选中态：比 hover 再亮一档 */
+    --ow-navset-bg: #242427;        /* 左侧导航栏底色：比主背景(#1C1C1E)亮一档（浅色下是深一档） */
     --ow-surface: #2A2A2E;          /* 卡片/气泡的"面" */
     --ow-surface-2: #232326;        /* 通栏条（顶栏/页头） */
     --ow-panel-bg: #242428;         /* 带边框内容块 */
