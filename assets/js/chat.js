@@ -4281,11 +4281,10 @@
                     + '<div class="ow-card-sub">ID ' + esc(fmtUid(u.id)) + '</div>'
                     + '</div></div>'
                     // v1.2.42：扩展点输出**前置** —— 等级等插件行固定在 meta 最上面，
-                    // 排在「积分 / 注册」之前，且不随插件注册顺序漂移。
+                    // 排在「注册」之前，且不随插件注册顺序漂移。
+                    // v1.3.127：原「积分」那一行按站方要求整块删除（不是改成条件显示）。
                     + '<div class="ow-card-meta">'
                     + self.cardMetaTopHtml(u)
-                    + '<div class="ow-card-meta-row"><span class="ow-card-meta-k">积分</span>'
-                    + '<span class="ow-card-meta-v">' + esc(u.points || 0) + '</span></div>'
                     + '<div class="ow-card-meta-row"><span class="ow-card-meta-k">注册</span>'
                     + '<span class="ow-card-meta-v">' + esc(regDate) + '</span></div>'
                     + '</div>'
@@ -5043,7 +5042,7 @@
                 el.innerHTML = avatarHtml(me.avatar, me.nickname, false, me.role)
                     + '<div class="ow-me-info">'
                     + '<div class="ow-me-line"><span class="ow-me-name">' + esc(me.nickname) + '</span>' + (me.title ? '<span class="ow-tag ow-tag-title">' + esc(me.title) + '</span>' : '') + '</div>'
-                    + '<div style="font-size:11px;color:var(--ow-text-sub)">ID ' + esc(fmtUid(me.id || 0)) + ' · 积分 ' + esc(me.points || 0) + '</div></div>';
+                    + '<div style="font-size:11px;color:var(--ow-text-sub)">ID ' + esc(fmtUid(me.id || 0)) + '</div></div>';
                 el.onclick = function (e) {
                     // 阻止冒泡：否则 document 级「点击菜单外关闭」会立刻把刚打开的菜单关掉
                     e = e || w.event;
