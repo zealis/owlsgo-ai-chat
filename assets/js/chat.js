@@ -1210,6 +1210,63 @@
     }
 
     /* ==========================================================================
+       owTabs：通用分组标签（v1.3.113）
+       ========================================================================== */
+    /**
+     * 结构契约与配色见 owlsgo.css 的 .ow-tabs 注释。
+     * ⚠️ 作用域 = 标签条的父节点，面板必须是它的直接子元素：
+     * 一个页面里两组标签（比如后台某页 + 弹窗）才会互不干扰。
+     * 标签条上写 onclick="owTabs.click(this, event)" 即可，不需要初始化脚本 ——
+     * 后台页与弹窗都是 innerHTML 注入的，逐个绑监听会在重绘后失效。
+     */
+    var owTabs = {
+        /** 生成一个标签按钮（PHP 侧拼同样的 HTML 也行，两边结构一致） */
+        html: function (name, label, sub) {
+            return '<button type="button" class="ow-pagetab" data-tab="' + esc(name) + '">'
+                + '<b>' + esc(label) + '</b>' + (sub ? '<span>' + esc(sub) + '</span>' : '') + '</button>';
+        },
+        /** 标签条的点击委托入口 */
+        click: function (bar, e) {
+            var t = e ? e.target : null;
+            while (t && t !== bar && !(t.getAttribute && t.getAttribute('data-tab'))) t = t.parentNode;
+            if (t && t !== bar) owTabs.show(bar, t.getAttribute('data-tab'));
+        },
+        /** 切到某个分组：只改显隐，输入框始终在 DOM 里（切走再切回不丢未保存的编辑） */
+        show: function (bar, name) {
+            if (!bar) return;
+            var i, n;
+            // 标签按钮在**条内**，面板在条的**父节点下** —— 两层各有各的走法。
+            // 早先只走了父节点，结果面板切得动、标签永远不高亮（第一版实测抓出来的）。
+            for (i = 0; i < bar.children.length; i++) {
+                n = bar.children[i];
+                if (n.getAttribute && n.getAttribute('data-tab') !== null) {
+                    n.className = 'ow-pagetab' + (n.getAttribute('data-tab') === name ? ' is-active' : '');
+                }
+            }
+            var scope = bar.parentNode;
+            if (!scope) return;
+            for (i = 0; i < scope.children.length; i++) {
+                n = scope.children[i];
+                if (n === bar || !n.getAttribute) continue;
+                if (n.getAttribute('data-pane') !== null) {
+                    n.style.display = n.getAttribute('data-pane') === name ? '' : 'none';
+                }
+            }
+        },
+        /** 当前选中的分组名（插件偶尔要按分组决定校验哪几个字段） */
+        current: function (bar) {
+            if (!bar) return '';
+            var i, n;
+            for (i = 0; i < bar.children.length; i++) {
+                n = bar.children[i];
+                if (n.getAttribute && n.getAttribute('data-tab') !== null
+                    && (' ' + n.className + ' ').indexOf(' is-active') >= 0) return n.getAttribute('data-tab');
+            }
+            return '';
+        }
+    };
+
+    /* ==========================================================================
        OwAuth：登录 / 注册 / 找回密码
        ========================================================================== */
     var OwAuth = {
@@ -5491,12 +5548,12 @@
             // 也挂在 saveSettings 上），放进某个标签里会让「在账号页点不到保存」变成新问题。
             this.openModal(
                 '<h3>个人设置</h3>'
-                + '<div class="ow-set-tabs" id="owSetTabs">'
-                + this.setTabHtml('prof', '资料')
-                + this.setTabHtml('look', '外观')
-                + this.setTabHtml('acct', '账号')
+                + '<div class="ow-pagetabs" id="owSetTabs" onclick="owTabs.click(this, event)">'
+                + owTabs.html('prof', '资料')
+                + owTabs.html('look', '外观')
+                + owTabs.html('acct', '账号')
                 + '</div>'
-                + '<div class="ow-set-pane" data-setpane="prof">'
+                + '<div class="ow-pagetab-panel" data-pane="prof">'
                 // 头像置顶：点击当前头像即触发上传（不另设上传按钮）
                 + '<div class="ow-set-avatar">'
                 + '<span id="owSetAvatarPreview" class="ow-set-avatar-btn" title="点击设置头像" onclick="OwChat.openAvatarDialog(\'me\')">'
@@ -5506,7 +5563,7 @@
                 + '<div class="ow-form-item"><label>昵称</label><input class="ow-input" id="owSetNick" value="' + esc(me.nickname) + '">'
                 + '<p style="font-size:12px;color:var(--ow-text-sub);margin-top:4px">2-20 个字符，支持中英文、数字、下划线与短横线，不含空格或 @；允许重名。</p></div>'
                 + '</div>'
-                + '<div class="ow-set-pane" data-setpane="look" style="display:none">'
+                + '<div class="ow-pagetab-panel" data-pane="look" style="display:none">'
                 // v1.2.37：第三方应用授权已剥离为插件 oauth-core，**按需加载**。
                 // 入口按钮按 window.OwOauth 是否存在来渲染 —— 插件停用时它的 chat.js
                 // 不加载，这里自然什么都不显示，核心不需要任何开关判断。
@@ -5520,7 +5577,7 @@
                 + '<p class="ow-form-hint">跟随系统会随操作系统的深浅色设置自动切换。</p>'
                 + '</div>'
                 + '</div>'
-                + '<div class="ow-set-pane" data-setpane="acct" style="display:none">'
+                + '<div class="ow-pagetab-panel" data-pane="acct" style="display:none">'
                 + ((w.OwOauth) ? '<div class="ow-form-item"><label>第三方授权</label>'
                     + '<button class="ow-btn ow-btn-ghost ow-btn-block" onclick="OwOauth.open()">管理应用授权</button>'
                     + '<p style="font-size:12px;color:var(--ow-text-sub);margin-top:4px">'
@@ -5549,41 +5606,10 @@
                 self.avatarCrop(this.files[0]);
                 this.value = '';
             };
-            this.bindSetTabs();
-            // 打开时归位到「资料」：选中态只由 settingsTab 一处负责，
-            // 不在 HTML 里预写 active —— 两处各写一份迟早出现「面板开着、标签没高亮」。
-            this.settingsTab('prof');
-        },
-
-        setTabHtml: function (name, label) {
-            return '<button type="button" class="ow-set-tab" data-settab="' + name + '" onclick="OwChat.settingsTab(\'' + name + '\')">'
-                + esc(label) + '</button>';
-        },
-
-        /** 事件委托：标签是弹窗 innerHTML 渲染的，逐个绑会在重绘后失效 */
-        bindSetTabs: function () {
+            // 打开时归位到「资料」：选中态只由 owTabs.show 一处负责，不在 HTML 里预写 active，
+            // 两处各写一份迟早出现「面板开着、标签没高亮」（v1.3.112 就漏过一次）。
             var bar = $('owSetTabs');
-            if (!bar || bar._bound) return;
-            bar._bound = true;
-            var self = this;
-            bar.onclick = function (e) {
-                var t = e.target;
-                while (t && t !== bar && !(t.getAttribute && t.getAttribute('data-settab'))) t = t.parentNode;
-                if (t && t !== bar) self.settingsTab(t.getAttribute('data-settab'));
-            };
-        },
-
-        /** 切到某个分组：只改显隐，输入框始终在 DOM 里（切走再切回不丢未保存的编辑） */
-        settingsTab: function (name) {
-            var tabs = document.querySelectorAll('.ow-set-tab'), i;
-            for (i = 0; i < tabs.length; i++) {
-                var on = tabs[i].getAttribute('data-settab') === name;
-                tabs[i].className = 'ow-set-tab' + (on ? ' active' : '');
-            }
-            var panes = document.querySelectorAll('.ow-set-pane');
-            for (i = 0; i < panes.length; i++) {
-                panes[i].style.display = panes[i].getAttribute('data-setpane') === name ? '' : 'none';
-            }
+            if (bar) owTabs.show(bar, 'prof');
         },
 
         /* ---------- 修改登录密码（v1.3.55） ----------
@@ -7734,6 +7760,8 @@
     w.owTr = owTr;
     // 开关（State 按钮）通用轮子：前后台与插件共用同一套 HTML 与绑定逻辑
     w.switchHtml = switchHtml; w.bindSwitches = bindSwitches;
+    // 分组标签通用轮子（v1.3.113）：前台个人设置与插件后台页同一套 HTML / 显隐逻辑
+    w.owTabs = owTabs;
     w.OwTip = OwTip;   // 表单说明气泡（v1.2.45），核心已自动启用，插件直接用 OwTip.scan()
 
     /* ==========================================================================

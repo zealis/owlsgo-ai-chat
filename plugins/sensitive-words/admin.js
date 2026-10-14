@@ -1,8 +1,9 @@
 /**
- * 垃圾信息控制插件 - 后台交互（v1.3.107）
- * 全局对象 OwSW；依赖 OwApi / esc / toast / owTr / OwAdmin.uiPager / OwAdmin.uiBatchBar / OwApi.secure
+ * 垃圾信息控制插件 - 后台交互（v1.3.113）
+ * 全局对象 OwSW；依赖 OwApi / esc / toast / owTr / owTabs / OwAdmin.uiPager / OwAdmin.uiBatchBar / OwApi.secure
  *
- * 页面是五个标签共用一张卡片：标签只切换 .ow-spam-pane 的显隐。
+ * 页面是五个标签共用一张卡片；标签的显隐归核心通用轮子 owTabs（v1.3.113）——
+ * 标签条上的 onclick="owTabs.click(this, event)" 就是全部接线，插件侧不再有一份。
  * 词库与访问申诉两张表都接核心的列表轮子（批量条 + 全选列 + .ow-table-wrap + uiPager）。
  *
  * ⚠️ 凡是写进**已存在节点**的文案（统计位、判定结果、确认弹窗）必须自己过 owTr：
@@ -47,31 +48,8 @@
             // 只圈本插件那张卡片：init 可能在其它后台页也跑，绑到 document 会把别人的开关重复绑。
             var card = $('owSpamTabs') && $('owSpamTabs').parentNode;
             if (card && w.bindSwitches) w.bindSwitches(card);
-            this.bindTabs();
             this.list(1);
             this.appealList(1);
-        },
-
-        /* ---------- 标签切换 ---------- */
-        bindTabs: function () {
-            var bar = $('owSpamTabs');
-            if (!bar || bar._bound) return;
-            bar._bound = true;
-            // 事件委托：标签是后台页 innerHTML 注入的，逐个绑 onclick 会在重绘后失效
-            bar.onclick = function (e) {
-                var t = e.target;
-                while (t && t !== bar && !(t.getAttribute && t.getAttribute('data-tab'))) t = t.parentNode;
-                if (t && t !== bar) w.OwSW.tab(t.getAttribute('data-tab'));
-            };
-        },
-
-        tab: function (name) {
-            var i, els = d.querySelectorAll('.ow-spam-tab');
-            for (i = 0; i < els.length; i++) els[i].className = 'ow-spam-tab' + (els[i].getAttribute('data-tab') === name ? ' active' : '');
-            var panes = d.querySelectorAll('.ow-spam-pane');
-            for (i = 0; i < panes.length; i++) {
-                panes[i].style.display = panes[i].getAttribute('data-pane') === name ? '' : 'none';
-            }
         },
 
         /* ---------- 分组保存 ---------- */

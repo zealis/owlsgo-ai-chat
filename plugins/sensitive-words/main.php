@@ -529,15 +529,18 @@ Plugin::adminPage('sensitive-words', '垃圾信息控制', function () {
     ];
     $h = '<h2>垃圾信息控制</h2><p class="ow-admin-desc">敏感词、刷屏、链接域名、访问申诉、AI 审核集中在一页管理。'
         . '每个标签独立保存，改动即时生效。</p>';
-    $h .= '<div class="ow-card"><div class="ow-spam-tabs" id="owSpamTabs">';
+    // 分组标签用核心通用轮子 owTabs（v1.3.113）：结构与配色都在 owlsgo.css / chat.js，
+    // 这里只出 HTML；点击走标签条上的 onclick 委托，插件侧不再写一份显隐逻辑。
+    // 首个标签的 is-active 与其它面板的 display:none 都由这里一次性写定，是这一页的唯一真相。
+    $h .= '<div class="ow-card"><div class="ow-pagetabs" id="owSpamTabs" onclick="owTabs.click(this, event)">';
     foreach ($tabs as $i => $t) {
-        $h .= '<button type="button" class="ow-spam-tab' . ($i === 0 ? ' active' : '') . '" data-tab="' . $t[0] . '">'
+        $h .= '<button type="button" class="ow-pagetab' . ($i === 0 ? ' is-active' : '') . '" data-tab="' . $t[0] . '">'
             . '<b>' . $t[1] . '</b><span>' . $t[2] . '</span></button>';
     }
     $h .= '</div>';
 
     /* ---------- ① 敏感词 ---------- */
-    $h .= '<div class="ow-spam-pane" data-pane="words">'
+    $h .= '<div class="ow-pagetab-panel ow-spam-pane" data-pane="words">'
         . '<div class="ow-form-row">'
         . '<div class="ow-form-item"><label>敏感词</label><input class="ow-input" id="owWWord"></div>'
         . '<div class="ow-form-item"><label>替换为</label><input class="ow-input" id="owWRep" value="***"></div>'
@@ -549,7 +552,7 @@ Plugin::adminPage('sensitive-words', '垃圾信息控制', function () {
         . '<div id="owSWPager"></div></div>';
 
     /* ---------- ② 刷屏 ---------- */
-    $h .= '<div class="ow-spam-pane" data-pane="flood" style="display:none">'
+    $h .= '<div class="ow-pagetab-panel ow-spam-pane" data-pane="flood" style="display:none">'
         . owSPnum('rate_win', '频率窗口(秒)', 'msg_rate_window', '10', '在这个时长内统计发送条数')
         . owSPnum('rate_max', '窗口内最多条数', 'msg_rate_max', '8', '超过就拒发，登录用户与游客同一套')
         . owSPnum('min_gap', '两条消息最小间隔(秒)', 'spam_min_gap', '0', '填 0 表示不限制；比窗口更细的一层')
@@ -558,7 +561,7 @@ Plugin::adminPage('sensitive-words', '垃圾信息控制', function () {
         . '<button class="ow-btn ow-btn-primary" onclick="OwSW.save(\'flood\')">保存刷屏设置</button></div>';
 
     /* ---------- ③ 域名 ---------- */
-    $h .= '<div class="ow-spam-pane" data-pane="domain" style="display:none">'
+    $h .= '<div class="ow-pagetab-panel ow-spam-pane" data-pane="domain" style="display:none">'
         . owSPswitch('domain_on', '启用域名过滤')
         . '<div class="ow-form-item"><label>域名名单</label>'
         . '<textarea class="ow-input" id="owSpam_domain_list" rows="8" style="font-family:Consolas,monospace" placeholder="每行一个，例如&#10;spam-site.com&#10;ads.example.net">'
@@ -573,7 +576,7 @@ Plugin::adminPage('sensitive-words', '垃圾信息控制', function () {
         . '<button class="ow-btn ow-btn-primary" onclick="OwSW.save(\'domain\')">保存域名设置</button></div>';
 
     /* ---------- ④ 访问申诉 ---------- */
-    $h .= '<div class="ow-spam-pane" data-pane="appeal" style="display:none">'
+    $h .= '<div class="ow-pagetab-panel ow-spam-pane" data-pane="appeal" style="display:none">'
         . owSPswitch('appeal_on', '允许申请恢复访问', '关闭后弹窗只剩「规则说明」，用户不能再提交申诉')
         . '<div class="ow-form-row">'
         . owSPnum('appeal_interval', '同一人申诉间隔(秒)', 'spam_appeal_interval', '300', '填 0 表示不限制')
@@ -595,7 +598,7 @@ Plugin::adminPage('sensitive-words', '垃圾信息控制', function () {
         . '<div id="owSpamAppealPager" style="margin-top:10px"></div></div>';
 
     /* ---------- ⑤ AI ---------- */
-    $h .= '<div class="ow-spam-pane" data-pane="ai" style="display:none">'
+    $h .= '<div class="ow-pagetab-panel ow-spam-pane" data-pane="ai" style="display:none">'
         . owSPswitch('ai_on', '启用 AI 防线')
         . '<div class="ow-form-item"><label>命中后</label><select class="ow-input" id="owSpam_ai_action">'
         . owSPopt('ai_action', 'record', '仅记录（不动消息，只写安全日志）')
