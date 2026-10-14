@@ -22,7 +22,7 @@
     --ow-bg-chat-grad: none;             /* 纯色，不需要渐变 */
     --ow-bg-chat-hover: #EBEBEB;         /* hover 反馈：略深一档的同色系灰 */
     --ow-border: #E0E4E8;            /* 装饰性分隔线（卡片/表格），非交互组件 */
-    --ow-border-control: #8C8C8C;    /* 输入控件边框：对白底 3.36:1，满足 UI 组件 3:1 */
+    --ow-border-control: #949494;    /* 输入控件边框：v1.3.122 由 #8C8C8C 调淡一档（对白底 3.03:1，仍守住 UI 组件 3:1） */
     --ow-text: #333333;
     --ow-text-sub: #5C5C5C;         /* 副文本：白底 6.69、浅灰底 6.23、徽章底 5.23 */
     --ow-text-title: #1A1A1A;
@@ -2190,6 +2190,9 @@ span.ow-panel-entry-ico.ow-avatar { width: 16px; height: 16px; line-height: 16px
     -webkit-flex: 1 1 auto; flex: 1 1 auto;
     min-height: 0;
     overflow-y: auto; overflow-x: hidden;
+    /* 面板自己滚动时，最后一块内容（往往是插件注入的区块，没有下边距）会紧贴面板底边，
+       与下方常驻的「保存」按钮挤成一块 —— 给底边留一档呼吸，滚到底也看得见分隔。 */
+    padding-bottom: 16px;
 }
 /* 弹窗说明文字与底部按钮行（密码房弹窗等复用） */
 .ow-modal-desc { font-size: 13px; color: var(--ow-text-sub); line-height: 1.6; margin-bottom: 14px; }
@@ -2542,6 +2545,9 @@ span.ow-panel-entry-ico.ow-avatar { width: 16px; height: 16px; line-height: 16px
     bottom: auto; top: -5px;
     border-top: none; border-bottom: 5px solid #2C2C2E;
 }
+/* v1.3.122：ⓘ 在裁剪容器（固定弹窗的面板 overflow:auto/hidden）里时，气泡改固定定位。
+   坐标由 OwTip.fixEdge 按视口写进 style.top/bottom/left，这里只负责脱离祖先的裁剪。 */
+.ow-tip-box.ow-tip-fixed { position: fixed; }
 
 /* ---------- 图文混排消息（type=rich，v1.3.86） ----------
    v1.3.88 起混排消息走**气泡**（.ow-msg-content）：它带文字，没气泡会显得半句话悬在空中。

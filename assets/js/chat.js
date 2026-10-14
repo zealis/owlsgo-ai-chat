@@ -238,10 +238,28 @@
             var vh = w.innerHeight || (d.documentElement ? d.documentElement.clientHeight : 0) || 0;
             var upRoom = bb.top - 8;
             var downRoom = vh - bb.bottom - 8;
+            var below = false;
             if (bh > upRoom && downRoom > upRoom) {
+                below = true;
                 if (box.className.indexOf('ow-tip-below') < 0) box.className += ' ow-tip-below';
             } else if (box.className.indexOf('ow-tip-below') >= 0) {
                 box.className = box.className.replace(' ow-tip-below', '');
+            }
+
+            /* v1.3.122：落在**内层**裁剪容器里才改固定定位（坐标按视口写）。
+               个人设置这类固定弹窗的面板是 overflow:auto/hidden，气泡按 CSS 默认
+               「开到 ⓘ 上方 20px」会被面板上边缘整条切掉 —— 实测「日夜模式」「第三方授权」
+               两条的气泡顶边在面板上方 57px，中心点 elementFromPoint 命中的是弹窗标题 H3，
+               一个字都看不见。固定定位不受祖先 overflow 裁剪（前提：祖先没有 transform，
+               本站弹窗/遮罩都没用 transform，改完实测气泡矩形与算出来的一致）。
+               ⚠️ 必须排除 body/html：聊天页 body 本身就是 overflow:hidden（锁滚动），
+               不排除会让**全站每个 ⓘ**都改走固定定位 —— 那不是这次要修的问题。
+               没有内层裁剪祖先的普通表单，行为与改动前逐字节一致。 */
+            var inner = edge && edge !== document.body && edge !== d.documentElement;
+            if (inner) {
+                if (box.className.indexOf('ow-tip-fixed') < 0) box.className += ' ow-tip-fixed';
+                box.style.top = below ? (bb.top + 20) + 'px' : 'auto';
+                box.style.bottom = below ? 'auto' : (vh - bb.bottom + 20) + 'px';
             }
 
             var bLeft = b.getBoundingClientRect().left;  // ⓘ 左缘（气泡锚点）
@@ -250,8 +268,8 @@
             if (left < availL) left = availL;
             if (left + bw > availR) left = availR - bw;
             if (left < availL) left = availL;
-            // 换算回相对 ⓘ 的偏移（ⓘ 是 position:relative 的定位基准）
-            box.style.left = (left - bLeft) + 'px';
+            // 固定定位时 left 就是视口坐标；绝对定位要换算回相对 ⓘ 的偏移
+            box.style.left = inner ? left + 'px' : (left - bLeft) + 'px';
             box.style.right = 'auto';
             box.style.transform = 'none';
 
@@ -265,6 +283,10 @@
                 b.__haTipCleanup = function () {
                     box.style.display = ''; box.style.left = ''; box.style.right = '';
                     box.style.maxWidth = ''; box.style.transform = '';
+                    box.style.top = ''; box.style.bottom = '';
+                    if (box.className.indexOf('ow-tip-fixed') >= 0) {
+                        box.className = box.className.replace(' ow-tip-fixed', '');
+                    }
                     box.style.removeProperty('--ow-tip-arrow');
                 };
                 b.addEventListener('mouseleave', b.__haTipCleanup, false);
