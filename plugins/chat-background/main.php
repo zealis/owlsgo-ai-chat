@@ -389,6 +389,8 @@ Plugin::route('plugin_chat_background_admin_list', function (array $ctx) use ($o
     foreach ($rows as $r) {
         $r['preview']  = owCBItemUrl($r);
         $r['kind_cn']  = ((string)$r['kind'] === 'svg') ? 'SVG 图案' : ((string)$r['kind'] === 'url' ? '远程链接' : '图片');
+        // source_cn 里的 unsplash 是历史值映射：v1.1.2 删了 Unsplash 搜索后不再新产生，
+        // 但存量行的 source 仍是 'unsplash'，去掉映射会让后台列表露出原始 slug
         $r['source_cn'] = ['preset' => '预设', 'admin' => '管理员上传', 'unsplash' => 'Unsplash', 'remote' => '远程链接'][(string)$r['source']] ?? (string)$r['source'];
         $r['updated_at'] = (int)$r['created_at'];
         $out[] = $r;
@@ -480,124 +482,6 @@ Plugin::route('plugin_chat_background_admin_config_save', function (array $ctx) 
     $owCBAdminGuard($ctx);
     $cfg = owCBSaveConfig($ctx['post']);
     Api::json(['ok' => true, 'msg' => '配置已保存', 'config' => $cfg]);
-});
-
-/**
- * Unsplash 搜索（后台代理）。
- * 走后端是为了：① 隐藏 Access Key；② 规避 CORS；③ 服务端可控超时。
- * 文档：GET https://api.unsplash.com/search/photos
- */
-Plugin::route('plugin_chat_background_admin_unsplash_search', function (array $ctx) use ($owCBAdminGuard) {
-    $owCBAdminGuard($ctx);
-    $cfg = owCBConfig();
-    $key = (string)$cfg['unsplash_key'];
-    if ($key === '') Api::json(['ok' => false, 'msg' => '未配置 Unsplash Access Key'], 400);
-    $q = trim((string)($ctx['post']['q'] ?? ''));
-    if ($q === '') Api::json(['ok' => false, 'msg' => '请输入关键词'], 400);
-    $page = max(1, (int)($ctx['post']['page'] ?? 1));
-    $per  = max(1, min(30, (int)($ctx['post']['per_page'] ?? 18)));
-    $url = 'https://api.unsplash.com/search/photos?query=' . urlencode($q)
-         . '&page=' . $page . '&per_page=' . $per
-         . '&orientation=landscape&content_filter=high';
-    $ch = curl_init($url);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT => 12,
-        CURLOPT_HTTPHEADER => [
-            'Authorization: Client-ID ' . $key,
-            'Accept: application/json',
-        ],
-        CURLOPT_USERAGENT => 'owlsgo-chat/' . OWLSGO_VERSION,
-    ]);
-    $raw = curl_exec($ch);
-    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $err = curl_error($ch);
-    curl_close($ch);
-    if ($raw === false) Api::json(['ok' => false, 'msg' => 'Unsplash 请求失败：' . $err], 502);
-    $j = json_decode((string)$raw, true);
-    if (!is_array($j)) Api::json(['ok' => false, 'msg' => 'Unsplash 返回解析失败'], 502);
-    if ($code !== 200) {
-        $msg = is_array($j) && isset($j['errors']) ? implode('; ', array_map(fn($e) => (string)($e ?? ''), $j['errors'])) : ('HTTP ' . $code);
-        Api::json(['ok' => false, 'msg' => $msg], 502);
-    }
-    $list = [];
-    foreach (($j['results'] ?? []) as $ph) {
-        $list[] = [
-            'id' => (string)($ph['id'] ?? ''),
-            'description' => (string)($ph['alt_description'] ?? $ph['description'] ?? ''),
-            'color' => (string)($ph['color'] ?? ''),
-            'thumb' => (string)($ph['urls']['small'] ?? $ph['urls']['thumb'] ?? ''),
-            'regular' => (string)($ph['urls']['regular'] ?? $ph['urls']['full'] ?? ''),
-            'author' => (string)($ph['user']['name'] ?? ''),
-            'html' => (string)($ph['links']['html'] ?? ''),
-        ];
-    }
-    Api::json([
-        'ok' => true,
-        'data' => $list,
-        'total' => (int)($j['total'] ?? 0),
-        'pages' => (int)($j['total_pages'] ?? 0),
-        'page' => $page,
-    ]);
-});
-
-/**
- * Unsplash 搜索（后台代理）。
- * 走后端是为了：① 隐藏 Access Key；② 规避 CORS；③ 服务端可控超时。
- * 文档：GET https://api.unsplash.com/search/photos
- */
-Plugin::route('plugin_chat_background_admin_unsplash_search', function (array $ctx) use ($owCBAdminGuard) {
-    $owCBAdminGuard($ctx);
-    $cfg = owCBConfig();
-    $key = (string)$cfg['unsplash_key'];
-    if ($key === '') Api::json(['ok' => false, 'msg' => '未配置 Unsplash Access Key'], 400);
-    $q = trim((string)($ctx['post']['q'] ?? ''));
-    if ($q === '') Api::json(['ok' => false, 'msg' => '请输入关键词'], 400);
-    $page = max(1, (int)($ctx['post']['page'] ?? 1));
-    $per  = max(1, min(30, (int)($ctx['post']['per_page'] ?? 18)));
-    $url = 'https://api.unsplash.com/search/photos?query=' . urlencode($q)
-         . '&page=' . $page . '&per_page=' . $per
-         . '&orientation=landscape&content_filter=high';
-    $ch = curl_init($url);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT => 12,
-        CURLOPT_HTTPHEADER => [
-            'Authorization: Client-ID ' . $key,
-            'Accept: application/json',
-        ],
-        CURLOPT_USERAGENT => 'owlsgo-chat/' . OWLSGO_VERSION,
-    ]);
-    $raw = curl_exec($ch);
-    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $err = curl_error($ch);
-    curl_close($ch);
-    if ($raw === false) Api::json(['ok' => false, 'msg' => 'Unsplash 请求失败：' . $err], 502);
-    $j = json_decode((string)$raw, true);
-    if (!is_array($j)) Api::json(['ok' => false, 'msg' => 'Unsplash 返回解析失败'], 502);
-    if ($code !== 200) {
-        $msg = is_array($j) && isset($j['errors']) ? implode('; ', array_map(fn($e) => (string)($e ?? ''), $j['errors'])) : ('HTTP ' . $code);
-        Api::json(['ok' => false, 'msg' => $msg], 502);
-    }
-    $list = [];
-    foreach (($j['results'] ?? []) as $ph) {
-        $list[] = [
-            'id' => (string)($ph['id'] ?? ''),
-            'description' => (string)($ph['alt_description'] ?? $ph['description'] ?? ''),
-            'color' => (string)($ph['color'] ?? ''),
-            'thumb' => (string)($ph['urls']['small'] ?? $ph['urls']['thumb'] ?? ''),
-            'regular' => (string)($ph['urls']['regular'] ?? $ph['urls']['full'] ?? ''),
-            'author' => (string)($ph['user']['name'] ?? ''),
-            'html' => (string)($ph['links']['html'] ?? ''),
-        ];
-    }
-    Api::json([
-        'ok' => true,
-        'data' => $list,
-        'total' => (int)($j['total'] ?? 0),
-        'pages' => (int)($j['total_pages'] ?? 0),
-        'page' => $page,
-    ]);
 });
 
 /* ============================ 用户路由 ============================ */

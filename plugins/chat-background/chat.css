@@ -204,36 +204,6 @@
 }
 .ow-cb-locked b { color: var(--ow-text); }
 
-/* 后台 Unsplash 结果 */
-.ow-cb-unsplash-card {
-    position: relative;
-    border: 1px solid var(--ow-border);
-    border-radius: 4px;
-    overflow: hidden;
-    cursor: pointer;
-    aspect-ratio: 4 / 3;
-    background: var(--ow-bg-sub);
-}
-.ow-cb-unsplash-card:hover { border-color: var(--ow-primary); }
-.ow-cb-unsplash-card img {
-    width: 100%; height: 100%;
-    object-fit: cover;
-    display: block;
-}
-.ow-cb-unsplash-card .ow-cb-unsplash-add {
-    position: absolute;
-    inset: 0;
-    background: rgba(0, 0, 0, .45);
-    color: #fff;
-    display: none;
-    -webkit-align-items: center;
-    align-items: center;
-    -webkit-justify-content: center;
-    justify-content: center;
-    font-size: 13px;
-}
-.ow-cb-unsplash-card:hover .ow-cb-unsplash-add { display: -webkit-flex; display: flex; }
-
 /* 后台背景库网格 */
 .ow-cb-admin-grid {
     display: grid;

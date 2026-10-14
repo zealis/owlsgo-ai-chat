@@ -1,7 +1,7 @@
 /* chat-background · 后台交互
  *
  * 全局对象 OwCB：
- *   - init()           初始化（读配置 + 列表 + 显示 Unsplash 卡片与否）
+ *   - init()           初始化（读配置 + 列表）
  *   - loadList()       加载背景库
  *   - saveCfg()        保存插件配置
  *   - openAdd()        打开「添加背景」弹窗（远程链接 / 上传）
@@ -9,8 +9,6 @@
  *   - toggle(id, en)   启用/停用
  *   - del(id)          删除（敏感）
  *   - importPresets()  从 设计文档/background 导入预设
- *   - unsplashSearch() 搜索 Unsplash
- *   - unsplashAdd(it)  把 Unsplash 图加入背景库
  *
  * 幂等：data-cb-inited 标记避免重复初始化。 */
 (function (w, d) {
@@ -21,8 +19,7 @@
 
     var state = {
         list: [], items: [], cfg: null, attachEnabled: false,
-        editing: null,
-        unsplash: { q: '', page: 1, pages: 1 }
+        editing: null
     };
 
     w.OwCB = {
@@ -37,29 +34,22 @@
                 if (!r || !r.ok) { toast((r && r.msg) || '读取配置失败'); return; }
                 state.cfg = r.config || {};
                 state.attachEnabled = !!r.attach_enabled;
-                var ml = $('owCBMinLevel'), uk = $('owCBUnsplashKey');
+                var ml = $('owCBMinLevel');
                 if (ml) ml.value = state.cfg.min_level_custom || '0';
-                if (uk) uk.value = state.cfg.unsplash_key || '';
-                // 未配置 Unsplash Key 时隐藏搜索卡
-                var uc = $('owCBUnsplashCard');
-                if (uc) uc.style.display = (state.cfg.unsplash_key || '') === '' ? 'none' : 'block';
             });
         },
 
         saveCfg: function () {
-            var ml = $('owCBMinLevel'), uk = $('owCBUnsplashKey');
-            if (!ml || !uk) { toast('表单未就绪'); return; }
+            var ml = $('owCBMinLevel');
+            if (!ml) { toast('表单未就绪'); return; }
             var mlv = parseInt(ml.value, 10);
             if (isNaN(mlv) || mlv < 0) { toast('等级阈值需为 ≥0 的整数'); return; }
             OwApi.post('plugin_chat_background_admin_config_save', {
-                min_level_custom: String(mlv),
-                unsplash_key: uk.value
+                min_level_custom: String(mlv)
             }, function (r) {
                 if (!r || !r.ok) { toast((r && r.msg) || '保存失败'); return; }
                 toast('配置已保存');
                 state.cfg = r.config;
-                var uc = $('owCBUnsplashCard');
-                if (uc) uc.style.display = (state.cfg.unsplash_key || '') === '' ? 'none' : 'block';
             });
         },
 
@@ -282,77 +272,6 @@
                     toast(r.msg);
                     OwCB.loadList();
                 });
-            });
-        },
-
-        /* ---------- Unsplash 搜索 ---------- */
-        unsplashSearch: function (page) {
-            var q = $('owCBUnsplashQ').value.trim();
-            if (!q) { toast('请输入关键词'); return; }
-            state.unsplash.q = q;
-            state.unsplash.page = page || 1;
-            OwApi.post('plugin_chat_background_admin_unsplash_search', {
-                q: q, page: state.unsplash.page, per_page: 18
-            }, function (r) {
-                if (!r || !r.ok) { toast((r && r.msg) || '搜索失败'); return; }
-                state.unsplash.pages = r.pages || 1;
-                OwCB.renderUnsplash(r.data || []);
-                OwCB.renderUnsplashPager();
-            });
-        },
-
-        renderUnsplash: function (rows) {
-            var box = $('owCBUnsplashResults');
-            if (!box) return;
-            if (!rows.length) {
-                box.innerHTML = '<p style="color:var(--ow-text-sub);font-size:13px;grid-column:1/-1;padding:8px 0">无结果</p>';
-                return;
-            }
-            // 缓存结果到 state，避免在 onclick 里塞转义后的字符串导致引号冲突。
-            state.unsplashRows = rows;
-            var h = '';
-            for (var i = 0; i < rows.length; i++) {
-                var p = rows[i];
-                h += '<div class="ow-cb-unsplash-card" data-cb-unsplash-idx="' + i + '" title="' + esc(p.description || '') + '">'
-                    + '<img src="' + esc(p.thumb) + '" alt="" loading="lazy">'
-                    + '<div class="ow-cb-unsplash-add">+ 加入背景库</div>'
-                    + '</div>';
-            }
-            box.innerHTML = h;
-            // 用事件代理绑定点击（避免 inline onclick 的字符串转义问题）
-            var cards = box.querySelectorAll('.ow-cb-unsplash-card');
-            for (var j = 0; j < cards.length; j++) {
-                (function (idx) {
-                    cards[j].onclick = function () { OwCB.unsplashAdd(idx); };
-                })(j);
-            }
-        },
-
-        renderUnsplashPager: function () {
-            var box = $('owCBUnsplashPager');
-            if (!box) return;
-            if (typeof OwAdmin === 'undefined' || !OwAdmin.uiPager) {
-                box.innerHTML = '第 ' + state.unsplash.page + ' / ' + state.unsplash.pages + ' 页 '
-                    + (state.unsplash.page > 1 ? '<a href="javascript:;" onclick="OwCB.unsplashSearch(' + (state.unsplash.page - 1) + ')">上一页</a> ' : '')
-                    + (state.unsplash.page < state.unsplash.pages ? '<a href="javascript:;" onclick="OwCB.unsplashSearch(' + (state.unsplash.page + 1) + ')">下一页</a>' : '');
-                return;
-            }
-            OwAdmin.uiPager('owCBUnsplashPager', state.unsplash.page, state.unsplash.pages, 1, function (pg) {
-                OwCB.unsplashSearch(pg);
-            });
-        },
-
-        unsplashAdd: function (idx) {
-            var p = (state.unsplashRows || [])[idx];
-            if (!p) return;
-            OwApi.post('plugin_chat_background_admin_save', {
-                id: 0, name: (p.description || p.author || 'Unsplash').slice(0, 120),
-                kind: 'url', source: 'unsplash', url: p.regular, file: '', thumb: '',
-                enabled: 1, sort_order: 0
-            }, function (r) {
-                if (!r || !r.ok) { toast((r && r.msg) || '添加失败'); return; }
-                toast('已加入背景库');
-                OwCB.loadList();
             });
         }
     };
