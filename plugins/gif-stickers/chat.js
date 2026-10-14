@@ -393,8 +393,19 @@
     function mount() {
         var box = $('owToolFirst');
         if (!box) return;                       // 核心没有这个锚点（旧版本），安静退出
-        box.innerHTML = '<button class="ow-icon-btn" id="owBtnGif" type="button" title="表情包" aria-label="表情包">' + icon() + '</button>';
-        $('owBtnGif').onclick = function (e) {
+        if ($('owBtnGif')) return;              // 幂等：重复执行不重复注入
+        var btn = d.createElement('button');
+        btn.className = 'ow-icon-btn';
+        btn.id = 'owBtnGif';
+        btn.type = 'button';
+        btn.title = '表情包';
+        btn.setAttribute('aria-label', '表情包');
+        btn.innerHTML = icon();
+        // ⚠️ 必须是 appendChild 追加，不能 box.innerHTML 整体覆盖：
+        //    #owToolFirst 是**共享锚点**，群聊脚本等插件也往这里注入按钮，
+        //    覆盖写法下「谁后加载谁赢」——本插件曾被后加载的插件整个冲掉过。
+        box.appendChild(btn);
+        btn.onclick = function (e) {
             if (e && e.stopPropagation) e.stopPropagation(); else w.event.cancelBubble = true;
             toggle();
         };
