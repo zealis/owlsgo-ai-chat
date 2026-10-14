@@ -720,6 +720,9 @@ class Plugin
                 'crons' => (int)($stats['crons'] ?? 0),
             ];
         }
+        // 启用的排上面、未启用的沉底（站方 2026-10-14 要求）。**只加这一条排序键**：
+        // PHP 8 的 usort 是稳定排序，同组内保持原来的目录序，不顺手把列表打乱重排。
+        usort($out, fn(array $a, array $b): int => $b['enabled'] <=> $a['enabled']);
         return $out;
     }
 
