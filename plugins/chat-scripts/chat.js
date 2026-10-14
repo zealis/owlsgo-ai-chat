@@ -1,0 +1,346 @@
+/**
+ * chat-scripts · 群聊脚本 · 前台话术面板
+ *
+ * 入口：往核心输入工具栏锚点 #owToolFirst 注入「话术」按钮（与表情包插件同一约定，
+ *      核心零分支；插件停用则按钮不出现）。面板挂到 #owEmojiPanel 的父节点上，
+ *      复用 .ow-emoji-panel 那套绝对定位坐标系（移动端核心已有 92% 宽适配）。
+ *
+ * 交互：点击条目 = 插入输入框光标处（可改完再发）；点「发送」= 直接发出。
+ *       私聊视图下两种操作都自动走私聊通道（OwChat.send 内部改写，与手动发消息一致）。
+ *
+ * 兼容老浏览器：纯 ES5 + var/function，不用箭头函数 / let / fetch / 模板串。
+ * 依赖核心暴露的 OwApi / esc / toast / OwChat（send / openModal / confirm / icon）。
+ */
+(function (w, d) {
+    'use strict';
+
+    // 后台页 / 登录页 / 安装页也会加载合并脚本：没有 OwChat.cfg 直接退出（幂等防重复注入）
+    if (!w.OwChat || !OwChat.cfg) return;
+    if (w.__owCsLoaded) return;
+    w.__owCsLoaded = true;
+
+    var $ = function (id) { return d.getElementById(id); };
+    var A = 'plugin_chat_scripts_';
+    var esc = w.esc, toast = w.toast;
+
+    var CS = {
+        data: null,      // { public:[], mine:[], guest:0|1 }
+        tab: 'public',   // 当前分组：public 公共 / mine 我的
+        q: '',
+        opened: false,
+        mgId: 0          // 管理弹窗正在编辑的话术 id（0 = 新增）
+    };
+    w.OwCS = CS;
+
+    /* ---------- 工具栏按钮 ---------- */
+
+    function icon() {
+        return OwChat.icon('chat', 16);
+    }
+
+    function mount() {
+        var box = $('owToolFirst');
+        if (!box) return;                       // 核心没有这个锚点（旧版本）：安静退出
+        box.innerHTML = '<button class="ow-icon-btn" id="owBtnCs" type="button" title="群聊脚本" aria-label="群聊脚本">'
+            + icon() + '</button>';
+        $('owBtnCs').onclick = function (e) {
+            if (e && e.stopPropagation) e.stopPropagation(); else w.event.cancelBubble = true;
+            CS.opened ? close() : open();
+        };
+        // 点面板与按钮以外的地方收起（与表情面板同一交互预期）
+        d.addEventListener ? d.addEventListener('click', onDocClick, false) : (d.onclick = onDocClick);
+    }
+
+    function onDocClick(e) {
+        if (!CS.opened) return;
+        e = e || w.event;
+        var t = e.target || e.srcElement, p = $('owCsPanel');
+        if (!p) return;
+        var n = t;
+        while (n) {
+            if (n === p || n.id === 'owBtnCs') return;
+            n = n.parentNode;
+        }
+        close();
+    }
+
+    /* ---------- 面板 ---------- */
+
+    function panel() {
+        var p = $('owCsPanel');
+        if (p) return p;
+        p = d.createElement('div');
+        p.className = 'ow-cs-panel';
+        p.id = 'owCsPanel';
+        p.style.display = 'none';
+        p.innerHTML =
+              '<div class="ow-cs-head">'
+            + '<input class="ow-input ow-cs-q" id="owCsQ" type="text" maxlength="30" autocomplete="off" placeholder="搜索话术标题或内容">'
+            + '<button class="ow-cs-x" id="owCsClose" type="button" title="关闭" aria-label="关闭">✕</button></div>'
+            + '<div class="ow-cs-tabs">'
+            + '<button class="ow-cs-tab is-active" type="button" data-t="public">公共话术</button>'
+            + '<button class="ow-cs-tab" type="button" data-t="mine">我的话术</button>'
+            + '</div>'
+            + '<div class="ow-cs-body" id="owCsBody"></div>'
+            + '<div class="ow-cs-foot">'
+            + '<span class="ow-cs-count" id="owCsCount"></span>'
+            + '<button class="ow-btn ow-btn-ghost ow-cs-manage" id="owCsManage" type="button">管理</button>'
+            + '</div>';
+        // 挂在表情面板的同一个父节点上，才能复用那套绝对定位
+        var anchor = $('owEmojiPanel');
+        (anchor && anchor.parentNode ? anchor.parentNode : d.body).appendChild(p);
+        $('owCsClose').onclick = close;
+        $('owCsQ').oninput = function () { CS.q = (this.value || '').replace(/^\s+|\s+$/g, ''); render(); };
+        $('owCsManage').onclick = function () { close(); mgOpen(); };
+        var tabs = p.querySelectorAll('.ow-cs-tab'), i;
+        for (i = 0; i < tabs.length; i++) {
+            tabs[i].onclick = function () {
+                var t = this.getAttribute('data-t');
+                if (t === CS.tab) return;
+                CS.tab = t;
+                var all = $('owCsPanel').querySelectorAll('.ow-cs-tab'), j;
+                for (j = 0; j < all.length; j++) {
+                    if (all[j].getAttribute('data-t') === t) all[j].className = 'ow-cs-tab is-active';
+                    else all[j].className = 'ow-cs-tab';
+                }
+                render();
+            };
+        }
+        // 事件委托：条目点击 = 插入；「发送」按钮 = 直接发
+        $('owCsBody').onclick = function (e) {
+            e = e || w.event;
+            var t = e.target || e.srcElement;
+            var sendBtn = null, item = null, n = t;
+            while (n && n !== this) {
+                if (!sendBtn && n.className && String(n.className).indexOf('ow-cs-send') === 0) sendBtn = n;
+                if (!item && n.className && String(n.className).indexOf('ow-cs-item') === 0) item = n;
+                n = n.parentNode;
+            }
+            if (!item) return;
+            var text = item.getAttribute('data-content') || '';
+            if (!text) return;
+            if (sendBtn) {
+                if (e && e.stopPropagation) e.stopPropagation(); else w.event.cancelBubble = true;
+                OwChat.send({ type: 'text', content: text });
+                useCount(item.getAttribute('data-id'));
+                close();
+            } else {
+                insertAtCursor(text);
+                useCount(item.getAttribute('data-id'));
+                close();
+            }
+        };
+        return p;
+    }
+
+    function open() {
+        var p = panel();
+        // 与表情面板互斥：两个都开着会叠在一起
+        var em = $('owEmojiPanel');
+        if (em) em.style.display = 'none';
+        p.style.display = '';
+        CS.opened = true;
+        load();
+        var inp = $('owCsQ');
+        if (inp) inp.focus();
+    }
+
+    function close() {
+        var p = $('owCsPanel');
+        if (p) p.style.display = 'none';
+        CS.opened = false;
+    }
+
+    /* ---------- 数据 ---------- */
+
+    function load() {
+        OwApi.post(A + 'snips', {}, function (r) {
+            if (!r || !r.ok) { render(); return; }
+            CS.data = { public: r.public || [], mine: r.mine || [], guest: r.guest ? 1 : 0 };
+            render();
+        });
+    }
+
+    function cur() {
+        if (!CS.data) return [];
+        var list = CS.tab === 'mine' ? CS.data.mine : CS.data.public;
+        if (!CS.q) return list;
+        var q = CS.q.toLowerCase(), out = [], i, s;
+        for (i = 0; i < list.length; i++) {
+            s = (list[i].title || '') + ' ' + (list[i].content || '');
+            if (s.toLowerCase().indexOf(q) >= 0) out.push(list[i]);
+        }
+        return out;
+    }
+
+    function render() {
+        var body = $('owCsBody');
+        if (!body) return;
+        if (!CS.data) { body.innerHTML = '<p class="ow-cs-empty">加载中…</p>'; foot(0); return; }
+
+        var list = cur();
+        if (CS.tab === 'mine' && CS.data.guest) {
+            body.innerHTML = '<p class="ow-cs-empty">登录后即可创建和使用个人话术</p>';
+            foot(0);
+            var mg = $('owCsManage');
+            if (mg) mg.style.display = 'none';
+            return;
+        }
+        var mg2 = $('owCsManage');
+        if (mg2) mg2.style.display = CS.tab === 'mine' ? '' : 'none';
+
+        if (!list.length) {
+            body.innerHTML = '<p class="ow-cs-empty">'
+                + (CS.tab === 'mine' ? '还没有个人话术，点「管理」添加' : (CS.q ? '没有匹配的话术' : '暂无公共话术')) + '</p>';
+            foot(0);
+            return;
+        }
+        // 按分组聚合，分组内保持服务端排序
+        var groups = [], map = {}, i, g;
+        for (i = 0; i < list.length; i++) {
+            g = list[i].group_name || '未分组';
+            if (!map[g]) { map[g] = []; groups.push(g); }
+            map[g].push(list[i]);
+        }
+        var h = '';
+        for (i = 0; i < groups.length; i++) {
+            h += '<div class="ow-cs-group"><div class="ow-cs-group-t">' + esc(groups[i]) + '</div>';
+            var items = map[groups[i]];
+            for (var j = 0; j < items.length; j++) {
+                var it = items[j];
+                var brief = (it.content || '').replace(/\s+/g, ' ');
+                if (brief.length > 60) brief = brief.slice(0, 60) + '…';
+                h += '<div class="ow-cs-item" data-id="' + esc(it.id) + '" data-content="' + esc(it.content) + '">'
+                    + '<div class="ow-cs-item-main">'
+                    + '<b class="ow-cs-item-t">' + esc(it.title) + '</b>'
+                    + '<span class="ow-cs-item-c">' + esc(brief) + '</span></div>'
+                    + '<button class="ow-cs-send" type="button" title="直接发送">发送</button>'
+                    + '</div>';
+            }
+            h += '</div>';
+        }
+        body.innerHTML = h;
+        foot(list.length);
+    }
+
+    function foot(n) {
+        var c = $('owCsCount');
+        if (c) c.textContent = n ? (n + ' 条') : '';
+    }
+
+    /** 插入输入框光标处，并触发核心的自动增高 */
+    function insertAtCursor(text) {
+        var inp = $('owInput');
+        if (!inp) { toast('找不到输入框'); return; }
+        var s = inp.selectionStart, e = inp.selectionEnd, v = inp.value;
+        if (s == null || e == null) {                   // 老浏览器不支持 selection：退化为追加
+            inp.value = v + text;
+        } else {
+            inp.value = v.slice(0, s) + text + v.slice(e);
+            var p = s + text.length;
+            inp.selectionStart = p; inp.selectionEnd = p;
+        }
+        inp.focus();
+        if (OwChat.autoGrow) OwChat.autoGrow();         // 核心输入框自动增高（oninput 同一入口）
+    }
+
+    function useCount(id) {
+        if (!id) return;
+        OwApi.post(A + 'use', { id: id }, function () {});
+    }
+
+    /* ---------- 管理弹窗（我的话术 CRUD） ---------- */
+
+    function mgOpen() {
+        if (CS.data && CS.data.guest) { toast('请先登录'); return; }
+        CS.mgId = 0;
+        OwChat.openModal(
+              '<h3>我的话术</h3>'
+            + '<p class="ow-cs-mg-tip">点面板里的条目 = 插入输入框；点「发送」= 直接发出。最多 200 条。</p>'
+            + '<div class="ow-cs-mg-form">'
+            + '<input class="ow-input" id="owCsMgTitle" maxlength="60" placeholder="标题（不超过 60 字）">'
+            + '<input class="ow-input" id="owCsMgGroup" maxlength="30" placeholder="分组（留空为「未分组」）">'
+            + '<textarea class="ow-input" id="owCsMgContent" rows="3" maxlength="2000" placeholder="内容（不超过 2000 字）"></textarea>'
+            + '<div class="ow-cs-mg-btns">'
+            + '<button class="ow-btn ow-btn-primary" type="button" onclick="OwCS.mgSave()">保存</button>'
+            + '<button class="ow-btn" type="button" onclick="OwCS.mgReset()">清空</button>'
+            + '</div></div>'
+            + '<div class="ow-cs-mg-list" id="owCsMgList"></div>',
+            520);
+        mgRender();
+    }
+
+    function mgRender() {
+        var box = $('owCsMgList');
+        if (!box) return;
+        var list = (CS.data && CS.data.mine) || [];
+        if (!list.length) { box.innerHTML = '<p class="ow-cs-empty">还没有个人话术</p>'; return; }
+        var h = '<table class="ow-table"><tr><th>标题</th><th>分组</th><th>内容</th><th>已喂次数</th><th>操作</th></tr>';
+        for (var i = 0; i < list.length; i++) {
+            var it = list[i];
+            var brief = (it.content || '').replace(/\s+/g, ' ');
+            if (brief.length > 40) brief = brief.slice(0, 40) + '…';
+            h += '<tr><td>' + esc(it.title) + '</td><td>' + esc(it.group_name || '未分组') + '</td>'
+                + '<td title="' + esc(it.content) + '">' + esc(brief) + '</td>'
+                + '<td>' + esc(it.use_count || 0) + '</td>'
+                + '<td><a href="javascript:;" onclick="OwCS.mgEdit(' + esc(it.id) + ')">编辑</a>'
+                + ' <a href="javascript:;" onclick="OwCS.mgDel(' + esc(it.id) + ')">删除</a></td></tr>';
+        }
+        box.innerHTML = h + '</table>';
+    }
+
+    CS.mgEdit = function (id) {
+        var list = (CS.data && CS.data.mine) || [], i;
+        for (i = 0; i < list.length; i++) {
+            if (String(list[i].id) === String(id)) {
+                CS.mgId = parseInt(list[i].id, 10);
+                $('owCsMgTitle').value = list[i].title || '';
+                $('owCsMgGroup').value = list[i].group_name === '未分组' ? '' : (list[i].group_name || '');
+                $('owCsMgContent').value = list[i].content || '';
+                $('owCsMgTitle').focus();
+                return;
+            }
+        }
+    };
+
+    CS.mgReset = function () {
+        CS.mgId = 0;
+        $('owCsMgTitle').value = '';
+        $('owCsMgGroup').value = '';
+        $('owCsMgContent').value = '';
+    };
+
+    CS.mgSave = function () {
+        var title = ($('owCsMgTitle').value || '').replace(/^\s+|\s+$/g, '');
+        var group = ($('owCsMgGroup').value || '').replace(/^\s+|\s+$/g, '');
+        var content = ($('owCsMgContent').value || '').replace(/^\s+|\s+$/g, '');
+        if (!title) { toast('请填写标题'); return; }
+        if (!content) { toast('请填写内容'); return; }
+        OwApi.post(A + 'snip_save', { id: CS.mgId, title: title, group: group, content: content }, function (r) {
+            toast((r && r.msg) || (r && r.ok ? '已保存' : '保存失败'));
+            if (r && r.ok) {
+                CS.mgReset();
+                load();            // 刷新面板数据
+                mgRender();        // 刷新弹窗列表
+            }
+        });
+    };
+
+    CS.mgDel = function (id) {
+        OwChat.confirm('删除后无法恢复，确定删除这条话术吗？', function () {
+            OwApi.secure(A + 'snip_del', { id: id }, function (r) {
+                toast((r && r.msg) || (r && r.ok ? '已删除' : '删除失败'));
+                if (r && r.ok) {
+                    if (CS.mgId === parseInt(id, 10)) CS.mgReset();
+                    load();
+                    mgRender();
+                }
+            });
+        });
+    };
+
+    /* ---------- 启动 ---------- */
+
+    if (d.readyState === 'loading') d.addEventListener('DOMContentLoaded', mount, false);
+    else mount();
+})(window, document);

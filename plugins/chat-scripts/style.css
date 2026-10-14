@@ -1,0 +1,191 @@
+/* ==========================================================================
+   chat-scripts · 群聊脚本（v1.0.0）— 前台话术面板 / 后台管理页共用样式
+   --------------------------------------------------------------------------
+   颜色纪律：本文件不出现任何写死色值，一律引用核心 --ow-* 变量。
+     全站深浅两套主题只靠重定义这些变量切换，插件写死颜色 = 深色模式下露亮斑。
+   布局纪律：
+     · 前台面板挂到 #owEmojiPanel 的父节点上，复用 .ow-emoji-panel 那套
+       绝对定位坐标系（bottom:110px / left:12px / width:320px，移动端 92% 宽）——
+       与表情包插件（ow-gif-panel）同一约定，核心零改动。
+     · 触控目标不小于 40px 高；窄屏（≤960px，与核心媒体查询同断点）整体收紧。
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   前台：话术面板
+   -------------------------------------------------------------------------- */
+/* 面板不用 box-shadow：与表情包面板（ow-gif-panel）同一约定，纯边框 + 底色区分。
+   阴影色值写死会违反插件零硬编码纪律，而核心没有可引用的 --ow-shadow 变量。 */
+.ow-cs-panel {
+    position: absolute;
+    bottom: 110px;
+    left: 12px;
+    width: 320px;
+    max-height: 380px;
+    background: var(--ow-bg);
+    border: 1px solid var(--ow-border);
+    border-radius: 10px;
+    z-index: 60;
+    display: flex; display: -webkit-flex;
+    flex-direction: column; -webkit-flex-direction: column;
+    overflow: hidden;
+}
+
+/* 头部：搜索 + 关闭 */
+.ow-cs-head {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    gap: 6px;
+    padding: 8px;
+    border-bottom: 1px solid var(--ow-border);
+}
+.ow-cs-q { flex: 1; -webkit-flex: 1; min-width: 0; padding: 6px 10px; font-size: 13px; }
+.ow-cs-x {
+    border: none;
+    background: transparent;
+    color: var(--ow-text-sub);
+    font-size: 14px;
+    line-height: 1;
+    padding: 6px 8px;
+    cursor: pointer;
+    border-radius: 6px;
+    flex-shrink: 0; -webkit-flex-shrink: 0;
+}
+.ow-cs-x:hover { background: var(--ow-hover-bg); color: var(--ow-text-title); }
+
+/* 分组页签（公共 / 我的）——与全站「选中 = 主色实心」同语言 */
+.ow-cs-tabs {
+    display: flex; display: -webkit-flex;
+    gap: 4px;
+    padding: 8px 8px 0;
+}
+.ow-cs-tab {
+    flex: 1; -webkit-flex: 1;
+    border: none;
+    background: var(--ow-bg-sub);
+    color: var(--ow-text-sub);
+    font-size: 12.5px;
+    padding: 6px 0;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: inherit;
+}
+.ow-cs-tab:hover { color: var(--ow-text-title); }
+.ow-cs-tab.is-active {
+    background: var(--ow-primary-strong);
+    color: var(--ow-on-accent);
+}
+
+/* 列表区 */
+.ow-cs-body {
+    flex: 1; -webkit-flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 6px 8px 8px;
+}
+.ow-cs-empty {
+    margin: 0;
+    padding: 18px 6px;
+    text-align: center;
+    font-size: 12.5px;
+    color: var(--ow-text-sub);
+}
+.ow-cs-group { margin-bottom: 6px; }
+.ow-cs-group:last-child { margin-bottom: 0; }
+.ow-cs-group-t {
+    font-size: 11.5px;
+    color: var(--ow-text-sub);
+    padding: 4px 2px;
+}
+.ow-cs-item {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    gap: 8px;
+    padding: 7px 8px;
+    border-radius: 8px;
+    cursor: pointer;
+    /* 触控目标：内容不足 40px 时靠 padding 补足 */
+    min-height: 40px;
+    box-sizing: border-box;
+}
+.ow-cs-item:hover { background: var(--ow-hover-bg); }
+.ow-cs-item:active { background: var(--ow-active-bg); }
+.ow-cs-item-main { flex: 1; -webkit-flex: 1; min-width: 0; }
+.ow-cs-item-t {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ow-text-title);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.ow-cs-item-c {
+    display: block;
+    font-size: 11.5px;
+    color: var(--ow-text-sub);
+    margin-top: 1px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+/* 「直接发送」小按钮：主色描边幽灵钮，不抢条目本身的点击 */
+.ow-cs-send {
+    border: 1px solid var(--ow-primary);
+    background: transparent;
+    color: var(--ow-primary);
+    font-size: 12px;
+    font-family: inherit;
+    padding: 4px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    flex-shrink: 0; -webkit-flex-shrink: 0;
+}
+.ow-cs-send:hover { background: var(--ow-blue-light); }
+
+/* 底部：计数 + 管理入口 */
+.ow-cs-foot {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    justify-content: space-between; -webkit-justify-content: space-between;
+    padding: 6px 10px;
+    border-top: 1px solid var(--ow-border);
+}
+.ow-cs-count { font-size: 11.5px; color: var(--ow-text-sub); }
+.ow-cs-manage { font-size: 12px; padding: 4px 10px; }
+
+/* 管理弹窗内表单 */
+.ow-cs-mg-tip {
+    margin: 0 0 12px;
+    font-size: 12px;
+    color: var(--ow-text-sub);
+}
+.ow-cs-mg-form { margin-bottom: 14px; }
+.ow-cs-mg-form .ow-input { margin-bottom: 8px; }
+.ow-cs-mg-btns {
+    display: flex; display: -webkit-flex;
+    gap: 8px;
+    margin-top: 8px;
+}
+.ow-cs-mg-list { max-height: 260px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+
+/* --------------------------------------------------------------------------
+   后台：页签 / 页签按钮 / 表单按钮行
+   -------------------------------------------------------------------------- */
+.ow-cs-tabs { margin-bottom: 16px; }
+.ow-cs-tabs .ow-cs-tab { padding: 7px 16px; font-size: 13px; }
+.ow-cs-mf-btns { margin-top: 6px; }
+
+/* --------------------------------------------------------------------------
+   移动端（与核心同一断点）：面板变 92% 宽，条目与按钮触控区放宽
+   -------------------------------------------------------------------------- */
+@media (max-width: 960px) {
+    .ow-cs-panel {
+        width: 92%;
+        left: 4%;
+        max-height: 64%;
+    }
+    .ow-cs-item { min-height: 44px; }
+    .ow-cs-send { padding: 6px 12px; }
+    .ow-cs-tab { padding: 8px 0; }
+}
