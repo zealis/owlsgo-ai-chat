@@ -9,8 +9,8 @@
  *   ② 图片（webp/jpg/png 全屏背景）
  *   ③ 自定义（远程链接 或 上传；上传需要附件上传插件启用，否则只显示远程链接入口）
  * - 每种背景之上可叠加一层 CSS 渐变遮罩（多档预设色），不影响文字可读性。
- * - 后台「聊天背景」页面：管理员可管理前台可选背景库（远程链接 / 上传 / 从 Unsplash 搜索加入）、
- *   设置「自定义背景」所需的用户等级阈值、配置 Unsplash Access Key。
+ * - 后台「聊天背景」页面：管理员可管理前台可选背景库（远程链接 / 上传）、
+ *   设置「自定义背景」所需的用户等级阈值。
  *
  * ## 依赖
  *
@@ -24,7 +24,8 @@
  * - 物理文件：uploads/background/（SVG 也在其中；nginx 默认禁止 /uploads 下 .svg 直访，
  *   故统一通过本插件路由 ?action=plugin_chat_background_file&id=N 输出，并设 nosniff）。
  * - 数据表：
- *   · plugin_chat_bg_items  管理员维护的背景库（preset / admin / unsplash / remote）
+ *   · plugin_chat_bg_items  管理员维护的背景库（preset / admin / remote；
+ *                           source 里的历史值 unsplash 仍会照常展示，但不再新产生）
  *   · plugin_chat_bg_user   用户个人选择（user_id 主键，一行一用户）
  *   · plugin_chat_bg_config 插件配置（k-v）
  */
@@ -69,7 +70,7 @@ DB::run("CREATE TABLE IF NOT EXISTS plugin_chat_bg_items (
     id " . DB::autoId() . ",
     name VARCHAR(120) NOT NULL DEFAULT '',
     kind VARCHAR(16) NOT NULL DEFAULT 'image',   -- svg | image | url
-    source VARCHAR(16) NOT NULL DEFAULT 'admin', -- preset | admin | unsplash | remote
+    source VARCHAR(16) NOT NULL DEFAULT 'admin', -- preset | admin | remote（unsplash 为历史值，不再新产生）
     file VARCHAR(255) NOT NULL DEFAULT '',        -- 相对 uploads/background/ 的文件名
     url VARCHAR(500) NOT NULL DEFAULT '',         -- kind=url 时的远程 URL
     thumb VARCHAR(255) NOT NULL DEFAULT '',       -- 缩略图（同目录或远程 URL）
@@ -98,7 +99,6 @@ function owCBDefaultConfig(): array
 {
     return [
         'min_level_custom'  => '0',    // 自定义背景所需等级；0 = 不限制
-        'unsplash_key'      => '',     // Unsplash Access Key；空 = 关闭 Unsplash 搜索
         'default_overlay'   => 'dark', // 默认叠加色
     ];
 }
@@ -355,7 +355,7 @@ function owCBItemAbsPath(array $item): ?string
 Plugin::adminPage('chat-background', '聊天背景', function () {
     return '<h2>聊天背景</h2>'
         . '<p class="ow-admin-desc">管理前台可选背景库（SVG 图案 / 图片 / 远程链接），'
-        . '设置「自定义背景」所需等级，配置 Unsplash 搜索。停用本插件后聊天区恢复默认背景。</p>'
+        . '设置「自定义背景」所需等级。停用本插件后聊天区恢复默认背景。</p>'
 
         // 配置区
         . '<div class="ow-card">'
@@ -364,9 +364,6 @@ Plugin::adminPage('chat-background', '聊天背景', function () {
         . '<div class="ow-form-item" style="min-width:160px"><label>自定义背景所需等级</label>'
         . '<input class="ow-input" id="owCBMinLevel" type="number" min="0" value="0">'
         . '<p style="font-size:12px;color:var(--ow-text-sub);margin-top:4px">0 = 不限制；需启用「等级信任」插件。</p></div>'
-        . '<div class="ow-form-item" style="min-width:240px"><label>Unsplash Access Key</label>'
-        . '<input class="ow-input" id="owCBUnsplashKey" type="password" placeholder="留空 = 关闭 Unsplash 搜索">'
-        . '<p style="font-size:12px;color:var(--ow-text-sub);margin-top:4px">在 unsplash.com 注册应用获取；前台与后台均通过本插件代理访问。</p></div>'
         . '</div>'
         . '<button class="ow-btn ow-btn-primary" onclick="OwCB.saveCfg()">保存配置</button>'
         . '</div>'
@@ -380,17 +377,6 @@ Plugin::adminPage('chat-background', '聊天背景', function () {
         . '<button class="ow-btn ow-btn-primary" onclick="OwCB.openAdd()">添加背景</button>'
         . '</div></div>'
         . '<div id="owCBList"></div>'
-        . '</div>'
-
-        // Unsplash 搜索
-        . '<div class="ow-card" id="owCBUnsplashCard" style="display:none">'
-        . '<h3 style="margin-bottom:10px">从 Unsplash 搜索</h3>'
-        . '<div class="ow-form-row">'
-        . '<div class="ow-form-item" style="flex:1"><input class="ow-input" id="owCBUnsplashQ" placeholder="关键词，如 mountain, forest, abstract" onkeydown="if(event.key===\'Enter\')OwCB.unsplashSearch(1)"></div>'
-        . '<button class="ow-btn ow-btn-primary" onclick="OwCB.unsplashSearch(1)">搜索</button>'
-        . '</div>'
-        . '<div id="owCBUnsplashResults" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-top:12px"></div>'
-        . '<div id="owCBUnsplashPager" style="margin-top:12px"></div>'
         . '</div>';
 });
 
@@ -494,6 +480,65 @@ Plugin::route('plugin_chat_background_admin_config_save', function (array $ctx) 
     $owCBAdminGuard($ctx);
     $cfg = owCBSaveConfig($ctx['post']);
     Api::json(['ok' => true, 'msg' => '配置已保存', 'config' => $cfg]);
+});
+
+/**
+ * Unsplash 搜索（后台代理）。
+ * 走后端是为了：① 隐藏 Access Key；② 规避 CORS；③ 服务端可控超时。
+ * 文档：GET https://api.unsplash.com/search/photos
+ */
+Plugin::route('plugin_chat_background_admin_unsplash_search', function (array $ctx) use ($owCBAdminGuard) {
+    $owCBAdminGuard($ctx);
+    $cfg = owCBConfig();
+    $key = (string)$cfg['unsplash_key'];
+    if ($key === '') Api::json(['ok' => false, 'msg' => '未配置 Unsplash Access Key'], 400);
+    $q = trim((string)($ctx['post']['q'] ?? ''));
+    if ($q === '') Api::json(['ok' => false, 'msg' => '请输入关键词'], 400);
+    $page = max(1, (int)($ctx['post']['page'] ?? 1));
+    $per  = max(1, min(30, (int)($ctx['post']['per_page'] ?? 18)));
+    $url = 'https://api.unsplash.com/search/photos?query=' . urlencode($q)
+         . '&page=' . $page . '&per_page=' . $per
+         . '&orientation=landscape&content_filter=high';
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 12,
+        CURLOPT_HTTPHEADER => [
+            'Authorization: Client-ID ' . $key,
+            'Accept: application/json',
+        ],
+        CURLOPT_USERAGENT => 'owlsgo-chat/' . OWLSGO_VERSION,
+    ]);
+    $raw = curl_exec($ch);
+    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $err = curl_error($ch);
+    curl_close($ch);
+    if ($raw === false) Api::json(['ok' => false, 'msg' => 'Unsplash 请求失败：' . $err], 502);
+    $j = json_decode((string)$raw, true);
+    if (!is_array($j)) Api::json(['ok' => false, 'msg' => 'Unsplash 返回解析失败'], 502);
+    if ($code !== 200) {
+        $msg = is_array($j) && isset($j['errors']) ? implode('; ', array_map(fn($e) => (string)($e ?? ''), $j['errors'])) : ('HTTP ' . $code);
+        Api::json(['ok' => false, 'msg' => $msg], 502);
+    }
+    $list = [];
+    foreach (($j['results'] ?? []) as $ph) {
+        $list[] = [
+            'id' => (string)($ph['id'] ?? ''),
+            'description' => (string)($ph['alt_description'] ?? $ph['description'] ?? ''),
+            'color' => (string)($ph['color'] ?? ''),
+            'thumb' => (string)($ph['urls']['small'] ?? $ph['urls']['thumb'] ?? ''),
+            'regular' => (string)($ph['urls']['regular'] ?? $ph['urls']['full'] ?? ''),
+            'author' => (string)($ph['user']['name'] ?? ''),
+            'html' => (string)($ph['links']['html'] ?? ''),
+        ];
+    }
+    Api::json([
+        'ok' => true,
+        'data' => $list,
+        'total' => (int)($j['total'] ?? 0),
+        'pages' => (int)($j['total_pages'] ?? 0),
+        'page' => $page,
+    ]);
 });
 
 /**
