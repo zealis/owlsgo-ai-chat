@@ -4871,7 +4871,8 @@
                 + (canEdit ? ' title="点击更换群头像" onclick="OwChat.roomAvatarPick()"' : '') + '>'
                 // v1.1.19：群头像改走 roomAvatarHtml —— 无自定义头像时显示默认剪影图，
                 // 不再是「群名首字 + 随机色块」（那个 role 传 'member' 走的是色盘分支）。
-                + roomAvatarHtml(this._roomAvatar || r.avatar, 'lg') + '</span>'
+                // 取的是**渲染地址**（roomAvatarOf），不是待提交的 _roomAvatar —— 后者空串=不改头像。
+                + roomAvatarHtml(this.roomAvatarOf(this.room), 'lg') + '</span>'
                 + '<div class="ow-card-id">'
                 + '<div class="ow-card-name">' + esc(r.name) + '</div>'
                 + '<div class="ow-card-badges"><span class="ow-tag ow-tag-green">' + typeName + '</span>'
@@ -6181,6 +6182,21 @@
         /** 群头像点击：v1.3.11 起不再直接选文件，改走头像设置弹窗（上传 / 浏览插图 / 恢复默认） */
         roomAvatarPick: function () { this.openAvatarDialog({ room: this.room, name: this.roomName }); },
 
+        /**
+         * 某个群**当前渲染出来**的头像地址。
+         * cfg.rooms[].avatar 就是服务端 roomAvatarUrl() 的产物（自定义/生成式/回落创建者 三种都已算好），
+         * 所有「显示当前头像」的地方都该取它 —— `_roomAvatar` 存的是待提交的相对路径、
+         * 空串表示本次不改，拿它去渲染会渲染出一张根本不存在的图（v1.3.135 漏过一次）。
+         */
+        roomAvatarOf: function (rid) {
+            var list = this.cfg.rooms || [], i;
+            rid = parseInt(rid || 0, 10);
+            for (i = 0; i < list.length; i++) {
+                if (parseInt(list[i].id, 10) === rid) return list[i].avatar || '';
+            }
+            return '';
+        },
+
         /* ================= 头像设置（v1.3.11） =================
            点击头像不再是「直接打开文件选择」，而是先弹这个对话框：
              ① 上传头像 —— 仅当附件上传插件注册了 uploader 时出现（核心零上传入口）
@@ -6203,7 +6219,7 @@
             var isRoom = (target && typeof target === 'object' && target.room);
             var rid = isRoom ? parseInt(target.room, 10) : 0;
             var cur = isRoom
-                ? roomAvatarHtml(this._roomAvatar, 'lg')
+                ? roomAvatarHtml(this.roomAvatarOf(rid), 'lg')
                 : avatarHtml(this.cfg.me ? this.cfg.me.avatar : this.cfg.actor.avatar,
                     this.cfg.me ? this.cfg.me.nickname : this.cfg.actor.nickname, 'lg');
 
@@ -6219,7 +6235,8 @@
                 + '</div>'
                 + '<div class="ow-av-styles" id="owAvStyles" style="display:none"></div>'
                 + '</div>';
-            this.openModal(h, 420);
+            // 'ow-modal-av'：这一弹窗的第一块是**居中**的头像，✕ 若还靠 float 就把它压偏，见 CSS
+            this.openModal(h, 420, 'ow-modal-av');
 
             var applyUpload = function () {
                 var f = document.createElement('input');
@@ -6417,8 +6434,8 @@
                 // 直接 renderRooms 会把私聊行冲掉。
                 self.loadConversations();
                 // 群资料已变（名称/简介/头像）→ 顶栏群名与侧栏入口区同步刷新。
-                // _roomAvatar 不用动：保存后它与服务端值一致；openRoomEdit / renderRoomPanel
-                // 都只在「换了群」时才重置它（见 _roomAvatarRoom 判断）。
+                // _roomAvatar 不用动：它只是「本次要提交的相对路径」（空=不改头像），
+                // 与刷新无关；显示用的头像一律取 cfg.rooms[].avatar（见 roomAvatarOf）。
                 self.renderRoomPanel();
             });
         },

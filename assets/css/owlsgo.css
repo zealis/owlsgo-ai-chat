@@ -2095,12 +2095,19 @@ input[type=range] {
     cursor: pointer;
     user-select: none; -webkit-user-select: none;
     -webkit-tap-highlight-color: transparent;
+    /* v1.3.136：行高原先由内容决定（padding 18 + 行盒 22.39 = 40.39），
+       图标位一换成头像就会单独长高一档、与旁边「群公告」「所有成员」那几行错开。
+       钉一个统一下限，头像行与图标行同高。
+       ⚠️ 宽屏首行的 min-height: calc(--ow-topbar-h - 1px)（56px）比它大且选择器更长，
+         那条「首行下边框与顶栏底线同像素」的对齐照旧成立。 */
+    min-height: 42px;
 }
 .ow-panel-entry-ico { flex-shrink: 0; -webkit-flex-shrink: 0; color: var(--ow-text-sub); }
 /* v1.3.85：图标位也可以放**会话头像**（群聊→群头像、私聊→对方头像）。
-   头像档最小是 xs=20px，比这一行的 16px 图标大，会把行高顶开、与下面的「所有成员」错位，
-   所以按元素+双类提权锁回 16px（.ow-avatar-xs 只有一个类，压不住）。 */
-span.ow-panel-entry-ico.ow-avatar { width: 16px; height: 16px; line-height: 16px; font-size: 9px; }
+   头像档最小是 xs=20px，比这一行的 16px 图标大，会顶开行高 —— 所以要提权覆盖
+   （.ow-avatar-xs 只有一个类，压不住）。v1.3.136：站方反馈 16px 只剩个色点、看不清，
+   放到 24px（24 + padding 18 = 42 = 上面那条 min-height），行高仍然整排一致。 */
+span.ow-panel-entry-ico.ow-avatar { width: 24px; height: 24px; line-height: 24px; font-size: 11px; }
 .ow-panel-entry-t { flex: 1; -webkit-flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ow-panel-entry-arrow { flex-shrink: 0; -webkit-flex-shrink: 0; font-size: 16px; line-height: 1; color: var(--ow-text-sub); }
 .ow-panel-entry:hover, .ow-panel-entry:focus { color: var(--ow-primary-dark); outline: none; }
@@ -2667,6 +2674,14 @@ span.ow-panel-entry-ico.ow-avatar { width: 16px; height: 16px; line-height: 16px
    点击头像不再直接开文件选择，而是先弹这个框：
    当前头像预览 + 「上传头像（插件启用时才有）」/「浏览插图」+ 群聊额外有「恢复默认」。 */
 .ow-av-dialog { padding: 4px 2px 2px; }
+/* v1.3.136：这个弹窗的头像与「当前头像」都是**居中**的，而 .ow-modal-close 是 float:right ——
+   浮动会把它所在的那一行盒压窄（实测 14.7px），居中的头像于是按窄行盒定位，
+   整块比标题、按钮左偏 6.4px（站方一眼看出「文字和头像不对称」）。
+   改成绝对定位（与固定尺寸弹窗 .ow-modal-fixed 同一手法）：浮动不再侵占行盒，
+   也不额外占高度 —— 试过 clear:both，能居中但要多出 20~24px 空档。
+   ⚠️ .ow-modal 默认没有 position，绝对定位会跑到遮罩层上去，所以自己带一条 relative。 */
+.ow-modal.ow-modal-av { position: relative; }
+.ow-modal-av .ow-modal-close { float: none; position: absolute; top: 16px; right: 16px; z-index: 1; }
 .ow-av-current { text-align: center; margin-bottom: 14px; }
 .ow-av-current .ow-avatar { margin: 0 auto; display: -webkit-flex; display: flex; }
 .ow-av-current-tip { font-size: 12px; color: var(--ow-text-sub); margin-top: 6px; }
