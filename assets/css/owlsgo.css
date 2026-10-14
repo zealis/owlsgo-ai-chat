@@ -132,54 +132,104 @@
 }
 .ow-set-mail b { font-weight: 400; color: var(--ow-text); word-break: break-all; }
 
-/* ---------- 通用分组标签 ow-tabs（v1.3.113） ----------
-   前台「个人设置」与后台插件页共用这一套，JS 侧对应 window.owTabs。结构契约：
+/* ---------- 通用分组切换 owTabs（v1.3.115） ----------
+   JS 侧是 window.owTabs，两种形态共用同一套切换逻辑，选中态一律 is-active（与侧栏分段控件同一约定）：
 
-     <div class="ow-pagetabs" onclick="owTabs.click(this, event)">
-       <button type="button" class="ow-pagetab" data-tab="名字"><b>标题</b><span>副标题（可省）</span></button>
-     </div>
-     <div class="ow-pagetab-panel" data-pane="名字">…</div>
+   ① 顶部标签条（后台插件页用，如「垃圾信息控制」）
+      <div class="ow-pagetabs" onclick="owTabs.click(this, event)">
+        <button type="button" class="ow-pagetab" data-tab="名字"><b>标题</b><span>副标题（可省）</span></button>
+      </div>
+      <div class="ow-pagetab-panel" data-pane="名字">…</div>…
 
-   ⚠️ 面板必须是标签条**同一个父节点的直接子元素**：owTabs 的作用域按父节点算，
-   一个页面里放两组标签才互不干扰。各页想加自己的细节（比如插件面板里 textarea 的行高），
-   再补一个自己的类挂上去（如 class="ow-pagetab-panel ow-spam-pane"），不要改这里的公共类。
-   为什么不复用下面那套 .ow-tabs / .ow-tab：它是**分段控件**（灰轨道 + 主色实心小胶囊、flex 撑满，flex 撑满，
-   现在用在「搜索/发送记录」的范围切换上，chat.js 里自己管 is-active），
-   而这里要的是**页面级分组**（一行胶囊 + 底部一条分隔线 + 可带副标题）。
-   两个名字撞过一次——v1.3.113 第一版就叫 .ow-tab，胶囊圆角被分段控件那条后定义的规则盖掉了——
-   所以分开命名；选中态两边统一用 is-active，跟项目习惯一致。
-   配色全部取本站令牌：is-active 浅底 + 主色深字，hover 比底色深一档（浅灰叠浅灰会看不出选中）。 */
+   ② 侧边导航（前台「个人设置」这类设置面板，版式对齐后台）
+      <div class="ow-navset">
+        <div class="ow-navset-nav" onclick="owTabs.click(this, event)">
+          <button type="button" class="ow-navset-item" data-tab="名字"><svg/>…<span>标题</span></button>
+        </div>
+        <div class="ow-pagetab-panel" data-pane="名字">…</div>…
+      </div>
+
+   ⚠️ 面板必须与导航/标签条是**同一父节点的兄弟**：owTabs 的作用域就按这个走，
+   一组标签一个容器，两组就各套一层，互不干扰。
+   JS 只加减 is-active，不重写基类 —— 两种形态共用同一个 show()。
+   各页想加自己的细节（比如插件面板里 textarea 的行高），再补一个自有类挂上去
+   （如 class="ow-pagetab-panel ow-spam-pane"），不要改这里的公共类。
+   为什么不复用下面那套 .ow-tabs / .ow-tab：那是**分段控件**（灰轨道 + 主色实心小胶囊、flex 撑满，
+   现在用在「搜索/发送记录」的范围切换上），与这两种形态都不是一回事。
+   v1.3.113 第一版曾叫 .ow-tab，胶囊圆角被那条后定义的规则盖掉，故分开命名。 */
 .ow-pagetabs {
     display: flex; display: -webkit-flex;
     flex-wrap: wrap; -webkit-flex-wrap: wrap;
-    gap: 6px; -webkit-gap: 6px;
-    margin: -2px 0 14px;
-    padding-bottom: 10px;
-    border-bottom: 1px solid var(--ow-border);
+    gap: 8px; -webkit-gap: 8px;
+    margin: 0 0 14px;
 }
 .ow-pagetab {
     display: flex; display: -webkit-flex;
     flex-direction: column; -webkit-flex-direction: column;
     gap: 2px; -webkit-gap: 2px;
-    padding: 6px 14px;
-    border: 1px solid var(--ow-border-control);
-    border-radius: 30px;
-    background: transparent;
-    color: var(--ow-text-sub);
+    padding: 7px 12px;
+    border: 1px solid var(--ow-border);
+    border-radius: 6px;
+    background: var(--ow-bg-sub);
+    color: var(--ow-text);
     cursor: pointer;
     white-space: nowrap;
-    transition: background .15s, color .15s, border-color .15s;
-    -webkit-transition: background .15s, color .15s, border-color .15s;
+    transition: background .15s, border-color .15s;
+    -webkit-transition: background .15s, border-color .15s;
 }
-.ow-pagetab b { font-size: 13px; font-weight: 600; line-height: 1.2; color: inherit; }
-.ow-pagetab span { font-size: 11px; line-height: 1.2; color: inherit; opacity: .75; }
-.ow-pagetab:hover { background: var(--ow-hover-bg); color: var(--ow-text); }
-.ow-pagetab.is-active {
-    background: var(--ow-blue-light);
-    border-color: var(--ow-primary-strong);
-    color: var(--ow-primary-dark);
-}
+.ow-pagetab b { font-size: 13px; font-weight: 600; line-height: 1.25; }
+.ow-pagetab span { font-size: 11px; line-height: 1.25; color: var(--ow-text-sub); }
+/* hover 必须比底色深一档：浅灰上涂更浅的灰会「越悬停越淡」，看着像禁用 */
+.ow-pagetab:hover { background: var(--ow-hover-bg); border-color: var(--ow-border-control); }
+.ow-pagetab.is-active { border-color: var(--ow-primary-strong); background: var(--ow-blue-light); }
+.ow-pagetab.is-active b { color: var(--ow-primary-dark); }
 .ow-pagetab-panel { padding-top: 2px; }
+
+/* ② 侧边导航形态 */
+.ow-navset {
+    display: flex; display: -webkit-flex;
+    align-items: flex-start; -webkit-align-items: flex-start;
+    gap: 20px; -webkit-gap: 20px;
+}
+.ow-navset-nav {
+    display: flex; display: -webkit-flex;
+    flex-direction: column; -webkit-flex-direction: column;
+    gap: 4px; -webkit-gap: 4px;
+    flex: 0 0 128px; -webkit-flex: 0 0 128px;
+}
+.ow-navset-item {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    gap: 8px; -webkit-gap: 8px;
+    padding: 9px 12px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--ow-text);
+    font-size: 13px;
+    line-height: 1.2;
+    text-align: left;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background .15s;
+    -webkit-transition: background .15s;
+}
+.ow-navset-item:hover { background: var(--ow-hover-bg); }
+.ow-navset-item.is-active { background: var(--ow-bg-sub); font-weight: 600; }
+.ow-navset-ico { display: block; -webkit-flex: none; flex: none; opacity: .8; }
+.ow-navset > .ow-pagetab-panel {
+    flex: 1 1 auto; -webkit-flex: 1 1 auto;
+    min-width: 0;
+}
+/* 窄屏（手机上的设置弹窗）：导航从竖排改横排，仍然是「点一个看一组」 */
+@media (max-width: 560px) {
+    .ow-navset { flex-direction: column; -webkit-flex-direction: column; gap: 10px; }
+    .ow-navset-nav {
+        flex-direction: row; -webkit-flex-direction: row;
+        flex-wrap: wrap; -webkit-flex-wrap: wrap;
+        flex: none; -webkit-flex: none;
+    }
+}
 
 /* ===================== 小红点（v1.3.53 通用轮子） =====================
    语义只有一个：「这里有新东西」，不表示数量 —— 要显示数量请用 .ow-cl-badge。
@@ -2117,6 +2167,13 @@ span.ow-panel-entry-ico.ow-avatar { width: 16px; height: 16px; line-height: 16px
     overflow: hidden;
 }
 .ow-modal-fixed .ow-modal-close { float: none; position: absolute; top: 18px; right: 18px; z-index: 1; }
+/* 侧边导航形态在固定弹窗里要自己吃掉剩余高度，面板才轮得到滚动 */
+.ow-modal-fixed .ow-navset {
+    -webkit-flex: 1 1 auto; flex: 1 1 auto;
+    align-items: stretch; -webkit-align-items: stretch;
+    min-height: 0;
+    width: 100%;
+}
 .ow-modal-fixed .ow-pagetab-panel {
     -webkit-flex: 1 1 auto; flex: 1 1 auto;
     min-height: 0;

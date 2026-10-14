@@ -1220,27 +1220,47 @@
      * 后台页与弹窗都是 innerHTML 注入的，逐个绑监听会在重绘后失效。
      */
     var owTabs = {
-        /** 生成一个标签按钮（PHP 侧拼同样的 HTML 也行，两边结构一致） */
+        /** 顶部标签条里的一个标签（卡片式：标题 + 可省副标题） */
         html: function (name, label, sub) {
             return '<button type="button" class="ow-pagetab" data-tab="' + esc(name) + '">'
                 + '<b>' + esc(label) + '</b>' + (sub ? '<span>' + esc(sub) + '</span>' : '') + '</button>';
         },
-        /** 标签条的点击委托入口 */
+        /** 侧边导航里的一个条目（与上面同一套切换逻辑，只是形态不同） */
+        navHtml: function (name, label, icon) {
+            return '<button type="button" class="ow-navset-item" data-tab="' + esc(name) + '">'
+                + (icon ? owIco(icon, 16, 'ow-navset-ico') : '') + '<span>' + esc(label) + '</span></button>';
+        },
+        /** 标签条 / 导航的点击委托入口（this 指向带 [data-tab] 子元素的那个容器） */
         click: function (bar, e) {
             var t = e ? e.target : null;
             while (t && t !== bar && !(t.getAttribute && t.getAttribute('data-tab'))) t = t.parentNode;
             if (t && t !== bar) owTabs.show(bar, t.getAttribute('data-tab'));
         },
-        /** 切到某个分组：只改显隐，输入框始终在 DOM 里（切走再切回不丢未保存的编辑） */
+        /**
+         * 只加减 is-active，绝不重写 className —— 顶部标签（.ow-pagetab）与
+         * 侧边导航（.ow-navset-item）共用这一个函数，重写基类会把对方的样式全丢掉。
+         * 老内核没有 classList 时走字符串分支，并顺手压掉多余空格。
+         */
+        set: function (n, on) {
+            if (n.classList) { n.classList[on ? 'add' : 'remove']('is-active'); return; }
+            var parts = (' ' + n.className).split(/\s+/).filter(function (x) { return x && x !== 'is-active'; });
+            if (on) parts.push('is-active');
+            n.className = parts.join(' ');
+        },
+        /**
+         * 切到某个分组：只改显隐与选中类，输入框始终在 DOM 里（切走再切回不丢未保存的编辑）。
+         * 作用域：[data-tab] 取 bar 的直接子元素，[data-pane] 取 bar 的兄弟节点，
+         * 所以「导航 + 面板」必须在同一个父容器里；两组标签就各自套一个容器。
+         */
         show: function (bar, name) {
             if (!bar) return;
             var i, n;
-            // 标签按钮在**条内**，面板在条的**父节点下** —— 两层各有各的走法。
-            // 早先只走了父节点，结果面板切得动、标签永远不高亮（第一版实测抓出来的）。
+            // 标签/导航项在 bar **里面**，面板在 bar **外面**（兄弟）—— 早先只走了外面那一层，
+            // 结果面板切得动、标签永远不高亮，两种形态都中招。
             for (i = 0; i < bar.children.length; i++) {
                 n = bar.children[i];
                 if (n.getAttribute && n.getAttribute('data-tab') !== null) {
-                    n.className = 'ow-pagetab' + (n.getAttribute('data-tab') === name ? ' is-active' : '');
+                    owTabs.set(n, n.getAttribute('data-tab') === name);
                 }
             }
             var scope = bar.parentNode;
@@ -5541,17 +5561,17 @@
         openSettings: function () {
             var me = this.cfg.me;
             if (!me) return;
-            // v1.3.112：一长条表单改成顶部分组标签（参考站方给的 ttt 前台「个人中心」版式，
-            // 只借结构：胶囊标签 + 一次只显示一组；配色全部走本站 --ow-* 令牌，
-            // 深色模式与色系插件才能跟着变）。
-            // ⚠️ 保存按钮**留在标签之外常驻**：它提交的是全部字段（插件注入的签名等
-            // 也挂在 saveSettings 上），放进某个标签里会让「在账号页点不到保存」变成新问题。
+            // v1.3.115：分组切换改成**左侧导航 + 右侧内容**（站方指定的版式，与后台同一类布局），
+            // 用的是核心通用轮子 owTabs 的导航形态 .ow-navset；配色全部走本站 --ow-* 令牌。
+            // ⚠️ 保存按钮**留在导航之外常驻**：它提交的是全部字段（插件注入的签名等
+            // 也挂在 saveSettings 上），放进某个分组里会让「在账号页点不到保存」变成新问题。
             this.openModal(
                 '<h3>个人设置</h3>'
-                + '<div class="ow-pagetabs" id="owSetTabs" onclick="owTabs.click(this, event)">'
-                + owTabs.html('prof', '资料')
-                + owTabs.html('look', '外观')
-                + owTabs.html('acct', '账号')
+                + '<div class="ow-navset">'
+                + '<div class="ow-navset-nav" id="owSetTabs" onclick="owTabs.click(this, event)">'
+                + owTabs.navHtml('prof', '资料', 'user')
+                + owTabs.navHtml('look', '外观', 'image')
+                + owTabs.navHtml('acct', '账号', 'shield')
                 + '</div>'
                 + '<div class="ow-pagetab-panel" data-pane="prof">'
                 // 头像置顶：点击当前头像即触发上传（不另设上传按钮）
@@ -5594,6 +5614,7 @@
                         ? '需要当前密码与邮箱验证码；改完当前设备不会掉线。'
                         : '账号还没有可用邮箱，本次只验证当前密码。') + '</p>'
                 + (me.email ? '<div class="ow-set-mail"><span>账号邮箱</span><b>' + esc(owMaskEmail(me.email)) + '</b></div>' : '')
+                + '</div>'
                 + '</div>'
                 + '</div>'
                 + '<button class="ow-btn ow-btn-primary ow-btn-block" onclick="OwChat.saveSettings()">保存</button>',
