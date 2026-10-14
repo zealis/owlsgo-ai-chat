@@ -21,6 +21,7 @@
  * API 路由：Plugin::route()，action 前缀 plugin_login_logs_。
  *   - list   分页列表，支持按用户 ID / 关键词 / 时间段 / 结果筛选
  *   - stats  顶部统计：总记录数 / 独立用户数 / 今日登录数
+ *   - del    批量删除所选（v1.2.1；敏感操作，需票据 + 前台二次确认）
  *   - clear  清理旧日志（默认 90 天前；敏感操作，需票据）
  * 计划任务：Plugin::cron('purge_old', 86400, ...) 每天自动清理 90 天前日志，
  *           启用插件即默认启用，可在后台「计划任务」页启停 / 手动触发。
@@ -224,10 +225,13 @@ Plugin::adminPage('login-logs', '登录日志', function () {
         . '<button class="ow-btn ow-btn-danger" onclick="OwLL.clearOld()">清理 90 天前日志</button>'
         . '<span id="owLLStat" class="ow-ll-count"></span>'
         . '</div>'
+        // 批量操作轮子（v1.2.1：与核心安全日志/群聊审核同款，由 admin.js 的 uiBatchBar 渲染）
+        . '<div id="owLLBatch"></div>'
         // 横滚容器用核心 .ow-table-wrap（与核心后台表格同一套；OwAdmin 的自动包表
         // 观察器见到父级已是 ow-table-wrap 会跳过，不会套两层）
         . '<div class="ow-table-wrap"><table class="ow-table" id="owLLTable">'
-        . '<tr><th>ID</th><th>结果</th><th>用户 ID</th><th>昵称</th><th>邮箱</th>'
+        . '<tr><th style="width:32px"><input type="checkbox" id="owLLCheckAll" onchange="OwLL.toggleAll(this)"></th>'
+        . '<th>ID</th><th>结果</th><th>用户 ID</th><th>昵称</th><th>邮箱</th>'
         . '<th>IP</th><th>方式</th><th>原因 / 登录标识</th><th>User-Agent</th><th>时间</th></tr>'
         . '</table></div>'
         . '<div id="owLLPager"></div>'
@@ -269,6 +273,10 @@ Plugin::route('plugin_login_logs_list', function (array $ctx) use ($llGuard) {
     }
 
     $total = (int)DB::val("SELECT COUNT(*) FROM plugin_login_logs$where", $args);
+    // 翻页越界收敛（v1.2.1）：批量删光当前页后再刷新，$page 可能超过总页数，
+    // 不收敛会返回一张空表（用户以为记录全没了）。删哪些就停在本页看结果。
+    $pages = max(1, (int)ceil($total / $psize));
+    if ($page > $pages) $page = $pages;
     $offset = ($page - 1) * $psize;
 
     $rows = DB::all(
@@ -336,7 +344,7 @@ Plugin::route('plugin_login_logs_list', function (array $ctx) use ($llGuard) {
         'total' => $total,
         'page'  => $page,
         'psize' => $psize,
-        'pages' => $psize > 0 ? (int)ceil($total / $psize) : 1,
+        'pages' => $pages,
     ]);
 });
 
@@ -367,6 +375,33 @@ Plugin::route('plugin_login_logs_stats', function (array $ctx) use ($llGuard) {
         'fp_mismatch' => $fpMismatch,
     ]);
 });
+
+/* ===================== 批量删除所选（敏感，v1.2.1） ===================== */
+
+/**
+ * 通用批量删除：与核心「安全日志 → admin_logs_batch」同一套模式
+ * （下拉轮子勾选 → 确认框 → OwApi.secure 一次性票据 → 逐条参数化删除 → 留痕）。
+ * 逐条删而不是一条 IN：一页最多 100 条，逐条足够快，且每条 rowCount() 都能
+ * 准确统计「真正删掉了几条」（并发下别人可能已经删过同几条）。
+ */
+Plugin::route('plugin_login_logs_del', function (array $ctx) use ($llGuard) {
+    $llGuard($ctx);
+    $ids = array_values(array_unique(array_filter(
+        array_map('intval', explode(',', (string)($ctx['post']['ids'] ?? '')))
+    )));
+    if (!$ids) Api::json(['ok' => false, 'msg' => '未选择日志']);
+    // 防御性上限：正常一页 ≤100 条，超过即异常请求，拒绝而不是照删
+    if (count($ids) > 500) Api::json(['ok' => false, 'msg' => '一次最多删除 500 条']);
+    $ok = 0;
+    foreach ($ids as $id) {
+        // DB::run 返回 PDOStatement，行数要取 rowCount()（与对象比大小无意义）
+        if (DB::run('DELETE FROM plugin_login_logs WHERE id=?', [$id])->rowCount() > 0) $ok++;
+    }
+    // 删除动作本身留痕：谁在什么时候删了哪些（ids 全量记录，便于事后核对）
+    Sec::log('plugin_login_logs_del', (string)($ctx['actor']['nickname'] ?? ''), ['ids' => $ids, 'ok' => $ok]);
+    Api::json(['ok' => $ok > 0, 'msg' => '批量删除：成功 ' . $ok . ' 条']);
+});
+Plugin::sensitive('plugin_login_logs_del');   // 删除数据：敏感，强制 POST + 一次性票据
 
 /* ===================== 清理旧日志（敏感） ===================== */
 
