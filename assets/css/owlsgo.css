@@ -22,7 +22,13 @@
     --ow-bg-chat-grad: none;             /* 纯色，不需要渐变 */
     --ow-bg-chat-hover: #EBEBEB;         /* hover 反馈：略深一档的同色系灰 */
     --ow-border: #E0E4E8;            /* 装饰性分隔线（卡片/表格），非交互组件 */
-    --ow-border-control: #949494;    /* 输入控件边框：v1.3.122 由 #8C8C8C 调淡一档（对白底 3.03:1，仍守住 UI 组件 3:1） */
+    --ow-border-control: #8C8C8C;    /* 输入控件边框：对白底 3.36:1，满足 UI 组件 3:1 */
+    /* v1.3.125：**可输入字段**自己的描边（.ow-input / 侧栏搜索框 / 分页跳转框）。
+       站方连着两轮说边框太深：这些控件本身已经有 --ow-bg-sub 的灰底把轮廓撑出来了，
+       再套一圈 3.36:1 的深灰就成了「灰药丸描黑边」。字段走这一档淡的，
+       透明底的按钮/分段控件（.ow-btn-ghost / .ow-seg-btn）继续用上面那档深描边，
+       否则它们没有底色、淡下去就找不着边界。深色侧不动（站方没反馈，且深底上边框本就更难看见）。 */
+    --ow-field-border: #BFC4CB;
     --ow-text: #333333;
     --ow-text-sub: #5C5C5C;         /* 副文本：白底 6.69、浅灰底 6.23、徽章底 5.23 */
     --ow-text-title: #1A1A1A;
@@ -285,6 +291,7 @@
     --ow-bg-chat-hover: #303035;    /* hover 反馈：深底上要**更亮** */
     --ow-border: #35353A;           /* 装饰分隔线 */
     --ow-border-control: #6B6B72;   /* 输入控件边框：深底 3.2:1，满足 UI 组件 3:1 */
+    --ow-field-border: #6B6B72;     /* 字段描边：深色下维持原档（见 :root 那条注释） */
     --ow-text: #DCDCE0;             /* 正文：对主背景 10.6:1 */
     --ow-text-sub: #A2A2AA;         /* 副文本：对主背景 5.9:1 */
     --ow-text-title: #F2F2F5;       /* 标题：对主背景 15.3:1 */
@@ -432,7 +439,7 @@ button { font-family: inherit; cursor: pointer; }
 .ow-input {
     width: 100%;
     padding: 9px 12px;
-    border: 1px solid var(--ow-border-control);
+    border: 1px solid var(--ow-field-border);
     border-radius: 6px;
     background: var(--ow-bg-sub);
     font-size: 14px;
@@ -1066,7 +1073,7 @@ input[type=range] {
     flex-shrink: 0; -webkit-flex-shrink: 0;
     margin: 0 12px 10px;
     padding: 7px 10px;
-    border: 1px solid var(--ow-border-control);
+    border: 1px solid var(--ow-field-border);   /* v1.3.125：与 .ow-input 同一档淡描边 */
     border-radius: 6px;                 /* 与 .ow-input 同圆角，看起来就是同一个控件 */
     background: var(--ow-brand-bg);
     color: var(--ow-text-sub);
@@ -2400,7 +2407,7 @@ span.ow-panel-entry-ico.ow-avatar { width: 16px; height: 16px; line-height: 16px
 .ow-pager-info { font-size: 12px; color: var(--ow-text-sub); }
 .ow-pager-dots { color: var(--ow-text-sub); padding: 0 2px; align-self: center; line-height: 1; }
 .ow-pager-jump { font-size: 12px; color: var(--ow-text-sub); margin-left: 10px; display: inline-flex; display: -webkit-inline-flex; align-items: center; -webkit-align-items: center; gap: 6px; }
-.ow-pager-jump-input { width: 56px; padding: 5px 6px; border: 1px solid var(--ow-border-control); border-radius: 4px; text-align: center; font-size: 12px; background: var(--ow-bg-sub); color: var(--ow-text); box-sizing: border-box; line-height: 1.2; }
+.ow-pager-jump-input { width: 56px; padding: 5px 6px; border: 1px solid var(--ow-field-border); border-radius: 4px; text-align: center; font-size: 12px; background: var(--ow-bg-sub); color: var(--ow-text); box-sizing: border-box; line-height: 1.2; }
 .ow-pager-jump-input:focus { outline: none; border-color: var(--ow-primary-strong); }
 
 @media (max-width: 720px) {
