@@ -704,10 +704,14 @@
         '明文（仅内网）': 'Plaintext (intranet only)',
         '账号': 'Account',
         '密码 / 授权码': 'Password / app token',
-        '完整的发件邮箱': 'Full sender address',
-        'QQ / 163 需用授权码，不是登录密码': 'QQ and 163 need an app token, not the login password',
+        'QQ/163 填发件邮箱；Resend 固定填 resend': 'QQ/163: the sender mailbox; Resend: literally resend',
+        '这一栏是 SMTP 用户名，不是收件人、也不等于发件地址：QQ / 163 填完整邮箱；Resend 固定填字面量 resend（填成邮箱会被回 535 Invalid username）；SendGrid 一般填 apikey。真正显示给收件人的发件地址在下面「发件地址」那一栏。':
+            'This is the SMTP username — not the recipient, and not necessarily the sender address. QQ / 163: the full mailbox. Resend: the literal word resend (a mailbox here gets 535 Invalid username). SendGrid: usually apikey. The address recipients actually see goes in the Sender address field below.',
+        'QQ / 163 需用授权码，不是登录密码；Resend 填 re_ 开头的 API Key': 'QQ and 163 need an app token, not the login password; Resend takes the re_ API key',
         '已保存，留空即不修改': 'Saved — leave blank to keep it',
         '发件地址': 'Sender address',
+        '填邮箱地址本身（如 noreply@yourdomain.com），不是站点网址；拿不准就照抄上面「账号」那一栏。发件域名必须是你在该服务商已验证过的域，否则服务商直接拒收。这一栏不合格时整份配置都不会保存（一行都不写），不是只丢这一项。':
+            'The mailbox itself (e.g. noreply@yourdomain.com) — not the site URL. Unsure? Copy the Account field above. The sending domain must be one you verified with the provider, or the message is rejected outright. While this field is invalid the whole configuration is refused — nothing is saved, not just this one field.',
         '发件人名称': 'Sender name',
         '留空则用站点名': 'Blank uses the site name',
         '发测试邮件给我': 'Send me a test email',

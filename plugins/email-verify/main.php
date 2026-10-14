@@ -513,17 +513,28 @@ Plugin::adminPage('email-verify', '邮箱验证', function () {
         . '<option value="none"' . ($c['smtp_encryption'] === 'none' ? ' selected' : '') . '>明文（仅内网）</option>'
         . '</select><p class="ow-form-hint">SSL 与 STARTTLS 一律校验服务器证书，没有「跳过校验」开关 —— 明文跳过等于把邮箱密码交给中间人。内网自签请选明文或把根证书加进系统 CA。</p></div>'
         . '<div class="ow-form-item" style="min-width:190px"><label>账号</label>'
-        . '<input class="ow-input" id="owEvUser" data-owev="smtp_user" type="text" autocomplete="off" value="' . $esc($c['smtp_user']) . '" placeholder="完整的发件邮箱"></div>'
+        . '<input class="ow-input" id="owEvUser" data-owev="smtp_user" type="text" autocomplete="off" value="' . $esc($c['smtp_user']) . '" placeholder="QQ/163 填发件邮箱；Resend 固定填 resend">'
+        // 站方 2026-10-14 实测：原占位文案只写「完整的发件邮箱」，他把 Resend 的 SMTP 用户名
+        // 也填成了邮箱 —— 服务商直接回 535 Invalid username。各家用户名规则不一样，必须点出来。
+        . '<p class="ow-form-hint">这一栏是 SMTP 用户名，不是收件人、也不等于发件地址：'
+        . 'QQ / 163 填完整邮箱；Resend 固定填字面量 resend（填成邮箱会被回 535 Invalid username）；'
+        . 'SendGrid 一般填 apikey。真正显示给收件人的发件地址在下面「发件地址」那一栏。</p></div>'
         . '<div class="ow-form-item" style="min-width:190px"><label>密码 / 授权码</label>'
         . '<input class="ow-input" id="owEvPass" data-owev="smtp_pass" type="password" autocomplete="new-password" value="" placeholder="'
-        . ($c['smtp_pass'] !== '' ? '已保存，留空即不修改' : 'QQ / 163 需用授权码，不是登录密码') . '"></div>'
+        . ($c['smtp_pass'] !== '' ? '已保存，留空即不修改' : 'QQ / 163 需用授权码，不是登录密码；Resend 填 re_ 开头的 API Key') . '"></div>'
         . '</div><div class="ow-form-row ow-ev-trans" data-owev-trans="mail"' . ($cur === 'mail' ? '' : ' style="display:none"') . '>'
         . '<div class="ow-form-item" style="flex:1 1 100%"><label>PHP mail()</label>'
         . '<p class="ow-form-hint">由服务器上的 sendmail / postfix 直接投递，不需要账号密码，但要本机 MTA 能对外发信，'
         . '且发件地址通常必须与本机域名一致。Windows 上没有内置 MTA，请改用 SMTP。</p></div></div>';
     $h .= '<div class="ow-form-row">'
         . '<div class="ow-form-item" style="min-width:210px"><label>发件地址</label>'
-        . '<input class="ow-input" id="owEvFrom" data-owev="from_email" type="text" autocomplete="off" value="' . $esc($c['from_email']) . '" placeholder="noreply@example.com"></div>'
+        . '<input class="ow-input" id="owEvFrom" data-owev="from_email" type="text" autocomplete="off" value="' . $esc($c['from_email']) . '" placeholder="noreply@example.com">'
+        // 站方 2026-10-14 实测踩过：这一栏把站点网址（https://localhost）粘进来了。
+        // 它要的是邮箱地址本身，且必须是服务商那边验证过的域 —— 存进去过不了
+        // FILTER_VALIDATE_EMAIL，整份配置会被保存路由退回（一行都不写）。
+        . '<p class="ow-form-hint">填邮箱地址本身（如 noreply@yourdomain.com），不是站点网址；拿不准就照抄上面「账号」那一栏。'
+        . '发件域名必须是你在该服务商已验证过的域，否则服务商直接拒收。这一栏不合格时整份配置都不会保存（一行都不写），'
+        . '不是只丢这一项。</p></div>'
         . '<div class="ow-form-item" style="min-width:210px"><label>发件人名称</label>'
         . '<input class="ow-input" id="owEvFromName" data-owev="from_name" type="text" value="' . $esc($c['from_name']) . '" placeholder="留空则用站点名"></div>'
         . '</div>'
