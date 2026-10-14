@@ -1,5 +1,5 @@
 /* ==========================================================================
-   chat-scripts · 群聊自动化（v1.1.0）— 前台话术面板 / 群聊设置·自动化 / 后台管理页共用样式
+   chat-scripts · 群聊自动化（v1.1.1）— 前台话术面板 / 群聊设置·自动化 / 后台管理页共用样式
    --------------------------------------------------------------------------
    颜色纪律：本文件不出现任何写死色值，一律引用核心 --ow-* 变量。
      全站深浅两套主题只靠重定义这些变量切换，插件写死颜色 = 深色模式下露亮斑。
@@ -70,7 +70,7 @@
     min-height: 0;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
-    padding: 6px 8px 8px;
+    padding: 8px 10px 10px;
 }
 .ow-cs-empty {
     margin: 0;
@@ -79,31 +79,53 @@
     font-size: 12.5px;
     color: var(--ow-text-sub);
 }
-.ow-cs-group { margin-bottom: 6px; }
+/* --------------------------------------------------------------------------
+   分组标题：整条底纹的区段标签（v1.1.1 重做）
+   ⚠️ 为什么必须与条目明显分开：原来它和 .ow-cs-item-c（条目副行）是同一档
+   —— 11.5px + --ow-text-sub，都是一行浅灰小字。条目标题又常只有两三个字，
+   整列读下来根本分不清哪行是分组名、哪行是内容（用户原话「完全分不清」）。
+   现在分组吃一条整宽底纹，视觉上就是一条区段分隔条。
+   -------------------------------------------------------------------------- */
+.ow-cs-group { margin-bottom: 10px; }
 .ow-cs-group:last-child { margin-bottom: 0; }
 .ow-cs-group-t {
     font-size: 11.5px;
+    line-height: 1.6;
     color: var(--ow-text-sub);
-    padding: 4px 2px;
+    background: var(--ow-bg-sub);
+    border-radius: 6px;
+    padding: 4px 10px;
+    margin-bottom: 6px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
+/* 条目做成卡片：描边 + 圆角 + 条目间距（v1.1.1 重做）。
+   原来条目之间零间隔、只靠 hover 底色区分，一屏十几条糊成一片。 */
 .ow-cs-item {
     display: flex; display: -webkit-flex;
     align-items: center; -webkit-align-items: center;
     gap: 8px;
-    padding: 7px 8px;
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    border: 1px solid var(--ow-border);
     border-radius: 8px;
+    background: var(--ow-bg);
     cursor: pointer;
-    /* 触控目标：内容不足 40px 时靠 padding 补足 */
-    min-height: 40px;
+    /* 触控目标：内容不足 44px 时靠 padding 补足 */
+    min-height: 44px;
     box-sizing: border-box;
 }
-.ow-cs-item:hover { background: var(--ow-hover-bg); }
+.ow-cs-item:last-child { margin-bottom: 0; }
+.ow-cs-item:hover { border-color: var(--ow-primary); background: var(--ow-hover-bg); }
 .ow-cs-item:active { background: var(--ow-active-bg); }
 .ow-cs-item-main { flex: 1; -webkit-flex: 1; min-width: 0; }
 .ow-cs-item-t {
     display: block;
     font-size: 13px;
-    font-weight: 600;
+    /* ⚠️ 500 而不是 600：≤13px 的中文用 600 会把字形撑宽、与相邻行对不齐
+       （用户既定约定，见 .ow-cs-item-c 也保持着更浅一档）。 */
+    font-weight: 500;
     color: var(--ow-text-title);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -111,9 +133,9 @@
 }
 .ow-cs-item-c {
     display: block;
-    font-size: 11.5px;
+    font-size: 12px;
     color: var(--ow-text-sub);
-    margin-top: 1px;
+    margin-top: 2px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -212,6 +234,47 @@
 .ow-cs-tabs { margin-bottom: 16px; }
 .ow-cs-tabs .ow-cs-tab { padding: 7px 16px; font-size: 13px; }
 .ow-cs-mf-btns { margin-top: 6px; }
+
+/* 后台列表工具条 + 条数统计（v1.1.1）。
+   与核心 .ow-admin-batch（批量下拉那行）相邻，所以左对齐、同一条基线。
+   注意：这两个类是本插件自己的 —— 不引用 login-logs 的 .ow-ll-toolbar/.ow-ll-count，
+   那是别的插件的私有样式，伸手过去就等于把两个插件绑死。 */
+.ow-cs-toolbar {
+    display: flex; display: -webkit-flex;
+    flex-wrap: wrap; -webkit-flex-wrap: wrap;
+    align-items: center; -webkit-align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+.ow-cs-count { font-size: 12px; color: var(--ow-text-sub); }
+
+/* --------------------------------------------------------------------------
+   复选框行（v1.1.1）
+   ⚠️ 原生 checkbox 默认按 baseline 对齐，和 13px 的中文标签摆一行会明显上下错位
+   —— 「启用本规则」那个勾选框就是这么歪的（用户截图反馈）。改成 flex +
+   align-items:center，并把复选框定死 16×16、禁止被压扁/拉伸。
+   ⚠️ 选择器必须带上 `.ow-form-item label` 那一档：核心的 `.ow-form-item label`
+   是 (0,1,1)，只写 `.ow-cs-check`（0,1,0）会被它按 display:block 直接覆盖掉。
+   同一个坑核心的 .ow-switch-label 也踩过（注释就留在 owlsgo.css 的 .ow-switch 段）。
+   -------------------------------------------------------------------------- */
+.ow-cs-check,
+.ow-form-item label.ow-cs-check {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    gap: 8px;
+    min-height: 24px;
+    margin-bottom: 0;              /* 覆盖 .ow-form-item label 的 6px，行距交给父级 */
+    font-size: 13px;
+    line-height: 1.4;
+    color: var(--ow-text);
+    cursor: pointer;
+    user-select: none; -webkit-user-select: none;
+}
+.ow-cs-check input[type="checkbox"] {
+    width: 16px; height: 16px;
+    margin: 0;
+    flex: 0 0 auto; -webkit-flex: 0 0 auto;
+}
 
 /* --------------------------------------------------------------------------
    移动端（与核心同一断点）：面板变 92% 宽，条目与按钮触控区放宽

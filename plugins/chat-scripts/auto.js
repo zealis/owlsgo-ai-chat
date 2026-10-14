@@ -1,5 +1,5 @@
 /**
- * chat-scripts · 群聊自动化 · 群聊设置里的「自动化」入口（v1.1.0）
+ * chat-scripts · 群聊自动化 · 群聊设置里的「自动化」入口（v1.1.1）
  *
  * ── 位置 ───────────────────────────────────────────────────────
  * 右侧栏「群聊信息」区块里的一行，紧跟在「群公告」**下面**。
@@ -59,13 +59,43 @@
         return t.getFullYear() + '-' + p(t.getMonth() + 1) + '-' + p(t.getDate())
             + ' ' + p(t.getHours()) + ':' + p(t.getMinutes());
     }
-    /** 'YYYY-MM-DD HH:mm' → Unix 秒；解析失败返回 0 */
+    /** 'YYYY-MM-DD HH:mm' / 'YYYY-MM-DDTHH:mm' → Unix 秒；解析失败返回 0 */
     function parseTs(s) {
         s = String(s || '').replace(/^\s+|\s+$/g, '');
         var m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{1,2})/);
         if (!m) return 0;
         var t = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], 0, 0);
         return isNaN(t.getTime()) ? 0 : Math.floor(t.getTime() / 1000);
+    }
+    /** Unix 秒 → 'YYYY-MM-DDTHH:mm'（<input type="datetime-local"> 认的格式） */
+    function fmtLocal(ts) {
+        ts = int(ts, 0);
+        if (ts <= 0) return '';
+        var t = new Date(ts * 1000);
+        function p(n) { return (n < 10 ? '0' : '') + n; }
+        return t.getFullYear() + '-' + p(t.getMonth() + 1) + '-' + p(t.getDate())
+            + 'T' + p(t.getHours()) + ':' + p(t.getMinutes());
+    }
+
+    /**
+     * 本浏览器支不支持原生日期时间选择器（v1.1.1）。
+     *
+     * 一次性定时的「执行时间」原来是个手输框，要求用户自己按 'YYYY-MM-DD HH:mm' 敲
+     * —— 手机上没有键盘可弹，桌面端还得记格式，敲错了服务端只回一句「至少 30 秒以后」。
+     * 改用 datetime-local 后，现代浏览器点一下就是系统日期时间选择器。
+     *
+     * 老浏览器（IE 全系、老 Android WebView）不支持：给 <input> 设这个 type 会被
+     * **静默**降级成 text，不报错也不提示。所以这里探测一次（同一浏览器结果恒定，
+     * 结果缓存在闭包变量里），不支持就退回手输框 + 原格式提示 —— 解析口径本来就
+     * 兼容两种写法（parseTs 同时认空格与 T），因此降级路径与增强路径共用同一套存取。
+     */
+    var dtOk;
+    function dtSupported() {
+        if (dtOk !== undefined) return dtOk;
+        var i = d.createElement('input');
+        try { i.setAttribute('type', 'datetime-local'); } catch (e) { /* 老 IE 会抛 */ }
+        dtOk = (i.type === 'datetime-local');
+        return dtOk;
     }
     /** 把 keywords 字段（JSON 串）解析成数组，坏数据一律当空数组，别让渲染炸掉 */
     function kwArr(s) {
@@ -247,7 +277,7 @@
             + '<input class="ow-input" id="owCaRKw" maxlength="200" value="' + esc(kws.join(',')) + '" placeholder="如：多少钱,价格,报价"></div>'
             + '<div class="ow-form-item"><label>回复内容</label>'
             + '<textarea class="ow-input" id="owCaRReply" rows="3" maxlength="2000" placeholder="机器人回复的内容，不超过 2000 字">' + esc(r.reply) + '</textarea></div>'
-            + '<div class="ow-form-item"><label><input type="checkbox" id="owCaROn"' + (int(r.enabled) ? ' checked' : '') + '> 启用本规则</label></div>'
+            + '<div class="ow-form-item"><label class="ow-cs-check"><input type="checkbox" id="owCaROn"' + (int(r.enabled) ? ' checked' : '') + '><span>启用本规则</span></label></div>'
             + '<div class="ow-cs-mg-btns">'
             + '<button class="ow-btn ow-btn-primary" type="button" id="owCaRSave">' + (CA.editId ? '保存修改' : '新增规则') + '</button>'
             + (CA.editId ? '<button class="ow-btn" type="button" id="owCaRCancel">取消编辑</button>' : '')
@@ -332,6 +362,17 @@
         var list = CA.data.casts || [], i, cur = null;
         for (i = 0; i < list.length; i++) if (int(list[i].id) === CA.editId) { cur = list[i]; break; }
         var c = cur || { content: '', mode: 'loop', interval_sec: 3600, send_at: 0 };
+        // 执行时间用原生选择器；不支持的浏览器退回手输框（见 dtSupported 注释）。
+        // 两条路都读同一个 id，保存时只差一次格式解析（parseTs 两种都认）。
+        // min 取「当前 +1 分钟」：服务端要求至少 30 秒以后，选择器别让人白选过去的时间。
+        // ⚠️ 用 new Date().getTime() 而不是 Date.now()：后者是 ES5.1 才有的，
+        //    老引擎里是 undefined（项目目标包含落后内核）。
+        var nowSec = Math.floor(new Date().getTime() / 1000);
+        var atInput = dtSupported()
+            ? '<input class="ow-input" id="owCaCeSendAt" type="datetime-local" step="60" min="' + fmtLocal(nowSec + 60) + '"'
+              + ' value="' + esc(fmtLocal(c.send_at)) + '">'
+            : '<input class="ow-input" id="owCaCeSendAt" value="' + esc(int(c.send_at) ? fmtTs(c.send_at) : '') + '"'
+              + ' placeholder="如 2026-10-15 09:00">';
         $('owCaFormWrap').innerHTML =
               '<div class="ow-cs-mg-form">'
             + '<div class="ow-form-item"><label>发送内容</label>'
@@ -343,8 +384,9 @@
             + '<div class="ow-form-item" id="owCaCeLoopItem"><label>间隔（分钟，最短 5 分钟）</label>'
             + '<input class="ow-input" id="owCaCeInterval" type="number" min="5" max="10080" value="'
             + esc(Math.max(5, Math.round(int(c.interval_sec) / 60))) + '"></div>'
-            + '<div class="ow-form-item" id="owCaCeOnceItem" style="display:none"><label>执行时间（年-月-日 时:分，至少 30 秒以后）</label>'
-            + '<input class="ow-input" id="owCaCeSendAt" value="' + esc(int(c.send_at) ? fmtTs(c.send_at) : '') + '" placeholder="如 2026-10-15 09:00"></div>'
+            + '<div class="ow-form-item" id="owCaCeOnceItem" style="display:none"><label>执行时间'
+            + (dtSupported() ? '' : '（格式 年-月-日 时:分）') + '</label>'
+            + atInput + '</div>'
             + '<div class="ow-cs-mg-btns">'
             + '<button class="ow-btn ow-btn-primary" type="button" id="owCaCeSave">' + (CA.editId ? '保存修改' : '新增任务') + '</button>'
             + (CA.editId ? '<button class="ow-btn" type="button" id="owCaCeCancel">取消编辑</button>' : '')
@@ -409,7 +451,10 @@
         };
         if (mode === 'once') {
             payload.send_at = parseTs($('owCaCeSendAt').value);
-            if (!payload.send_at) { toast('请按格式填写执行时间，如 2026-10-15 09:00'); return; }
+            if (!payload.send_at) {
+                toast(dtSupported() ? '请选择执行时间' : '请按格式填写执行时间，如 2026-10-15 09:00');
+                return;
+            }
         }
         var rid = CA.roomId;
         OwApi.secure(A + 'room_cast_save', payload, function (r) {

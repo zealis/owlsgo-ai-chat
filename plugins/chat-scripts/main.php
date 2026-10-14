@@ -1,6 +1,6 @@
 <?php
 /**
- * 群聊自动化插件（chat-scripts v1.1.0）
+ * 群聊自动化插件（chat-scripts v1.1.1）
  *
  * 插件显示名 v1.1.0 起为「群聊自动化」（目录名与路由/表名前缀 chat-scripts 保持
  * 不动 —— 那是标识不是文案，改了会丢启用状态、丢数据、断掉已发出去的资源地址）。
@@ -16,6 +16,10 @@
  *   D 房间级自动化管理（v1.1.0 新增）：B/C 的管理入口从「只有后台」扩到
  *     「群聊设置 → 自动化」，**群主在自己群里就能配**。auto.js 走
  *     OwChat.onRoomEdit 把入口挂在群公告那一行下面（见 auto.js 文件头）。
+ *     v1.1.1：后台那两个页签（自动回复 / 定时群发）连同 admin_rule_* /
+ *     admin_cast_* 四条路由一并下线 —— 规则与任务只跟着群走，不再有「全站规则」
+ *     这条只有管理员能用的第二通道（界面上没了、接口还留着就是暗门）。
+ *     每群上限收到 8 条（规则与任务同为 8），后台只留公共话术 / 机器人账号 / 发送记录。
  *
  * ── B/C 的两套作用域（v1.1.0 起）──────────────────────────────
  *   · room_id = 0   全局规则，**只有管理员能建**（后台页）。对所有群生效。
@@ -515,9 +519,13 @@ Plugin::cron('chat_scripts_cast', 60, function () {
 
 /* ============================ D：房间级自动化（群主在前台自管本群，v1.1.0） ============================ */
 
-/** 单个群的自动化条数上限：防群主灌数据把插件表撑大（值同时下发给前端做文案） */
-function csRoomRuleCap(): int { return 20; }
-function csRoomCastCap(): int { return 10; }
+/**
+ * 单个群的自动化条数上限（防群主灌数据把插件表撑大）。
+ * v1.1.1：自动回复 20→8、定时群发 10→8 —— 8 条够一个群日常用，
+ * 且两个数字相同，前端文案与接口都只需一个概念。值同时下发给前端做文案。
+ */
+function csRoomRuleCap(): int { return 8; }
+function csRoomCastCap(): int { return 8; }
 
 /**
  * 机器人能否真的在本群发出消息。三项都要过：
@@ -752,59 +760,93 @@ $csGuard = function (array $ctx): void {
 
 Plugin::adminPage('chat-scripts', '群聊自动化', function () {
     return '<h2>群聊自动化</h2>'
-        . '<p class="ow-admin-desc">快捷话术、关键词自动回复与定时群发。机器人自动发送的消息与普通用户消息走完全相同的服务端校验（敏感词、禁言、频率限制）。'
-        . '<b>群主也能配：</b>自动回复与定时群发的入口同时开在「群聊设置 → 自动化」里，群主在自己群里直接管理本群规则（只能管本群）；这个后台页负责「全部群聊」的全局规则与全站设置。</p>'
+        . '<p class="ow-admin-desc">机器人自动发送的消息与普通用户消息走完全相同的服务端校验（敏感词、禁言、频率限制）。'
+        . '<b>自动回复与定时群发不在这里 —— 它们跟着群走：</b>入口是「群聊设置 → 自动化」，群主在自己群里直接管本群规则，'
+        . '且只能管本群（每个群最多 8 条自动回复、8 条定时群发）。'
+        . '这个后台页管三件事：公共话术、机器人账号、发送记录。</p>'
         . '<div class="ow-cs-tabs">'
-        . '<button class="ow-btn ow-cs-tab is-active" type="button" data-tab="snip">快捷话术</button>'
-        . '<button class="ow-btn ow-cs-tab" type="button" data-tab="rule">自动回复</button>'
-        . '<button class="ow-btn ow-cs-tab" type="button" data-tab="cast">定时群发</button>'
-        . '<button class="ow-btn ow-cs-tab" type="button" data-tab="log">发送日志</button>'
+        . '<button class="ow-btn ow-cs-tab is-active" type="button" data-tab="snip">公共话术</button>'
+        . '<button class="ow-btn ow-cs-tab" type="button" data-tab="bot">机器人账号</button>'
+        . '<button class="ow-btn ow-cs-tab" type="button" data-tab="log">发送记录</button>'
         . '</div>'
 
-        /* ---- 快捷话术（公共） ---- */
+        /* ---- 公共话术（通用列表：筛选 + 批量 + 分页，与登录日志同一套轮子） ---- */
         . '<div class="ow-cs-pane" id="owCsPane-snip">'
-        . '<div class="ow-card"><h3 style="margin-bottom:10px">公共话术</h3>'
+        . '<div class="ow-card">'
         . '<p style="font-size:12px">全站用户在话术面板里都能看到并使用，仅管理员可维护。个人话术由用户在前台自行管理，不在这里出现。</p>'
-        . '<div class="ow-form-row"><div class="ow-form-item" style="flex:1">'
-        . '<input class="ow-input" id="owCsSnipQ" placeholder="搜索标题或内容（留空显示全部）">'
-        . '</div><button class="ow-btn ow-btn-primary" type="button" onclick="OwCSAdmin.snipEdit(0)">新增话术</button></div>'
-        . '<div id="owCsSnips"></div></div></div>'
+        . '<div class="ow-form-row">'
+        . '<div class="ow-form-item" style="flex:1;min-width:180px"><label>关键词</label>'
+        . '<input class="ow-input" id="owCsSnipQ" placeholder="标题 / 内容 / 分组" onkeydown="if(event.key===\'Enter\')OwCSAdmin.snipLoad(1)"></div>'
+        . '<button class="ow-btn ow-btn-primary" type="button" onclick="OwCSAdmin.snipLoad(1)">搜索</button>'
+        . '<button class="ow-btn ow-btn-ghost" type="button" onclick="OwCSAdmin.snipReset()">重置</button>'
+        . '<button class="ow-btn" type="button" onclick="OwCSAdmin.snipEdit(0)">新增话术</button>'
+        . '</div></div>'
+        . '<div class="ow-card">'
+        . '<div class="ow-cs-toolbar"><span class="ow-cs-count" id="owCsSnipStat"></span></div>'
+        . '<div id="owCsSnipBatch"></div>'
+        . '<div class="ow-table-wrap"><table class="ow-table" id="owCsSnipTable">'
+        . '<tr><th style="width:32px"><input type="checkbox" id="owCsSnipCheckAll" onchange="OwCSAdmin.snipToggleAll(this)"></th>'
+        . '<th>ID</th><th>标题</th><th>分组</th><th>内容</th><th>被使用</th></tr>'
+        . '</table></div>'
+        . '<div id="owCsSnipPager"></div>'
+        . '</div></div>'
 
-        /* ---- 自动回复 ---- */
-        . '<div class="ow-cs-pane" id="owCsPane-rule" style="display:none">'
+        /* ---- 机器人账号（v1.1.1：从原「自动回复」页里独立出来，顶替它成为一个页签） ---- */
+        . '<div class="ow-cs-pane" id="owCsPane-bot" style="display:none">'
         . '<div class="ow-card"><h3 style="margin-bottom:10px">机器人账号</h3>'
-        . '<p style="font-size:12px">自动回复与定时群发都以该账号身份发消息，和普通用户消息同样经过敏感词、禁言、频率限制。建议注册一个专用账号并加入相关群聊；不要使用超级管理员账号（它发的每条消息都会带管理员标识）。</p>'
+        . '<p style="font-size:12px">自动回复与定时群发都以该账号身份发消息，和普通用户消息同样经过敏感词、禁言、频率限制。'
+        . '建议注册一个专用账号；不要使用超级管理员账号（它发的每条消息都会带管理员标识）。'
+        . '<br>机器人必须是该群成员才能发言 —— 公开群由群主在「群聊设置 → 自动化」里点「让机器人加入本群」，'
+        . '也可用下面的按钮一次性加入所有公开群。</p>'
         . '<div class="ow-form-row">'
         . '<div class="ow-form-item"><label>机器人用户 ID</label><input class="ow-input" id="owCsBotUid" style="width:120px" placeholder="如 12"></div>'
         . '<div class="ow-form-item"><label>每房每分钟回复上限</label><input class="ow-input" id="owCsReplyLimit" style="width:90px"></div>'
         . '<div class="ow-form-item"><label>同规则冷却（秒）</label><input class="ow-input" id="owCsCool" style="width:90px"></div>'
         . '<button class="ow-btn ow-btn-primary" type="button" onclick="OwCSAdmin.cfgSave()">保存设置</button>'
         . '<button class="ow-btn" type="button" onclick="OwCSAdmin.botJoin()">加入所有公开群</button>'
-        . '</div><div id="owCsBotInfo" style="margin-top:8px"></div></div>'
-        . '<div class="ow-card"><h3 style="margin-bottom:10px">回复规则</h3>'
-        . '<p style="font-size:12px">群聊里有人说的话命中关键词时，机器人自动回复一次。「包含」= 消息里出现任一关键词即命中；「全等」= 整条消息（去首尾空白）与关键词完全相同才命中。同一条消息只会触发一条规则（按排序取第一条）。'
-        . '适用群聊选「全部群聊」时是全站生效的全局规则，只有这里能改；群主在自己群的「群聊设置 → 自动化」里加的规则只作用于他那一个群，同样会出现在下面的列表里。</p>'
-        . '<div id="owCsRules"></div>'
-        . '<button class="ow-btn ow-btn-primary" type="button" style="margin-top:10px" onclick="OwCSAdmin.ruleEdit(0)">新增规则</button>'
-        . '</div></div>'
+        . '</div><div id="owCsBotInfo" style="margin-top:8px"></div></div></div>'
 
-        /* ---- 定时群发 ---- */
-        . '<div class="ow-cs-pane" id="owCsPane-cast" style="display:none">'
-        . '<div class="ow-card"><h3 style="margin-bottom:10px">群发任务</h3>'
-        . '<p style="font-size:12px">到时间用机器人账号在选定群聊发送预设内容。机器人只能进公开群聊（密码房需要机器人本人是超级管理员，角色房按角色等级判定），而且必须是该群成员才能发言；「加入所有公开群」按钮在「自动回复」页。周期任务最短 5 分钟一次，一次性任务到点发送后自动停用。群主在自己群的「群聊设置 → 自动化」里建的任务只发他那一个群，也会列在下面。</p>'
-        . '<div id="owCsCasts"></div>'
-        . '<button class="ow-btn ow-btn-primary" type="button" style="margin-top:10px" onclick="OwCSAdmin.castEdit(0)">新增任务</button>'
-        . '</div></div>'
-
-        /* ---- 发送日志 ---- */
+        /* ---- 发送记录（通用列表：筛选 + 批量 + 分页） ---- */
         . '<div class="ow-cs-pane" id="owCsPane-log" style="display:none">'
-        . '<div class="ow-card"><h3 style="margin-bottom:10px">发送日志</h3>'
-        . '<p style="font-size:12px">自动回复与群发的每次发送都记在这里（含失败原因）。机器人被禁言、被移出群聊、内容被敏感词拦截时，这里能看到对应记录。</p>'
-        . '<div class="ow-form-row" style="margin-bottom:10px"><button class="ow-btn" type="button" onclick="OwCSAdmin.logClear()">清空日志</button></div>'
-        . '<div id="owCsLogs"></div></div></div>';
+        . '<div class="ow-card">'
+        . '<p style="font-size:12px">自动回复与定时群发的每次发送都记在这里（含失败原因）。机器人被禁言、被移出群聊、内容被敏感词拦截时，这里能看到对应记录。</p>'
+        . '<div class="ow-form-row">'
+        . '<div class="ow-form-item" style="flex:1;min-width:180px"><label>关键词</label>'
+        . '<input class="ow-input" id="owCsLogQ" placeholder="群名 / 内容 / 失败原因" onkeydown="if(event.key===\'Enter\')OwCSAdmin.logLoad(1)"></div>'
+        . '<div class="ow-form-item" style="min-width:130px"><label>类型</label>'
+        . '<select class="ow-input" id="owCsLogKind" onchange="OwCSAdmin.logLoad(1)">'
+        . '<option value="">全部</option><option value="reply">自动回复</option><option value="cast">定时群发</option>'
+        . '</select></div>'
+        . '<div class="ow-form-item" style="min-width:130px"><label>结果</label>'
+        . '<select class="ow-input" id="owCsLogOk" onchange="OwCSAdmin.logLoad(1)">'
+        . '<option value="">全部</option><option value="1">成功</option><option value="0">失败</option>'
+        . '</select></div>'
+        . '<div class="ow-form-item" style="min-width:150px"><label>开始日期</label>'
+        . '<input class="ow-input" id="owCsLogD1" type="date"></div>'
+        . '<div class="ow-form-item" style="min-width:150px"><label>结束日期</label>'
+        . '<input class="ow-input" id="owCsLogD2" type="date"></div>'
+        . '<button class="ow-btn ow-btn-primary" type="button" onclick="OwCSAdmin.logLoad(1)">搜索</button>'
+        . '<button class="ow-btn ow-btn-ghost" type="button" onclick="OwCSAdmin.logReset()">重置</button>'
+        . '</div></div>'
+        . '<div class="ow-card">'
+        . '<div class="ow-cs-toolbar">'
+        . '<button class="ow-btn ow-btn-ghost" type="button" onclick="OwCSAdmin.logClearAll()">清空全部记录</button>'
+        . '<span class="ow-cs-count" id="owCsLogStat"></span>'
+        . '</div>'
+        . '<div id="owCsLogBatch"></div>'
+        . '<div class="ow-table-wrap"><table class="ow-table" id="owCsLogTable">'
+        . '<tr><th style="width:32px"><input type="checkbox" id="owCsLogCheckAll" onchange="OwCSAdmin.logToggleAll(this)"></th>'
+        . '<th>时间</th><th>类型</th><th>群聊</th><th>内容</th><th>结果</th></tr>'
+        . '</table></div>'
+        . '<div id="owCsLogPager"></div>'
+        . '</div></div>';
 });
 
-/* ---------- 后台数据总览（一次拿全，减少请求） ---------- */
+/**
+ * 后台基础数据：机器人账号设置 + 机器人能在哪些群发言。
+ * v1.1.1：两个列表（公共话术 / 发送记录）改走服务端分页，不再从这里一次拿全 ——
+ * 记录上万条时那把「一次拿 100 条」既看不全也拖慢首屏，交给各自的列表路由。
+ */
 Plugin::route('plugin_chat_scripts_admin_init', function (array $ctx) use ($csGuard) {
     $csGuard($ctx);
     csBoot();
@@ -823,11 +865,37 @@ Plugin::route('plugin_chat_scripts_admin_init', function (array $ctx) use ($csGu
         ],
         'bot'   => $bot ? ['id' => (int)$bot['id'], 'nickname' => (string)$bot['nickname'], 'role' => (string)$bot['role']] : null,
         'rooms' => $rooms,
-        'snips' => DB::all("SELECT * FROM plugin_chat_scripts_snip WHERE scope='public' ORDER BY sort ASC, id ASC"),
-        'rules' => DB::all('SELECT * FROM plugin_chat_scripts_rule ORDER BY sort ASC, id ASC'),
-        'casts' => DB::all('SELECT * FROM plugin_chat_scripts_cast ORDER BY id DESC'),
-        'logs'  => DB::all('SELECT * FROM plugin_chat_scripts_log ORDER BY id DESC LIMIT 100'),
     ]);
+});
+
+/* ---------- 公共话术列表（分页 + 搜索；与全站后台通用列表同一套分页口径） ---------- */
+Plugin::route('plugin_chat_scripts_admin_snip_list', function (array $ctx) use ($csGuard) {
+    $csGuard($ctx);
+    csBoot();
+    $post  = $ctx['post'];
+    $page  = max(1, (int)($post['page'] ?? 1));
+    $psize = max(1, min(100, (int)($post['psize'] ?? 20)));
+    $kw    = trim((string)($post['q'] ?? ''));
+
+    // ⚠️ scope='public' 写死在这里，不是「顺手过滤一下」：个人话术与群话术
+    //    绝不能从这个接口漏出去（那是别人自己写的东西）。
+    $where = " WHERE scope='public'";
+    $args  = [];
+    if ($kw !== '') {
+        $where .= ' AND (title LIKE ? OR content LIKE ? OR group_name LIKE ?)';
+        $args[] = '%' . $kw . '%';
+        $args[] = '%' . $kw . '%';
+        $args[] = '%' . $kw . '%';
+    }
+    $total = (int)DB::val("SELECT COUNT(*) FROM plugin_chat_scripts_snip$where", $args);
+    // 翻页越界收敛：批量删光当前页后 $page 可能超过总页数，不收敛会返回一张空表
+    $pages = max(1, (int)ceil($total / $psize));
+    if ($page > $pages) $page = $pages;
+    $offset = ($page - 1) * $psize;
+
+    $rows = DB::all("SELECT id, group_name, title, content, use_count
+        FROM plugin_chat_scripts_snip$where ORDER BY sort ASC, id ASC LIMIT $psize OFFSET $offset", $args);
+    Api::json(['ok' => true, 'data' => $rows, 'total' => $total, 'page' => $page, 'pages' => $pages, 'psize' => $psize]);
 });
 
 /* ---------- 公共话术保存 / 删除（敏感操作） ---------- */
@@ -861,15 +929,44 @@ Plugin::route('plugin_chat_scripts_admin_snip_save', function (array $ctx) use (
 });
 Plugin::sensitive('plugin_chat_scripts_admin_snip_save');
 
+/**
+ * 把前端传来的 id 清单解析成去重后的正整数数组（批量删除共用）。
+ * 只认纯数字：'abc' / '1e3' / ' 3 ' 里的前两者直接被丢掉，不留任何能进 SQL 的余地
+ * （最终仍走参数占位符，这一步是「连占位符都不给它」的额外一层）。
+ */
+function csParseIds(string $raw, int $cap = 500): array
+{
+    $out = [];
+    foreach (explode(',', $raw) as $v) {
+        $v = trim($v);
+        if ($v === '' || !preg_match('/^\d+$/', $v)) continue;
+        $n = (int)$v;
+        if ($n > 0) $out[$n] = true;
+        if (count($out) >= $cap) break;
+    }
+    return array_keys($out);
+}
+
+/* ---------- 公共话术删除（单个 / 批量共用；敏感操作） ---------- */
 Plugin::route('plugin_chat_scripts_admin_snip_del', function (array $ctx) use ($csGuard) {
     $csGuard($ctx);
     csBoot();
-    $id = (int)($ctx['post']['id'] ?? 0);
-    $row = DB::one("SELECT id, title FROM plugin_chat_scripts_snip WHERE id=? AND scope='public'", [$id]);
-    if (!$row) Api::json(['ok' => false, 'msg' => '公共话术不存在'], 404);
-    DB::run('DELETE FROM plugin_chat_scripts_snip WHERE id=?', [$id]);
-    Sec::log('cs_snip_del', $ctx['actor']['nickname'], ['title' => mb_substr((string)$row['title'], 0, 60)]);
-    Api::json(['ok' => true, 'msg' => '已删除']);
+    $post = $ctx['post'];
+    // v1.1.1：列表换成通用批量选择后，删除走 ids（逗号分隔）；单个删除仍传 id，两条路都留着
+    $ids = csParseIds((string)($post['ids'] ?? ''));
+    if (!$ids && (int)($post['id'] ?? 0) > 0) $ids = [(int)$post['id']];
+    if (!$ids) Api::json(['ok' => false, 'msg' => '请先勾选要删除的话术']);
+
+    $ph = implode(',', array_fill(0, count($ids), '?'));
+    // ⚠️ scope='public' 必须留在 WHERE 里：少了它，构造请求拿别的 id 就能删掉
+    //    用户的个人话术 / 群话术（那两类的 id 与公共话术同表连续，几乎必然命中）
+    $rows = DB::all("SELECT id, title FROM plugin_chat_scripts_snip WHERE scope='public' AND id IN ($ph)", $ids);
+    if (!$rows) Api::json(['ok' => false, 'msg' => '公共话术不存在'], 404);
+    DB::run("DELETE FROM plugin_chat_scripts_snip WHERE scope='public' AND id IN ($ph)", $ids);
+    Sec::log('cs_snip_del', $ctx['actor']['nickname'], [
+        'n' => count($rows), 'titles' => mb_substr(implode(' / ', array_column($rows, 'title')), 0, 190),
+    ]);
+    Api::json(['ok' => true, 'msg' => '已删除 ' . count($rows) . ' 条']);
 });
 Plugin::sensitive('plugin_chat_scripts_admin_snip_del');
 
@@ -916,129 +1013,68 @@ Plugin::route('plugin_chat_scripts_admin_bot_join', function (array $ctx) use ($
 });
 Plugin::sensitive('plugin_chat_scripts_admin_bot_join');
 
-/* ---------- 回复规则保存 / 删除（敏感操作） ---------- */
-Plugin::route('plugin_chat_scripts_admin_rule_save', function (array $ctx) use ($csGuard) {
+/* v1.1.1：后台的「自动回复」「定时群发」两个页签整块下线 —— 规则与任务只跟着群走，
+   入口在「群聊设置 → 自动化」，群主自管本群。原来这两条 admin_rule_* 路由支持
+   room_id=0（全站规则）与任意群，是只有管理员能用的第二条通道；留着就是「界面上没了、
+   接口还在」的暗门（用户此前明确叫停过这种死代码），因此连同 admin_cast_* 一并删除。
+   ⚠️ 连带影响：全站规则（room_id=0）从此没有任何创建入口。已有的历史行仍会被
+   message.after_send 钩子命中（那里保留了 `OR room_id=0`），群主在自动化弹窗顶部
+   能看到「另有 N 条全站规则在本群同样生效」，不会莫名其妙多出一条自动回复。 */
+
+/* ---------- 发送记录：列表（分页 + 筛选）/ 批量删除 / 清空 ---------- */
+
+Plugin::route('plugin_chat_scripts_admin_log_list', function (array $ctx) use ($csGuard) {
     $csGuard($ctx);
     csBoot();
-    $post = $ctx['post'];
-    $id     = (int)($post['id'] ?? 0);
-    $roomId = (int)($post['room_id'] ?? 0);
-    $mode   = ($post['match_mode'] ?? '') === 'exact' ? 'exact' : 'include';
+    $post  = $ctx['post'];
+    $page  = max(1, (int)($post['page'] ?? 1));
+    $psize = max(1, min(100, (int)($post['psize'] ?? 20)));
+    $kw    = trim((string)($post['q'] ?? ''));
+    $kind  = trim((string)($post['kind'] ?? ''));     // reply / cast，空 = 全部
+    $ok    = trim((string)($post['ok'] ?? ''));       // '1' / '0'，空 = 全部
+    $d1    = trim((string)($post['d1'] ?? ''));
+    $d2    = trim((string)($post['d2'] ?? ''));
 
-    $kws = json_decode((string)($post['keywords'] ?? ''), true);
-    if (!is_array($kws) || !$kws) Api::json(['ok' => false, 'msg' => '至少填写一个关键词']);
-    $clean = [];
-    foreach ($kws as $kw) {
-        $kw = trim((string)$kw);
-        if ($kw === '') continue;
-        if (mb_strlen($kw) > 20) Api::json(['ok' => false, 'msg' => '单个关键词不超过 20 字']);
-        $clean[] = $kw;
-        if (count($clean) >= 10) break;
+    $where = ' WHERE 1=1';
+    $args  = [];
+    if (in_array($kind, ['reply', 'cast'], true)) { $where .= ' AND kind=?'; $args[] = $kind; }
+    if ($ok === '0' || $ok === '1') { $where .= ' AND ok=?'; $args[] = (int)$ok; }
+    if ($kw !== '') {
+        // 群名也进搜索：排查「某个群为什么没发出」时，按群名找比翻页快得多
+        $where .= ' AND (content LIKE ? OR room_name LIKE ? OR msg LIKE ?)';
+        $args[] = '%' . $kw . '%';
+        $args[] = '%' . $kw . '%';
+        $args[] = '%' . $kw . '%';
     }
-    if (!$clean) Api::json(['ok' => false, 'msg' => '至少填写一个关键词']);
+    // 日期段：当日 0 点起、次日 0 点前（结束日期包含整天）——与登录日志同一口径
+    if ($d1 !== '') { $t1 = strtotime($d1 . ' 00:00:00'); if ($t1 !== false) { $where .= ' AND created_at>=?'; $args[] = (int)$t1; } }
+    if ($d2 !== '') { $t2 = strtotime($d2 . ' 23:59:59'); if ($t2 !== false) { $where .= ' AND created_at<=?'; $args[] = (int)$t2; } }
 
-    $reply = trim((string)($post['reply'] ?? ''));
-    if ($reply === '' || mb_strlen($reply) > 2000) Api::json(['ok' => false, 'msg' => '回复内容 1-2000 字']);
+    $total = (int)DB::val("SELECT COUNT(*) FROM plugin_chat_scripts_log$where", $args);
+    $pages = max(1, (int)ceil($total / $psize));
+    if ($page > $pages) $page = $pages;      // 批量删光当前页后收敛，避免返回一张空表
+    $offset = ($page - 1) * $psize;
 
-    if ($roomId > 0) {
-        $room = DB::one('SELECT * FROM rooms WHERE id=? AND status=1', [$roomId]);
-        if (!$room) Api::json(['ok' => false, 'msg' => '群聊不存在或已关闭']);
-        $bot = csBot();
-        if (!$bot) Api::json(['ok' => false, 'msg' => '请先在「机器人账号」里设置机器人用户 ID']);
-        if (!csRoomOkForBot($room, $bot)) {
-            Api::json(['ok' => false, 'msg' => '机器人无法进入该群聊（仅支持公开群聊；密码房需机器人本人是超级管理员）']);
-        }
-    }
-
-    $enabled = (int)($post['enabled'] ?? 1) ? 1 : 0;
-    $now = time();
-    $kwJson = json_encode($clean, JSON_UNESCAPED_UNICODE);
-    if ($id > 0) {
-        DB::run('UPDATE plugin_chat_scripts_rule SET room_id=?, keywords=?, match_mode=?, reply=?, enabled=?, updated_at=? WHERE id=?',
-            [$roomId, $kwJson, $mode, $reply, $enabled, $now, $id]);
-        Api::json(['ok' => true, 'msg' => '已保存']);
-    }
-    DB::insert('plugin_chat_scripts_rule', [
-        'room_id' => $roomId, 'keywords' => $kwJson, 'match_mode' => $mode,
-        'reply' => $reply, 'hit_count' => 0, 'enabled' => $enabled, 'sort' => 0,
-        'created_at' => $now, 'updated_at' => $now,
-    ]);
-    Sec::log('cs_rule_add', $ctx['actor']['nickname'], ['room' => $roomId]);
-    Api::json(['ok' => true, 'msg' => '已添加']);
+    $rows = DB::all("SELECT id, kind, room_id, room_name, rule_id, content, ok, msg, created_at
+        FROM plugin_chat_scripts_log$where ORDER BY id DESC LIMIT $psize OFFSET $offset", $args);
+    Api::json(['ok' => true, 'data' => $rows, 'total' => $total, 'page' => $page, 'pages' => $pages, 'psize' => $psize]);
 });
-Plugin::sensitive('plugin_chat_scripts_admin_rule_save');
 
-Plugin::route('plugin_chat_scripts_admin_rule_del', function (array $ctx) use ($csGuard) {
+/** 批量删除所选记录（敏感操作；按 id 精确删，不碰别的行） */
+Plugin::route('plugin_chat_scripts_admin_log_del', function (array $ctx) use ($csGuard) {
     $csGuard($ctx);
     csBoot();
-    $id = (int)($ctx['post']['id'] ?? 0);
-    $row = DB::one('SELECT id FROM plugin_chat_scripts_rule WHERE id=?', [$id]);
-    if (!$row) Api::json(['ok' => false, 'msg' => '规则不存在'], 404);
-    DB::run('DELETE FROM plugin_chat_scripts_rule WHERE id=?', [$id]);
-    Api::json(['ok' => true, 'msg' => '已删除']);
+    $ids = csParseIds((string)($ctx['post']['ids'] ?? ''));
+    if (!$ids) Api::json(['ok' => false, 'msg' => '请先勾选要删除的记录']);
+    $ph = implode(',', array_fill(0, count($ids), '?'));
+    $n = (int)DB::val("SELECT COUNT(*) FROM plugin_chat_scripts_log WHERE id IN ($ph)", $ids);
+    DB::run("DELETE FROM plugin_chat_scripts_log WHERE id IN ($ph)", $ids);
+    Sec::log('cs_log_del', $ctx['actor']['nickname'], ['n' => $n]);
+    Api::json(['ok' => true, 'msg' => '已删除 ' . $n . ' 条']);
 });
-Plugin::sensitive('plugin_chat_scripts_admin_rule_del');
+Plugin::sensitive('plugin_chat_scripts_admin_log_del');
 
-/* ---------- 群发任务保存 / 删除（敏感操作） ---------- */
-Plugin::route('plugin_chat_scripts_admin_cast_save', function (array $ctx) use ($csGuard) {
-    $csGuard($ctx);
-    csBoot();
-    $post = $ctx['post'];
-    $id      = (int)($post['id'] ?? 0);
-    $roomId  = (int)($post['room_id'] ?? 0);
-    $content = trim((string)($post['content'] ?? ''));
-    $mode    = ($post['mode'] ?? '') === 'once' ? 'once' : 'loop';
-
-    if ($content === '' || mb_strlen($content) > 2000) Api::json(['ok' => false, 'msg' => '内容 1-2000 字']);
-
-    $room = DB::one('SELECT * FROM rooms WHERE id=? AND status=1', [$roomId]);
-    if (!$room) Api::json(['ok' => false, 'msg' => '请选择群聊']);
-    $bot = csBot();
-    if (!$bot) Api::json(['ok' => false, 'msg' => '请先在「机器人账号」里设置机器人用户 ID']);
-    if (!csRoomOkForBot($room, $bot)) {
-        Api::json(['ok' => false, 'msg' => '机器人无法进入该群聊（仅支持公开群聊；密码房需机器人本人是超级管理员）']);
-    }
-
-    $now = time();
-    if ($mode === 'once') {
-        $sendAt = (int)($post['send_at'] ?? 0);
-        if ($sendAt < $now + 30) Api::json(['ok' => false, 'msg' => '定时时间至少设为 30 秒以后']);
-        $interval = 0;
-        $next = $sendAt;
-    } else {
-        $interval = max(300, min(86400 * 7, (int)($post['interval_sec'] ?? 3600)));
-        $sendAt = 0;
-        $next = $now + $interval;
-    }
-    $roomName = mb_substr((string)$room['name'], 0, 190);
-    if ($id > 0) {
-        DB::run('UPDATE plugin_chat_scripts_cast SET room_id=?, room_name=?, content=?, mode=?, interval_sec=?, send_at=?, next_run_at=?, updated_at=? WHERE id=?',
-            [$roomId, $roomName, $content, $mode, $interval, $sendAt, $next, $now, $id]);
-        Api::json(['ok' => true, 'msg' => '已保存']);
-    }
-    DB::insert('plugin_chat_scripts_cast', [
-        'room_id' => $roomId, 'room_name' => $roomName, 'content' => $content,
-        'mode' => $mode, 'interval_sec' => $interval, 'send_at' => $sendAt,
-        'next_run_at' => $next, 'last_run_at' => 0, 'last_status' => '',
-        'run_count' => 0, 'enabled' => 1, 'created_at' => $now, 'updated_at' => $now,
-    ]);
-    Sec::log('cs_cast_add', $ctx['actor']['nickname'], ['room' => $roomId, 'mode' => $mode]);
-    Api::json(['ok' => true, 'msg' => '已添加']);
-});
-Plugin::sensitive('plugin_chat_scripts_admin_cast_save');
-
-Plugin::route('plugin_chat_scripts_admin_cast_del', function (array $ctx) use ($csGuard) {
-    $csGuard($ctx);
-    csBoot();
-    $id = (int)($ctx['post']['id'] ?? 0);
-    $row = DB::one('SELECT id FROM plugin_chat_scripts_cast WHERE id=?', [$id]);
-    if (!$row) Api::json(['ok' => false, 'msg' => '任务不存在'], 404);
-    DB::run('DELETE FROM plugin_chat_scripts_cast WHERE id=?', [$id]);
-    Api::json(['ok' => true, 'msg' => '已删除']);
-});
-Plugin::sensitive('plugin_chat_scripts_admin_cast_del');
-
-/* ---------- 日志清空（敏感操作） ---------- */
+/* ---------- 清空全部记录（敏感操作） ---------- */
 Plugin::route('plugin_chat_scripts_admin_log_clear', function (array $ctx) use ($csGuard) {
     $csGuard($ctx);
     csBoot();

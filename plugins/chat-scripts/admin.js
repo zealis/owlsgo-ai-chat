@@ -1,19 +1,24 @@
 /**
- * chat-scripts · 群聊自动化 · 后台交互
- * 全局对象 OwCSAdmin：快捷话术 / 自动回复规则 / 定时群发任务 / 发送日志 四个页签。
+ * chat-scripts · 群聊自动化 · 后台交互（v1.1.1）
+ * 全局对象 OwCSAdmin。三个页签：公共话术 / 机器人账号 / 发送记录。
  *
- * ⚠️ 这里管的是**全站**视角：公共话术、机器人账号与三个站长级设置（它们只有一份），
- *    以及「全部群聊」的全局规则。群主在自己群里配的规则与任务也会出现在下面的
- *    列表里（表格里的「群聊 / 适用群聊」列就是用来区分是谁的），管理员的修改
- *    对它们同样生效。群主那侧的入口与鉴权在 auto.js / main.php 的 csRoomScope()。
+ * ⚠️ v1.1.1 起后台**不再管规则与任务**：关键词自动回复、定时群发都跟着群走，
+ *    入口在「群聊设置 → 自动化」，群主自管本群（每群最多 8 条）。原来那两个页签
+ *    连同 admin_rule_* / admin_cast_* 四条路由一并删除 —— 界面上没了、接口还留着
+ *    就是暗门。这里只负责「全站共享的那三样」：公共话术、机器人账号、发送记录。
+ *
+ * 两个列表都走全站通用的后台列表样式（与登录日志同一套轮子）：
+ *   服务端分页 OwAdmin.uiPager / 批量选择 OwAdmin.uiBatchBar + batchSync /
+ *   表格首列复选框（表头 32px 全选 + 行内 .xxChk）。
  *
  * ⚠️ 本文件随合并资源包在所有页面加载：前台聊天页里 OwCSAdmin 的方法一个都不会被调用
  *    （页面 HTML 只存在于后台），但 boot() 必须判容器存在，否则白等。
  *    插件页是点菜单后由 Ajax 塞进 #owAdminMain 的，用 MutationObserver 等容器出现
  *    （与 daily-checkin / level-trust 同一套路）。
  *
- * 依赖：OwApi（post / secure）、toast、esc。弹窗自建（.ow-modal-mask / .ow-modal，
- *      与 user-manager 后台一致——后台页没有 OwChat）。
+ * 依赖：OwApi（post / secure）、OwAdmin（uiPager / uiBatchBar / batchSync / batchIds /
+ *      confirm）、toast、esc。新增/编辑话术的弹窗自建（.ow-modal-mask / .ow-modal，
+ *      后台页没有 OwChat，与 user-manager 一致）。
  * 兼容老浏览器：纯 ES5，不用箭头函数 / let / fetch / 模板串。
  */
 (function (w, d) {
@@ -23,6 +28,7 @@
     var A = 'plugin_chat_scripts_admin_';
     var F = 'plugin_chat_scripts_';
     var booted = false;
+    var logLoaded = false;      // 发送记录懒加载：没点过那个页签就不打接口
 
     function esc(s) {
         return String(s == null ? '' : s)
@@ -40,20 +46,12 @@
         return t.getFullYear() + '-' + p(t.getMonth() + 1) + '-' + p(t.getDate())
             + ' ' + p(t.getHours()) + ':' + p(t.getMinutes());
     }
-    /** 'YYYY-MM-DD HH:mm' → Unix 秒；解析失败返回 0 */
-    function parseTs(s) {
-        s = String(s || '').replace(/^\s+|\s+$/g, '');
-        var m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{1,2})/);
-        if (!m) return 0;
-        var t = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], 0, 0);
-        return isNaN(t.getTime()) ? 0 : Math.floor(t.getTime() / 1000);
-    }
     function brief(s, n) {
         s = String(s || '').replace(/\s+/g, ' ');
         return s.length > n ? s.slice(0, n) + '…' : s;
     }
 
-    /* ---------- 自建弹窗 / 确认框（后台无 OwChat，与 user-manager 同款） ---------- */
+    /* ---------- 自建弹窗（后台无 OwChat，与 user-manager 同款） ---------- */
 
     function modal(html, width) {
         var mask = d.createElement('div');
@@ -68,24 +66,24 @@
         return { box: mask, close: close };
     }
 
-    function confirm2(text, onOk) {
-        var m = modal('<h3>确认操作</h3><p style="font-size:13px;color:var(--ow-text-sub)">' + esc(text) + '</p>'
-            + '<div class="ow-cs-mf-btns"><button class="ow-btn ow-btn-primary" type="button" id="owCsCfOk">确定</button>'
-            + '<button class="ow-btn" type="button" id="owCsCfNo">取消</button></div>', 420);
-        $('owCsCfOk').onclick = function () { m.close(); onOk(); };
-        $('owCsCfNo').onclick = m.close;
-    }
+    /* ---------- 状态 ---------- */
 
-    /* ---------- 数据 ---------- */
-
-    var CS = { data: null, tab: 'snip' };
+    var CS = {
+        data: null,                                            // init 回来的 cfg / bot / rooms
+        tab: 'snip',
+        snipRows: [],                                          // 当前页话术行（编辑弹窗用）
+        snip: { q: '', page: 1, psize: 20, total: 0, pages: 1 },
+        log:  { q: '', kind: '', ok: '', d1: '', d2: '', page: 1, psize: 20, total: 0, pages: 1 }
+    };
     w.OwCSAdmin = CS;
+
+    /* ---------- 启动 ---------- */
 
     function guardBoot() {
         if (booted) return;
         if (!$('owCsPane-snip')) return;          // 不是本插件的后台页
         booted = true;
-        // 页签切换
+
         var tabs = d.querySelectorAll('.ow-cs-tab'), i;
         for (i = 0; i < tabs.length; i++) {
             tabs[i].onclick = function () {
@@ -93,69 +91,165 @@
                 CS.tab = t;
                 var all = d.querySelectorAll('.ow-cs-tab'), j, pane;
                 for (j = 0; j < all.length; j++) {
-                    if (all[j].getAttribute('data-tab') === t) all[j].className = 'ow-btn ow-cs-tab is-active';
-                    else all[j].className = 'ow-btn ow-cs-tab';
+                    all[j].className = all[j].getAttribute('data-tab') === t ? 'ow-btn ow-cs-tab is-active' : 'ow-btn ow-cs-tab';
                 }
-                var ids = ['snip', 'rule', 'cast', 'log'];
+                var ids = ['snip', 'bot', 'log'];
                 for (j = 0; j < ids.length; j++) {
                     pane = $('owCsPane-' + ids[j]);
                     if (pane) pane.style.display = ids[j] === t ? '' : 'none';
                 }
+                // 发送记录懒加载：没进过这个页签就不打接口，省一次查询
+                if (t === 'log' && !logLoaded) { logLoaded = true; CS.logLoad(1); }
             };
         }
-        // 公共话术搜索框（列表页内）
-        var q = $('owCsSnipQ');
-        if (q) q.oninput = function () { renderSnips(); };
-        load();
+        CS.snipBar();
+        CS.logBar();
+        CS.load();
+        CS.snipLoad(1);
     }
 
-    function load() {
+    /** 后台基础数据（机器人设置 + 机器人可在哪些群发言）；两个列表各自分页拉取 */
+    CS.load = function () {
         OwApi.post(A + 'init', {}, function (r) {
-            if (!r || !r.ok) {
-                toast((r && r.msg) || '加载失败');
-                return;
-            }
+            if (!r || !r.ok) { toast((r && r.msg) || '加载失败'); return; }
             CS.data = r;
-            renderSnips();
-            renderBotInfo();
-            renderRules();
-            renderCasts();
-            renderLogs();
+            CS.renderBot();
         });
-    }
+    };
 
-    /* ---------- 快捷话术（公共） ---------- */
+    /* ---------- 机器人账号 ---------- */
 
-    function renderSnips() {
-        var box = $('owCsSnips');
+    CS.renderBot = function () {
+        var box = $('owCsBotInfo');
         if (!box || !CS.data) return;
-        var kw = ($('owCsSnipQ').value || '').replace(/^\s+|\s+$/g, '').toLowerCase();
-        var list = CS.data.snips || [], i, h = '';
-        if (kw) {
-            var out = [];
-            for (i = 0; i < list.length; i++) {
-                if ((list[i].title + ' ' + list[i].content).toLowerCase().indexOf(kw) >= 0) out.push(list[i]);
-            }
-            list = out;
+        var bot = CS.data.bot, cfg = CS.data.cfg || {};
+        $('owCsBotUid').value = cfg.bot_uid || '';
+        $('owCsReplyLimit').value = cfg.reply_limit || '';
+        $('owCsCool').value = cfg.reply_cooldown || '';
+        if (!bot) {
+            box.innerHTML = '<span style="color:var(--ow-text-sub)">尚未设置机器人账号 —— 自动回复与定时群发都不会工作。'
+                + '填写一个已注册用户的 ID（建议专用账号），保存后点「加入所有公开群」。</span>';
+            return;
         }
-        if (!list.length) { box.innerHTML = '<p class="ow-admin-desc" style="margin:10px 0 0">' + (kw ? '没有匹配的话术' : '暂无公共话术，点「新增话术」添加') + '</p>'; return; }
-        h = '<table class="ow-table"><tr><th>ID</th><th>标题</th><th>分组</th><th>内容</th><th>被使用</th><th>操作</th></tr>';
-        for (i = 0; i < list.length; i++) {
-            var s = list[i];
-            h += '<tr><td>' + esc(s.id) + '</td><td>' + esc(s.title) + '</td><td>' + esc(s.group_name || '未分组') + '</td>'
+        var n = 0, i, rooms = CS.data.rooms || [];
+        for (i = 0; i < rooms.length; i++) if (rooms[i].bot_ok) n++;
+        box.innerHTML = '当前机器人：<b>#' + esc(bot.id) + ' ' + esc(bot.nickname) + '</b>'
+            + '（角色 ' + esc(bot.role) + '） · 可在 <b>' + n + '</b> 个群聊发言'
+            + '<span style="color:var(--ow-text-sub)">（仅统计公开群聊；密码房需机器人本人是超级管理员，角色群按等级判定）</span>';
+    };
+
+    CS.cfgSave = function () {
+        OwApi.secure(F + 'admin_cfg_save', {
+            bot_uid: ($('owCsBotUid').value || '').replace(/^\s+|\s+$/g, ''),
+            reply_limit: $('owCsReplyLimit').value,
+            reply_cooldown: $('owCsCool').value
+        }, function (r) {
+            toast(r.msg || (r.ok ? '已保存' : '保存失败'));
+            if (r.ok) CS.load();
+        });
+    };
+
+    CS.botJoin = function () {
+        OwAdmin.confirm('将机器人账号加入所有公开群聊（已在群里的不会重复加入）。不公开群聊需要群主邀请，不会自动加入。', function () {
+            OwApi.secure(F + 'admin_bot_join', {}, function (r) {
+                toast(r.msg || (r.ok ? '已处理' : '操作失败'));
+                if (r.ok) CS.load();
+            });
+        });
+    };
+
+    /* ============================ 公共话术 ============================ */
+
+    CS.snipBar = function () {
+        if (!w.OwAdmin || !OwAdmin.uiBatchBar) return;
+        OwAdmin.uiBatchBar({
+            id: 'owCsSnipBatch',
+            chkCls: 'owCsSnipChk',
+            statBase: '共 0 条',
+            actions: [{ key: 'del', label: '批量删除所选话术', danger: true }],
+            onExec: function (act, ids) { CS.snipDel(ids); }
+        });
+    };
+
+    /** 全选 / 取消全选：只作用于当前页（跨页全选要服务端记选择态，成本远大于收益） */
+    CS.snipToggleAll = function (cb) {
+        var boxes = d.getElementsByClassName('owCsSnipChk');
+        for (var i = 0; i < boxes.length; i++) boxes[i].checked = cb.checked;
+        CS.snipSync();
+    };
+
+    CS.snipSync = function () {
+        if (w.OwAdmin && OwAdmin.batchSync) {
+            OwAdmin.batchSync('owCsSnipChk', 'owCsSnipBatch', '共 ' + CS.snip.total + ' 条');
+        }
+    };
+
+    CS.snipLoad = function (page) {
+        var qEl = $('owCsSnipQ');
+        if (!qEl) return;
+        CS.snip.q = qEl.value || '';
+        CS.snip.page = page || 1;
+        OwApi.post(A + 'snip_list', {
+            q: CS.snip.q, page: CS.snip.page, psize: CS.snip.psize
+        }, function (r) {
+            if (!r || !r.ok) { toast((r && r.msg) || '加载失败'); return; }
+            CS.snip.total = r.total;
+            CS.snip.pages = r.pages;
+            CS.snip.page = r.page || CS.snip.page;   // 删光本页后服务端把越界 page 收敛回来
+            CS.renderSnips(r.data || []);
+            OwAdmin.uiPager('owCsSnipPager', CS.snip.page, CS.snip.total, CS.snip.psize, function (pg) {
+                CS.snipLoad(pg);
+            });
+        });
+    };
+
+    CS.snipReset = function () {
+        $('owCsSnipQ').value = '';
+        CS.snipLoad(1);
+    };
+
+    CS.renderSnips = function (rows) {
+        var tbl = $('owCsSnipTable');
+        if (!tbl) return;
+        CS.snipRows = rows;        // 编辑弹窗从这里取现成的一行，省一次「按 id 查一条」的接口
+        // 首列复选框与表头全选：与全站后台表格同一规格（th 宽 32px）
+        var header = '<tr><th style="width:32px"><input type="checkbox" id="owCsSnipCheckAll" onchange="OwCSAdmin.snipToggleAll(this)"></th>'
+            + '<th>ID</th><th>标题</th><th>分组</th><th>内容</th><th>被使用</th><th>操作</th></tr>';
+        var h = '', i;
+        for (i = 0; i < rows.length; i++) {
+            var s = rows[i];
+            h += '<tr>'
+                + '<td><input type="checkbox" class="owCsSnipChk" value="' + esc(s.id) + '" onchange="OwCSAdmin.snipSync()"></td>'
+                + '<td>' + esc(s.id) + '</td>'
+                + '<td>' + esc(s.title) + '</td>'
+                + '<td>' + esc(s.group_name || '未分组') + '</td>'
                 + '<td title="' + esc(s.content) + '">' + esc(brief(s.content, 50)) + '</td>'
                 + '<td>' + esc(s.use_count || 0) + '</td>'
                 + '<td><a href="javascript:;" onclick="OwCSAdmin.snipEdit(' + esc(s.id) + ')">编辑</a>'
-                + ' <a href="javascript:;" onclick="OwCSAdmin.snipDel(' + esc(s.id) + ')">删除</a></td></tr>';
+                + ' <a href="javascript:;" onclick="OwCSAdmin.snipDelOne(' + esc(s.id) + ')">删除</a></td>'
+                + '</tr>';
         }
-        box.innerHTML = h + '</table>';
-    }
+        if (!rows.length) {
+            h = '<tr><td colspan="7" style="color:var(--ow-text-sub);text-align:center;padding:24px">'
+                + (CS.snip.q ? '没有匹配的公共话术' : '暂无公共话术，点「新增话术」添加') + '</td></tr>';
+        }
+        tbl.innerHTML = header + h;
+        var all = $('owCsSnipCheckAll');
+        if (all) all.checked = false;      // 换页/刷新后全选态复位，避免误以为仍全选
+        var st = $('owCsSnipStat');
+        if (st) st.textContent = '第 ' + CS.snip.page + ' / ' + CS.snip.pages + ' 页 · 共 ' + CS.snip.total + ' 条';
+        CS.snipSync();
+    };
 
+    /** 新增 / 编辑话术弹窗 */
     CS.snipEdit = function (id) {
         id = int(id, 0);
         var s = { title: '', group_name: '', content: '' };
-        if (id > 0) {
-            var list = CS.data.snips || [], i;
+        // 从当前页已渲染的数据里取现成的一行，省一次「按 id 查一条」的接口
+        // ⚠️ 取的是 renderSnips 存下来的 snipRows，不是 CS.data.snips ——
+        //    v1.1.1 起 init 不再一次返回全部话术（列表改服务端分页了）
+        if (id > 0 && CS.snipRows) {
+            var list = CS.snipRows, i;
             for (i = 0; i < list.length; i++) if (int(list[i].id) === id) { s = list[i]; break; }
         }
         var m = modal('<h3>' + (id > 0 ? '编辑公共话术' : '新增公共话术') + '</h3>'
@@ -164,266 +258,145 @@
             + '<div class="ow-form-item"><label>内容</label><textarea class="ow-input" id="owCsSeContent" rows="4" maxlength="2000" placeholder="不超过 2000 字（与单条消息上限一致）">' + esc(s.content) + '</textarea></div>'
             + '<div class="ow-cs-mf-btns"><button class="ow-btn ow-btn-primary" type="button" id="owCsSeOk">保存</button></div>', 520);
         $('owCsSeOk').onclick = function () {
-            var title = $('owCsSeTitle').value.replace(/^\s+|\s+$/g, '');
-            var group = $('owCsSeGroup').value.replace(/^\s+|\s+$/g, '');
-            var content = $('owCsSeContent').value.replace(/^\s+|\s+$/g, '');
+            var title = ($('owCsSeTitle').value || '').replace(/^\s+|\s+$/g, '');
+            var group = ($('owCsSeGroup').value || '').replace(/^\s+|\s+$/g, '');
+            var content = ($('owCsSeContent').value || '').replace(/^\s+|\s+$/g, '');
             if (!title || !content) { toast('标题和内容不能为空'); return; }
             OwApi.secure(F + 'admin_snip_save', { id: id, title: title, group: group, content: content }, function (r) {
                 toast(r.msg || (r.ok ? '已保存' : '保存失败'));
-                if (r.ok) { m.close(); load(); }
+                if (r.ok) { m.close(); CS.snipLoad(CS.snip.page); }
             });
         };
     };
 
-    CS.snipDel = function (id) {
-        confirm2('删除后全站用户都将看不到这条公共话术，确定删除吗？', function () {
+    /** 批量删除所选（通用批量轮子回调） */
+    CS.snipDel = function (ids) {
+        OwAdmin.confirm('删除后全站用户都将看不到这 ' + ids.length + ' 条公共话术，确定删除吗？', function () {
+            OwApi.secure(F + 'admin_snip_del', { ids: ids.join(',') }, function (r) {
+                toast(r.msg || (r.ok ? '已删除' : '删除失败'));
+                if (r.ok) CS.snipLoad(CS.snip.page);
+            });
+        });
+    };
+
+    /** 行内单条删除 */
+    CS.snipDelOne = function (id) {
+        OwAdmin.confirm('删除后全站用户都将看不到这条公共话术，确定删除吗？', function () {
             OwApi.secure(F + 'admin_snip_del', { id: id }, function (r) {
                 toast(r.msg || (r.ok ? '已删除' : '删除失败'));
-                if (r.ok) load();
+                if (r.ok) CS.snipLoad(CS.snip.page);
             });
         });
     };
 
-    /* ---------- 机器人设置 ---------- */
+    /* ============================ 发送记录 ============================ */
 
-    function renderBotInfo() {
-        var box = $('owCsBotInfo');
-        if (!box || !CS.data) return;
-        var bot = CS.data.bot;
-        $('owCsBotUid').value = CS.data.cfg.bot_uid || '';
-        $('owCsReplyLimit').value = CS.data.cfg.reply_limit || '';
-        $('owCsCool').value = CS.data.cfg.reply_cooldown || '';
-        if (!bot) {
-            box.innerHTML = '<span style="color:var(--ow-text-sub)">尚未设置机器人账号 —— 自动回复与群发都不会工作。填写一个已注册用户的 ID（建议专用账号），保存后点「加入所有公开群」。</span>';
-            return;
+    CS.logBar = function () {
+        if (!w.OwAdmin || !OwAdmin.uiBatchBar) return;
+        OwAdmin.uiBatchBar({
+            id: 'owCsLogBatch',
+            chkCls: 'owCsLogChk',
+            statBase: '共 0 条',
+            actions: [{ key: 'del', label: '批量删除所选记录', danger: true }],
+            onExec: function (act, ids) { CS.logDel(ids); }
+        });
+    };
+
+    CS.logToggleAll = function (cb) {
+        var boxes = d.getElementsByClassName('owCsLogChk');
+        for (var i = 0; i < boxes.length; i++) boxes[i].checked = cb.checked;
+        CS.logSync();
+    };
+
+    CS.logSync = function () {
+        if (w.OwAdmin && OwAdmin.batchSync) {
+            OwAdmin.batchSync('owCsLogChk', 'owCsLogBatch', '共 ' + CS.log.total + ' 条');
         }
-        var n = 0, i, rooms = CS.data.rooms || [];
-        for (i = 0; i < rooms.length; i++) if (rooms[i].bot_ok) n++;
-        box.innerHTML = '当前机器人：<b>#' + esc(bot.id) + ' ' + esc(bot.nickname) + '</b>'
-            + '（角色 ' + esc(bot.role) + '） · 可在 <b>' + n + '</b> 个群聊发言'
-            + '<span style="color:var(--ow-text-sub)">（仅统计公开群聊；密码房需机器人本人是超级管理员）</span>';
-    }
+    };
 
-    CS.cfgSave = function () {
-        OwApi.secure(F + 'admin_cfg_save', {
-            bot_uid: $('owCsBotUid').value.replace(/^\s+|\s+$/g, ''),
-            reply_limit: $('owCsReplyLimit').value,
-            reply_cooldown: $('owCsCool').value
+    CS.logLoad = function (page) {
+        var qEl = $('owCsLogQ');
+        if (!qEl) return;
+        var kEl = $('owCsLogKind'), okEl = $('owCsLogOk');
+        CS.log.q    = qEl.value || '';
+        CS.log.kind = kEl ? kEl.value : '';
+        CS.log.ok   = okEl ? okEl.value : '';
+        CS.log.d1   = $('owCsLogD1') ? $('owCsLogD1').value : '';
+        CS.log.d2   = $('owCsLogD2') ? $('owCsLogD2').value : '';
+        CS.log.page = page || 1;
+        OwApi.post(A + 'log_list', {
+            q: CS.log.q, kind: CS.log.kind, ok: CS.log.ok, d1: CS.log.d1, d2: CS.log.d2,
+            page: CS.log.page, psize: CS.log.psize
         }, function (r) {
-            toast(r.msg || (r.ok ? '已保存' : '保存失败'));
-            if (r.ok) load();
-        });
-    };
-
-    CS.botJoin = function () {
-        confirm2('将机器人账号加入所有公开群聊（已在群里的不会重复加入）。不公开群聊需要群主邀请，不会自动加入。', function () {
-            OwApi.secure(F + 'admin_bot_join', {}, function (r) {
-                toast(r.msg || (r.ok ? '已处理' : '操作失败'));
-                if (r.ok) load();
+            if (!r || !r.ok) { toast((r && r.msg) || '加载失败'); return; }
+            CS.log.total = r.total;
+            CS.log.pages = r.pages;
+            CS.log.page = r.page || CS.log.page;
+            CS.renderLogs(r.data || []);
+            OwAdmin.uiPager('owCsLogPager', CS.log.page, CS.log.total, CS.log.psize, function (pg) {
+                CS.logLoad(pg);
             });
         });
     };
 
-    /* ---------- 自动回复规则 ---------- */
-
-    /** 房间下拉：机器人不能发言的房间标注出来（保存时服务端仍会复核） */
-    function roomOptions(sel, cur) {
-        var rooms = (CS.data && CS.data.rooms) || [], h = '<option value="0">全部群聊</option>', i;
-        for (i = 0; i < rooms.length; i++) {
-            var rm = rooms[i];
-            h += '<option value="' + esc(rm.id) + '"' + (int(rm.id) === cur ? ' selected' : '') + '>'
-                + esc(rm.name) + (rm.bot_ok ? '' : '（机器人不可发言）') + '</option>';
-        }
-        sel.innerHTML = h;
-    }
-
-    function renderRules() {
-        var box = $('owCsRules');
-        if (!box || !CS.data) return;
-        var list = CS.data.rules || [];
-        if (!list.length) { box.innerHTML = '<p class="ow-admin-desc" style="margin:0">暂无规则</p>'; return; }
-        var h = '<table class="ow-table"><tr><th>ID</th><th>群聊</th><th>匹配</th><th>关键词</th><th>回复内容</th><th>命中</th><th>状态</th><th>操作</th></tr>', i;
-        for (i = 0; i < list.length; i++) {
-            var r = list[i], kws = [];
-            try { kws = JSON.parse(r.keywords) || []; } catch (e) {}
-            var roomName = '全部群聊', rooms = CS.data.rooms || [], j;
-            for (j = 0; j < rooms.length; j++) if (int(rooms[j].id) === int(r.room_id)) roomName = rooms[j].name;
-            h += '<tr><td>' + esc(r.id) + '</td><td>' + esc(roomName) + '</td>'
-                + '<td>' + (r.match_mode === 'exact' ? '全等' : '包含') + '</td>'
-                + '<td>' + esc(kws.join('、')) + '</td>'
-                + '<td title="' + esc(r.reply) + '">' + esc(brief(r.reply, 40)) + '</td>'
-                + '<td>' + esc(r.hit_count || 0) + '</td>'
-                + '<td>' + (int(r.enabled) ? '启用' : '停用') + '</td>'
-                + '<td><a href="javascript:;" onclick="OwCSAdmin.ruleEdit(' + esc(r.id) + ')">编辑</a>'
-                + ' <a href="javascript:;" onclick="OwCSAdmin.ruleDel(' + esc(r.id) + ')">删除</a></td></tr>';
-        }
-        box.innerHTML = h + '</table>';
-    }
-
-    CS.ruleEdit = function (id) {
-        id = int(id, 0);
-        var r = { room_id: 0, keywords: '[]', match_mode: 'include', reply: '', enabled: 1 };
-        if (id > 0) {
-            var list = CS.data.rules || [], i;
-            for (i = 0; i < list.length; i++) if (int(list[i].id) === id) { r = list[i]; break; }
-        }
-        var kws = [];
-        try { kws = JSON.parse(r.keywords) || []; } catch (e) {}
-        var m = modal('<h3>' + (id > 0 ? '编辑回复规则' : '新增回复规则') + '</h3>'
-            + '<div class="ow-form-item"><label>适用群聊</label><select class="ow-input" id="owCsRrRoom"></select></div>'
-            + '<div class="ow-form-item"><label>匹配方式</label><select class="ow-input" id="owCsRrMode">'
-            + '<option value="include"' + (r.match_mode !== 'exact' ? ' selected' : '') + '>包含任一关键词即命中</option>'
-            + '<option value="exact"' + (r.match_mode === 'exact' ? ' selected' : '') + '>整条消息全等才命中</option></select></div>'
-            + '<div class="ow-form-item"><label>关键词（逗号分隔，最多 10 个，每个不超过 20 字）</label>'
-            + '<input class="ow-input" id="owCsRrKw" maxlength="200" value="' + esc(kws.join(',')) + '" placeholder="如：多少钱,价格,报价"></div>'
-            + '<div class="ow-form-item"><label>回复内容</label>'
-            + '<textarea class="ow-input" id="owCsRrReply" rows="4" maxlength="2000" placeholder="机器人回复的内容，不超过 2000 字">' + esc(r.reply) + '</textarea></div>'
-            + '<div class="ow-form-item"><label><input type="checkbox" id="owCsRrOn"' + (int(r.enabled) ? ' checked' : '') + '> 启用本规则</label></div>'
-            + '<div class="ow-cs-mf-btns"><button class="ow-btn ow-btn-primary" type="button" id="owCsRrOk">保存</button></div>', 540);
-        roomOptions($('owCsRrRoom'), int(r.room_id));
-        $('owCsRrOk').onclick = function () {
-            var kwv = $('owCsRrKw').value.split(/[,，]/), clean = [], k;
-            for (k = 0; k < kwv.length; k++) {
-                var s = kwv[k].replace(/^\s+|\s+$/g, '');
-                if (s) clean.push(s);
-                if (clean.length >= 10) break;
-            }
-            if (!clean.length) { toast('至少填写一个关键词'); return; }
-            OwApi.secure(F + 'admin_rule_save', {
-                id: id,
-                room_id: $('owCsRrRoom').value,
-                match_mode: $('owCsRrMode').value,
-                keywords: JSON.stringify(clean),
-                reply: $('owCsRrReply').value.replace(/^\s+|\s+$/g, ''),
-                enabled: $('owCsRrOn').checked ? 1 : 0
-            }, function (r2) {
-                toast(r2.msg || (r2.ok ? '已保存' : '保存失败'));
-                if (r2.ok) { m.close(); load(); }
-            });
-        };
+    CS.logReset = function () {
+        $('owCsLogQ').value = '';
+        $('owCsLogKind').value = '';
+        $('owCsLogOk').value = '';
+        $('owCsLogD1').value = '';
+        $('owCsLogD2').value = '';
+        CS.logLoad(1);
     };
 
-    CS.ruleDel = function (id) {
-        confirm2('确定删除这条回复规则吗？', function () {
-            OwApi.secure(F + 'admin_rule_del', { id: id }, function (r) {
-                toast(r.msg || (r.ok ? '已删除' : '删除失败'));
-                if (r.ok) load();
-            });
-        });
-    };
-
-    /* ---------- 定时群发任务 ---------- */
-
-    function renderCasts() {
-        var box = $('owCsCasts');
-        if (!box || !CS.data) return;
-        var list = CS.data.casts || [];
-        if (!list.length) { box.innerHTML = '<p class="ow-admin-desc" style="margin:0">暂无群发任务</p>'; return; }
-        var h = '<table class="ow-table"><tr><th>ID</th><th>群聊</th><th>内容</th><th>模式</th><th>下次执行</th><th>上次</th><th>次数</th><th>状态</th><th>操作</th></tr>', i;
-        for (i = 0; i < list.length; i++) {
-            var c = list[i];
-            h += '<tr><td>' + esc(c.id) + '</td><td>' + esc(c.room_name || ('#' + c.room_id)) + '</td>'
-                + '<td title="' + esc(c.content) + '">' + esc(brief(c.content, 40)) + '</td>'
-                + '<td>' + (c.mode === 'once' ? '一次性' : '每 ' + Math.max(5, Math.round(int(c.interval_sec) / 60)) + ' 分钟') + '</td>'
-                + '<td>' + (int(c.enabled) ? fmtTs(c.next_run_at) : '—') + '</td>'
-                + '<td>' + fmtTs(c.last_run_at) + (c.last_status ? '<br><span style="color:var(--ow-text-sub)">' + esc(brief(c.last_status, 30)) + '</span>' : '') + '</td>'
-                + '<td>' + esc(c.run_count || 0) + '</td>'
-                + '<td>' + (int(c.enabled) ? '启用' : '停用') + '</td>'
-                + '<td><a href="javascript:;" onclick="OwCSAdmin.castEdit(' + esc(c.id) + ')">编辑</a>'
-                + ' <a href="javascript:;" onclick="OwCSAdmin.castDel(' + esc(c.id) + ')">删除</a></td></tr>';
-        }
-        box.innerHTML = h + '</table>';
-    }
-
-    CS.castEdit = function (id) {
-        id = int(id, 0);
-        var c = { room_id: 0, content: '', mode: 'loop', interval_sec: 3600, send_at: 0 };
-        if (id > 0) {
-            var list = CS.data.casts || [], i;
-            for (i = 0; i < list.length; i++) if (int(list[i].id) === id) { c = list[i]; break; }
-        }
-        var m = modal('<h3>' + (id > 0 ? '编辑群发任务' : '新增群发任务') + '</h3>'
-            + '<div class="ow-form-item"><label>目标群聊</label><select class="ow-input" id="owCsCeRoom"></select></div>'
-            + '<div class="ow-form-item"><label>发送内容</label>'
-            + '<textarea class="ow-input" id="owCsCeContent" rows="4" maxlength="2000" placeholder="到时间用机器人账号发送的内容，不超过 2000 字">' + esc(c.content) + '</textarea></div>'
-            + '<div class="ow-form-item"><label>模式</label><select class="ow-input" id="owCsCeMode">'
-            + '<option value="loop"' + (c.mode !== 'once' ? ' selected' : '') + '>周期循环</option>'
-            + '<option value="once"' + (c.mode === 'once' ? ' selected' : '') + '>一次性定时</option></select></div>'
-            + '<div class="ow-form-item" id="owCsCeLoopItem"><label>间隔（分钟，最短 5 分钟）</label>'
-            + '<input class="ow-input" id="owCsCeInterval" type="number" min="5" max="10080" value="' + esc(Math.max(5, Math.round(int(c.interval_sec) / 60))) + '"></div>'
-            + '<div class="ow-form-item" id="owCsCeOnceItem" style="display:none"><label>执行时间（格式 年-月-日 时:分，至少 30 秒以后）</label>'
-            + '<input class="ow-input" id="owCsCeSendAt" value="' + esc(int(c.send_at) ? fmtTs(c.send_at) : '') + '" placeholder="如 2026-10-15 09:00"></div>'
-            + '<div class="ow-cs-mf-btns"><button class="ow-btn ow-btn-primary" type="button" id="owCsCeOk">保存</button></div>', 540);
-        roomOptions($('owCsCeRoom'), int(c.room_id));
-        function syncMode() {
-            var once = $('owCsCeMode').value === 'once';
-            $('owCsCeLoopItem').style.display = once ? 'none' : '';
-            $('owCsCeOnceItem').style.display = once ? '' : 'none';
-        }
-        $('owCsCeMode').onchange = syncMode;
-        syncMode();
-        $('owCsCeOk').onclick = function () {
-            var mode = $('owCsCeMode').value;
-            var payload = {
-                id: id,
-                room_id: $('owCsCeRoom').value,
-                content: $('owCsCeContent').value.replace(/^\s+|\s+$/g, ''),
-                mode: mode,
-                interval_sec: int($('owCsCeInterval').value, 60) * 60,
-                send_at: 0
-            };
-            if (mode === 'once') {
-                payload.send_at = parseTs($('owCsCeSendAt').value);
-                if (!payload.send_at) { toast('请按格式填写执行时间，如 2026-10-15 09:00'); return; }
-            }
-            if (!payload.content) { toast('请填写发送内容'); return; }
-            OwApi.secure(F + 'admin_cast_save', payload, function (r) {
-                toast(r.msg || (r.ok ? '已保存' : '保存失败'));
-                if (r.ok) { m.close(); load(); }
-            });
-        };
-    };
-
-    CS.castDel = function (id) {
-        confirm2('确定删除这个群发任务吗？已发送的消息不会撤回。', function () {
-            OwApi.secure(F + 'admin_cast_del', { id: id }, function (r) {
-                toast(r.msg || (r.ok ? '已删除' : '删除失败'));
-                if (r.ok) load();
-            });
-        });
-    };
-
-    /* ---------- 发送日志 ---------- */
-
-    function renderLogs() {
-        var box = $('owCsLogs');
-        if (!box || !CS.data) return;
-        var list = CS.data.logs || [];
-        if (!list.length) { box.innerHTML = '<p class="ow-admin-desc" style="margin:0">暂无日志</p>'; return; }
-        var h = '<table class="ow-table"><tr><th>时间</th><th>类型</th><th>群聊</th><th>内容</th><th>结果</th></tr>', i;
-        for (i = 0; i < list.length; i++) {
-            var l = list[i];
-            h += '<tr><td>' + fmtTs(l.created_at) + '</td>'
-                + '<td>' + (l.kind === 'cast' ? '群发' : '自动回复') + '</td>'
+    CS.renderLogs = function (rows) {
+        var tbl = $('owCsLogTable');
+        if (!tbl) return;
+        var header = '<tr><th style="width:32px"><input type="checkbox" id="owCsLogCheckAll" onchange="OwCSAdmin.logToggleAll(this)"></th>'
+            + '<th>时间</th><th>类型</th><th>群聊</th><th>内容</th><th>结果</th></tr>';
+        var h = '', i;
+        for (i = 0; i < rows.length; i++) {
+            var l = rows[i];
+            h += '<tr>'
+                + '<td><input type="checkbox" class="owCsLogChk" value="' + esc(l.id) + '" onchange="OwCSAdmin.logSync()"></td>'
+                + '<td>' + fmtTs(l.created_at) + '</td>'
+                + '<td>' + (l.kind === 'cast' ? '定时群发' : '自动回复') + '</td>'
                 + '<td>' + esc(l.room_name || ('#' + l.room_id)) + '</td>'
                 + '<td title="' + esc(l.content) + '">' + esc(brief(l.content, 40)) + '</td>'
                 + '<td>' + (int(l.ok)
                     ? '<span style="color:var(--ow-green)">成功</span>'
-                    : '<span style="color:var(--ow-red)">失败</span> <span style="color:var(--ow-text-sub)">' + esc(brief(l.msg, 40)) + '</span>') + '</td></tr>';
+                    : '<span style="color:var(--ow-red)">失败</span> <span style="color:var(--ow-text-sub)">' + esc(brief(l.msg, 40)) + '</span>')
+                + '</td></tr>';
         }
-        box.innerHTML = h + '</table>';
-    }
+        if (!rows.length) {
+            h = '<tr><td colspan="6" style="color:var(--ow-text-sub);text-align:center;padding:24px">暂无发送记录</td></tr>';
+        }
+        tbl.innerHTML = header + h;
+        var all = $('owCsLogCheckAll');
+        if (all) all.checked = false;
+        var st = $('owCsLogStat');
+        if (st) st.textContent = '第 ' + CS.log.page + ' / ' + CS.log.pages + ' 页 · 共 ' + CS.log.total + ' 条';
+        CS.logSync();
+    };
 
-    CS.logClear = function () {
-        confirm2('确定清空全部发送日志吗？', function () {
-            OwApi.secure(F + 'admin_log_clear', {}, function (r) {
-                toast(r.msg || (r.ok ? '已清空' : '操作失败'));
-                if (r.ok) load();
+    CS.logDel = function (ids) {
+        OwAdmin.confirm('确定删除选中的 ' + ids.length + ' 条发送记录？该操作不可恢复。', function () {
+            OwApi.secure(F + 'admin_log_del', { ids: ids.join(',') }, function (r) {
+                toast(r.msg || (r.ok ? '已删除' : '删除失败'));
+                if (r.ok) CS.logLoad(CS.log.page);
             });
         });
     };
 
-    /* ---------- 启动：等后台页容器出现 ---------- */
+    CS.logClearAll = function () {
+        OwAdmin.confirm('确定清空全部发送记录吗？该操作不可恢复，之后也没有任何自动发送的留痕。', function () {
+            OwApi.secure(F + 'admin_log_clear', {}, function (r) {
+                toast(r.msg || (r.ok ? '已清空' : '操作失败'));
+                if (r.ok) CS.logLoad(1);
+            });
+        });
+    };
+
+    /* ---------- 等后台页容器出现 ---------- */
 
     function watch() {
         if (w.MutationObserver) {
