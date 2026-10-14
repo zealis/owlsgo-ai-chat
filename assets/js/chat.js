@@ -7795,7 +7795,10 @@
                 : box.className + ' is-open';
         },
         settingsSave: function () {
-            /** 开关取值：checked → '1'/'0'；元素不存在 → ''（后端跳过该键） */
+            /** 开关取值：checked → '1'/'0'；元素不存在 → ''。
+             *  ⚠️ 空串**不会**被后端跳过（admin_settings_save 只判 isset($_POST[k])，
+             *  DB::setSetting 也照写），所以这只在「该开关一定渲染在本页」的前提下成立。
+             *  字段被搬去别的页面时，正确做法是整行不提交，见下面 msg_rate_* 那条。 */
             function swv(id) {
                 var el = $(id);
                 return el ? (el.checked ? '1' : '0') : '';
@@ -7804,7 +7807,6 @@
                 site_name: $('owS_site_name').value,
                 site_url: $('owS_site_url') ? $('owS_site_url').value : '',
                 // v1.2.52：布尔项已从下拉改成开关（原生 checkbox）→ 读 checked 转成 '1'/'0'。
-                // 沿用原来的「元素不存在时给空串」写法：空串后端会跳过该键（不写库）。
                 allow_register: swv('owS_allow_register'),
                 reg_email_verify: swv('owS_reg_email_verify'),
                 guest_browse: swv('owS_guest_browse'),
@@ -7812,8 +7814,13 @@
                 guest_msg_interval: $('owS_guest_msg_interval') ? $('owS_guest_msg_interval').value : '',
                 // v1.2.2 消息服务器保留期（天），0 = 永久保留
                 msg_retain_days: $('owS_msg_retain_days') ? $('owS_msg_retain_days').value : '',
-                msg_rate_window: $('owS_msg_rate_window').value,
-                msg_rate_max: $('owS_msg_rate_max').value,
+                // v1.3.104 起「发言频率窗口 / 窗口内最大条数」的编辑入口已收到
+                // 「插件管理 → 垃圾信息控制 → 刷屏」，本页不再渲染这两个输入框。
+                // 这里**整行不再提交**：之前留着 `$('owS_msg_rate_window').value` 的裸读，
+                // 元素不存在 → settingsSave 在 OwApi.post 之前就 TypeError，
+                // 表现就是「保存设置」点了没反应（站方 2026-10-14 报的正是这个）。
+                // 也不能改成提交空串：admin_settings_save 只认 isset($_POST[k])，
+                // 空串照写不误（DB::setSetting 不跳空），等于把插件里刚调好的限流清成空值。
                 // mail_rate_limit 已移出本页（v1.3.55，见邮箱验证插件），不再提交：
                 // 提交空串会跳过、提交旧值会把插件里改过的设置覆盖回去。
                 room_pass_ttl: $('owS_room_pass_ttl') ? $('owS_room_pass_ttl').value : '',
