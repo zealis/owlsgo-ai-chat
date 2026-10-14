@@ -44,11 +44,12 @@ function csBoot(): void
     $ts  = DB::driver() === 'mysql' ? 'BIGINT NOT NULL' : 'INTEGER NOT NULL';
     $str = DB::driver() === 'mysql' ? 'VARCHAR(190)' : 'TEXT';
 
-    // A：话术（scope=public 公共 / user 个人）
+    // A：话术（scope=public 公共 / room 群共享 / user 个人；room 时 owner_id=创建者、room_id=所属群）
     DB::run("CREATE TABLE IF NOT EXISTS plugin_chat_scripts_snip (
         id           {$id},
         scope        {$str} NOT NULL DEFAULT 'user',
         owner_id     {$ts} NOT NULL DEFAULT 0,
+        room_id      {$ts} NOT NULL DEFAULT 0,
         group_name   {$str} NOT NULL DEFAULT '未分组',
         title        {$str} NOT NULL DEFAULT '',
         content      TEXT NOT NULL,
@@ -56,7 +57,11 @@ function csBoot(): void
         sort         INTEGER NOT NULL DEFAULT 0,
         created_at   {$ts} DEFAULT 0,
         updated_at   {$ts} DEFAULT 0)");
+    // v1.0.1：群共享话术（scope='room'）后加的列。老库升级走 ensureColumn，
+    //         不在 CREATE TABLE 里补 —— IF NOT EXISTS 对已存在的表不生效。
+    DB::ensureColumn('plugin_chat_scripts_snip', 'room_id', 'int', "'0'");
     DB::createIndex('idx_cs_snip_scope', 'plugin_chat_scripts_snip', 'scope, owner_id', false);
+    DB::createIndex('idx_cs_snip_room', 'plugin_chat_scripts_snip', 'scope, room_id', false);
 
     // B：自动回复规则（room_id=0 表示全部群聊）
     DB::run("CREATE TABLE IF NOT EXISTS plugin_chat_scripts_rule (
@@ -223,9 +228,23 @@ function csKeywordHit(array $kws, string $mode, string $low): bool
     return false;
 }
 
+/**
+ * 群话术管理权（v1.0.1）：群主本人，或超级管理员（与群主同权——
+ * 群是站长的站点的一部分，超管在任何一个群里都等同于「能管这个群」）。
+ * 游客、普通成员、非本人一律 false。
+ */
+function csRoomAdmin(int $roomId, array $actor): bool
+{
+    if ($roomId <= 0) return false;
+    if (($actor['kind'] ?? '') !== 'user') return false;
+    if (($actor['role'] ?? '') === 'admin') return true;
+    $room = DB::one('SELECT owner_id FROM rooms WHERE id=? AND status=1', [$roomId]);
+    return $room && (int)$room['owner_id'] === (int)$actor['id'];
+}
+
 /* ============================ A：快捷话术（前台路由） ============================ */
 
-/** 话术列表：公共（全站只读）+ 我的（登录用户）；游客只看公共 */
+/** 话术列表：公共（全站只读）+ 群共享（进得去该群才可见）+ 我的（登录用户）；游客只看公共与群共享 */
 Plugin::route('plugin_chat_scripts_snips', function (array $ctx) {
     csBoot();
     $actor = $ctx['actor'];
@@ -238,7 +257,22 @@ Plugin::route('plugin_chat_scripts_snips', function (array $ctx) {
             FROM plugin_chat_scripts_snip WHERE scope='user' AND owner_id=? ORDER BY sort ASC, id ASC",
             [$uid]);
     }
-    Api::json(['ok' => true, 'public' => $pub, 'mine' => $mine, 'guest' => $uid > 0 ? 0 : 1]);
+    // v1.0.1 群共享话术：只有「进得去这个群」的人才拉得到（与能否在里面发言同源，
+    // 密码房要求会话里有通行授权——群主/成员进得去就看得见，外人连房间都进不去）。
+    // room_admin 告诉前端「这个人可以在前台管理群话术」（群主/超管）。
+    $room = []; $roomAdmin = 0;
+    $roomId = (int)($ctx['post']['room_id'] ?? 0);
+    if ($roomId > 0) {
+        $row = DB::one('SELECT * FROM rooms WHERE id=? AND status=1', [$roomId]);
+        if ($row && Chat::roomAccessOk($row, $actor)) {
+            $room = DB::all("SELECT id, scope, group_name, title, content, use_count
+                FROM plugin_chat_scripts_snip WHERE scope='room' AND room_id=? ORDER BY sort ASC, id ASC",
+                [$roomId]);
+        }
+        if (csRoomAdmin($roomId, $actor)) $roomAdmin = 1;
+    }
+    Api::json(['ok' => true, 'public' => $pub, 'room' => $room, 'room_admin' => $roomAdmin,
+        'mine' => $mine, 'guest' => $uid > 0 ? 0 : 1]);
 });
 
 /** 保存我的话术（仅登录用户；只能改自己的 user 行） */
@@ -289,6 +323,55 @@ Plugin::route('plugin_chat_scripts_snip_del', function (array $ctx) {
 });
 Plugin::sensitive('plugin_chat_scripts_snip_del');
 
+/* ---------- 群共享话术：群主 / 超管在前台直接增删改（v1.0.1） ---------- */
+
+/** 群话术保存（仅群主与超管；room_id 必须真有这个群） */
+Plugin::route('plugin_chat_scripts_room_snip_save', function (array $ctx) {
+    csBoot();
+    $actor = $ctx['actor'];
+    $post = $ctx['post'];
+    $roomId = (int)($post['room_id'] ?? 0);
+    if (!csRoomAdmin($roomId, $actor)) Api::json(['ok' => false, 'msg' => '仅群主可以管理群话术'], 403);
+    $id      = (int)($post['id'] ?? 0);
+    $title   = trim((string)($post['title'] ?? ''));
+    $content = trim((string)($post['content'] ?? ''));
+    $group   = trim((string)($post['group'] ?? ''));
+    if ($title === '' || mb_strlen($title) > 60) Api::json(['ok' => false, 'msg' => '标题不能为空且不超过 60 字']);
+    if ($content === '' || mb_strlen($content) > 2000) Api::json(['ok' => false, 'msg' => '内容不能为空且不超过 2000 字（与单条消息上限一致）']);
+    if (mb_strlen($group) > 30) $group = mb_substr($group, 0, 30);
+    if ($group === '') $group = '未分组';
+    $now = time();
+    if ($id > 0) {
+        $row = DB::one("SELECT id FROM plugin_chat_scripts_snip WHERE id=? AND scope='room' AND room_id=?", [$id, $roomId]);
+        if (!$row) Api::json(['ok' => false, 'msg' => '群话术不存在或不属于该群'], 403);
+        DB::run('UPDATE plugin_chat_scripts_snip SET group_name=?, title=?, content=?, updated_at=? WHERE id=?',
+            [$group, $title, $content, $now, $id]);
+        Api::json(['ok' => true, 'msg' => '已保存']);
+    }
+    // 每群上限 100 条，防无限灌数据
+    $cnt = (int)DB::val("SELECT COUNT(*) FROM plugin_chat_scripts_snip WHERE scope='room' AND room_id=?", [$roomId]);
+    if ($cnt >= 100) Api::json(['ok' => false, 'msg' => '本群话术最多 100 条，请先清理']);
+    DB::insert('plugin_chat_scripts_snip', [
+        'scope' => 'room', 'owner_id' => (int)$actor['id'], 'room_id' => $roomId,
+        'group_name' => $group, 'title' => $title, 'content' => $content,
+        'sort' => 0, 'use_count' => 0, 'created_at' => $now, 'updated_at' => $now,
+    ]);
+    Api::json(['ok' => true, 'msg' => '已添加']);
+});
+
+/** 删除群话术（敏感操作；仅群主与超管） */
+Plugin::route('plugin_chat_scripts_room_snip_del', function (array $ctx) {
+    csBoot();
+    $actor = $ctx['actor'];
+    $id = (int)($ctx['post']['id'] ?? 0);
+    $row = DB::one("SELECT id, room_id FROM plugin_chat_scripts_snip WHERE id=? AND scope='room'", [$id]);
+    if (!$row) Api::json(['ok' => false, 'msg' => '群话术不存在'], 404);
+    if (!csRoomAdmin((int)$row['room_id'], $actor)) Api::json(['ok' => false, 'msg' => '仅群主可以管理群话术'], 403);
+    DB::run('DELETE FROM plugin_chat_scripts_snip WHERE id=?', [$id]);
+    Api::json(['ok' => true, 'msg' => '已删除']);
+});
+Plugin::sensitive('plugin_chat_scripts_room_snip_del');
+
 /** 使用计数 +1（插入/发送时调用；限流防刷） */
 Plugin::route('plugin_chat_scripts_use', function (array $ctx) {
     csBoot();
@@ -297,12 +380,20 @@ Plugin::route('plugin_chat_scripts_use', function (array $ctx) {
         Api::json(['ok' => true]);   // 限流就静默成功：计数只是统计，不该打扰用户
     }
     $id = (int)($ctx['post']['id'] ?? 0);
-    $row = DB::one('SELECT id, scope, owner_id FROM plugin_chat_scripts_snip WHERE id=?', [$id]);
+    $row = DB::one('SELECT id, scope, owner_id, room_id FROM plugin_chat_scripts_snip WHERE id=?', [$id]);
     if (!$row) Api::json(['ok' => false, 'msg' => '话术不存在'], 404);
-    // 个人话术只能由本人计数
-    if (($row['scope'] ?? '') === 'user'
-        && (($actor['kind'] ?? '') !== 'user' || (int)$actor['id'] !== (int)$row['owner_id'])) {
-        Api::json(['ok' => false, 'msg' => '无权使用'], 403);
+    $scope = (string)($row['scope'] ?? 'user');
+    if ($scope === 'user') {
+        // 个人话术只能由本人计数
+        if (($actor['kind'] ?? '') !== 'user' || (int)$actor['id'] !== (int)$row['owner_id']) {
+            Api::json(['ok' => false, 'msg' => '无权使用'], 403);
+        }
+    } elseif ($scope === 'room') {
+        // 群共享话术：只有进得去该群的人才能用（与列表接口同一口径）
+        $rm = DB::one('SELECT * FROM rooms WHERE id=? AND status=1', [(int)$row['room_id']]);
+        if (!$rm || !Chat::roomAccessOk($rm, $actor)) {
+            Api::json(['ok' => false, 'msg' => '无权使用'], 403);
+        }
     }
     DB::run('UPDATE plugin_chat_scripts_snip SET use_count=use_count+1 WHERE id=?', [$id]);
     Api::json(['ok' => true]);

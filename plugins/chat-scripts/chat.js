@@ -1,10 +1,15 @@
 /**
- * chat-scripts · 群聊脚本 · 前台话术面板
+ * chat-scripts · 群聊脚本 · 前台话术面板（v1.0.1）
  *
  * 入口：往核心输入工具栏锚点 #owToolFirst 注入「话术」按钮（与表情包插件同一约定，
  *      核心零分支；插件停用则按钮不出现）。面板挂到 #owEmojiPanel 的父节点上，
  *      复用 .ow-emoji-panel 那套绝对定位坐标系（移动端核心已有 92% 宽适配）。
  *
+ * 三档话术（v1.0.1 起群主可在前台自管群档）：
+ *   · 公共  scope=public  管理员后台维护，全站只读可用；
+ *   · 群聊  scope=room    群主/超管在本前台直接增删改，本群成员都能用
+ *                        （「进得去这个群」才拉得到，密码房同口径）；
+ *   · 我的  scope=user    登录用户自建，仅本人可见。
  * 交互：点击条目 = 插入输入框光标处（可改完再发）；点「发送」= 直接发出。
  *       私聊视图下两种操作都自动走私聊通道（OwChat.send 内部改写，与手动发消息一致）。
  *
@@ -24,13 +29,17 @@
     var esc = w.esc, toast = w.toast;
 
     var CS = {
-        data: null,      // { public:[], mine:[], guest:0|1 }
-        tab: 'public',   // 当前分组：public 公共 / mine 我的
+        data: null,      // { public:[], room:[], room_admin:0|1, mine:[], guest:0|1 }
+        tab: 'public',   // 当前分组：public 公共 / room 群聊 / mine 我的
         q: '',
         opened: false,
+        mgTab: 'mine',   // 管理弹窗内的子档：mine 我的话术 / room 本群话术
         mgId: 0          // 管理弹窗正在编辑的话术 id（0 = 新增）
     };
     w.OwCS = CS;
+
+    /** 当前房间 ID（OwChat.room 由核心在切群/私聊时维护；拿不到按 0 处理） */
+    function curRoom() { return (OwChat.room || 0) > 0 ? (OwChat.room | 0) : 0; }
 
     /* ---------- 工具栏按钮 ---------- */
 
@@ -78,8 +87,9 @@
             + '<input class="ow-input ow-cs-q" id="owCsQ" type="text" maxlength="30" autocomplete="off" placeholder="搜索话术标题或内容">'
             + '<button class="ow-cs-x" id="owCsClose" type="button" title="关闭" aria-label="关闭">✕</button></div>'
             + '<div class="ow-cs-tabs">'
-            + '<button class="ow-cs-tab is-active" type="button" data-t="public">公共话术</button>'
-            + '<button class="ow-cs-tab" type="button" data-t="mine">我的话术</button>'
+            + '<button class="ow-cs-tab is-active" type="button" data-t="public">公共</button>'
+            + '<button class="ow-cs-tab" type="button" data-t="room" style="display:none">群聊</button>'
+            + '<button class="ow-cs-tab" type="button" data-t="mine">我的</button>'
             + '</div>'
             + '<div class="ow-cs-body" id="owCsBody"></div>'
             + '<div class="ow-cs-foot">'
@@ -154,16 +164,24 @@
     /* ---------- 数据 ---------- */
 
     function load() {
-        OwApi.post(A + 'snips', {}, function (r) {
+        OwApi.post(A + 'snips', { room_id: curRoom() }, function (r) {
             if (!r || !r.ok) { render(); return; }
-            CS.data = { public: r.public || [], mine: r.mine || [], guest: r.guest ? 1 : 0 };
+            CS.data = {
+                public: r.public || [], room: r.room || [], room_admin: r.room_admin ? 1 : 0,
+                mine: r.mine || [], guest: r.guest ? 1 : 0
+            };
+            // 「群聊」tab：本群有群话术，或我是群主/超管（空群也要让群主找到添加入口）
+            var roomTab = $('owCsPanel') && $('owCsPanel').querySelector('.ow-cs-tab[data-t="room"]');
+            if (roomTab) roomTab.style.display = (CS.data.room.length || CS.data.room_admin) ? '' : 'none';
+            // 当前 tab 变得不可见时退回公共档
+            if (CS.tab === 'room' && !(CS.data.room.length || CS.data.room_admin)) CS.tab = 'public';
             render();
         });
     }
 
     function cur() {
         if (!CS.data) return [];
-        var list = CS.tab === 'mine' ? CS.data.mine : CS.data.public;
+        var list = CS.tab === 'mine' ? CS.data.mine : (CS.tab === 'room' ? CS.data.room : CS.data.public);
         if (!CS.q) return list;
         var q = CS.q.toLowerCase(), out = [], i, s;
         for (i = 0; i < list.length; i++) {
@@ -187,11 +205,14 @@
             return;
         }
         var mg2 = $('owCsManage');
-        if (mg2) mg2.style.display = CS.tab === 'mine' ? '' : 'none';
+        if (mg2) mg2.style.display = (CS.tab === 'mine' || (CS.tab === 'room' && CS.data.room_admin)) ? '' : 'none';
 
         if (!list.length) {
-            body.innerHTML = '<p class="ow-cs-empty">'
-                + (CS.tab === 'mine' ? '还没有个人话术，点「管理」添加' : (CS.q ? '没有匹配的话术' : '暂无公共话术')) + '</p>';
+            var tip;
+            if (CS.tab === 'mine') tip = '还没有个人话术，点「管理」添加';
+            else if (CS.tab === 'room') tip = CS.data.room_admin ? '本群暂无群话术，点「管理」添加' : '本群暂无群话术';
+            else tip = CS.q ? '没有匹配的话术' : '暂无公共话术';
+            body.innerHTML = '<p class="ow-cs-empty">' + esc(tip) + '</p>';
             foot(0);
             return;
         }
@@ -249,14 +270,20 @@
         OwApi.post(A + 'use', { id: id }, function () {});
     }
 
-    /* ---------- 管理弹窗（我的话术 CRUD） ---------- */
+    /* ---------- 管理弹窗（我的话术 / 本群话术 CRUD） ---------- */
 
     function mgOpen() {
         if (CS.data && CS.data.guest) { toast('请先登录'); return; }
         CS.mgId = 0;
+        // 默认子档：跟面板当前 tab 走（在群聊tab点管理就该管群话术）
+        CS.mgTab = (CS.tab === 'room' && CS.data && CS.data.room_admin) ? 'room' : 'mine';
         OwChat.openModal(
-              '<h3>我的话术</h3>'
-            + '<p class="ow-cs-mg-tip">点面板里的条目 = 插入输入框；点「发送」= 直接发出。最多 200 条。</p>'
+              '<h3>话术管理</h3>'
+            + '<div class="ow-cs-mg-tabs" id="owCsMgTabs">'
+            + '<button class="ow-cs-mg-tab is-active" type="button" data-m="mine">我的话术</button>'
+            + '<button class="ow-cs-mg-tab" type="button" data-m="room" style="display:none">本群话术（群主）</button>'
+            + '</div>'
+            + '<p class="ow-cs-mg-tip">点面板里的条目 = 插入输入框；点「发送」= 直接发出。个人话术最多 200 条、群话术最多 100 条。</p>'
             + '<div class="ow-cs-mg-form">'
             + '<input class="ow-input" id="owCsMgTitle" maxlength="60" placeholder="标题（不超过 60 字）">'
             + '<input class="ow-input" id="owCsMgGroup" maxlength="30" placeholder="分组（留空为「未分组」）">'
@@ -267,14 +294,40 @@
             + '</div></div>'
             + '<div class="ow-cs-mg-list" id="owCsMgList"></div>',
             520);
+        var roomTab = $('owCsMgTabs').querySelector('[data-m="room"]');
+        if (roomTab && CS.data && CS.data.room_admin) roomTab.style.display = '';
+        var tabs = $('owCsMgTabs').querySelectorAll('.ow-cs-mg-tab'), i;
+        for (i = 0; i < tabs.length; i++) {
+            tabs[i].onclick = function () {
+                var t = this.getAttribute('data-m');
+                CS.mgTab = t;
+                CS.mgId = 0;
+                var all = $('owCsMgTabs').querySelectorAll('.ow-cs-mg-tab'), j;
+                for (j = 0; j < all.length; j++) {
+                    if (all[j].getAttribute('data-m') === t) all[j].className = 'ow-cs-mg-tab is-active';
+                    else all[j].className = 'ow-cs-mg-tab';
+                }
+                mgReset();
+                mgRender();
+            };
+        }
         mgRender();
+    }
+
+    function mgList() {
+        if (!CS.data) return [];
+        return CS.mgTab === 'room' ? (CS.data.room || []) : (CS.data.mine || []);
     }
 
     function mgRender() {
         var box = $('owCsMgList');
         if (!box) return;
-        var list = (CS.data && CS.data.mine) || [];
-        if (!list.length) { box.innerHTML = '<p class="ow-cs-empty">还没有个人话术</p>'; return; }
+        var list = mgList();
+        if (!list.length) {
+            box.innerHTML = '<p class="ow-cs-empty">'
+                + (CS.mgTab === 'room' ? '本群暂无群话术' : '还没有个人话术') + '</p>';
+            return;
+        }
         var h = '<table class="ow-table"><tr><th>标题</th><th>分组</th><th>内容</th><th>已喂次数</th><th>操作</th></tr>';
         for (var i = 0; i < list.length; i++) {
             var it = list[i];
@@ -290,7 +343,7 @@
     }
 
     CS.mgEdit = function (id) {
-        var list = (CS.data && CS.data.mine) || [], i;
+        var list = mgList(), i;
         for (i = 0; i < list.length; i++) {
             if (String(list[i].id) === String(id)) {
                 CS.mgId = parseInt(list[i].id, 10);
@@ -316,7 +369,14 @@
         var content = ($('owCsMgContent').value || '').replace(/^\s+|\s+$/g, '');
         if (!title) { toast('请填写标题'); return; }
         if (!content) { toast('请填写内容'); return; }
-        OwApi.post(A + 'snip_save', { id: CS.mgId, title: title, group: group, content: content }, function (r) {
+        var isRoom = CS.mgTab === 'room';
+        var payload = { id: CS.mgId, title: title, group: group, content: content };
+        var action = A + 'snip_save';
+        if (isRoom) {
+            payload.room_id = curRoom();
+            action = A + 'room_snip_save';
+        }
+        OwApi.post(action, payload, function (r) {
             toast((r && r.msg) || (r && r.ok ? '已保存' : '保存失败'));
             if (r && r.ok) {
                 CS.mgReset();
@@ -327,8 +387,10 @@
     };
 
     CS.mgDel = function (id) {
+        var isRoom = CS.mgTab === 'room';
         OwChat.confirm('删除后无法恢复，确定删除这条话术吗？', function () {
-            OwApi.secure(A + 'snip_del', { id: id }, function (r) {
+            var action = isRoom ? A + 'room_snip_del' : A + 'snip_del';
+            OwApi.secure(action, { id: id }, function (r) {
                 toast((r && r.msg) || (r && r.ok ? '已删除' : '删除失败'));
                 if (r && r.ok) {
                     if (CS.mgId === parseInt(id, 10)) CS.mgReset();

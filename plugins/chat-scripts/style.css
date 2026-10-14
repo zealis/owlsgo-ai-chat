@@ -160,6 +160,27 @@
     font-size: 12px;
     color: var(--ow-text-sub);
 }
+/* 管理弹窗内的子档切换（我的话术 / 本群话术）——与面板 tabs 同一「选中 = 主色实心」语言 */
+.ow-cs-mg-tabs {
+    display: flex; display: -webkit-flex;
+    gap: 4px;
+    margin-bottom: 10px;
+}
+.ow-cs-mg-tab {
+    border: none;
+    background: var(--ow-bg-sub);
+    color: var(--ow-text-sub);
+    font-size: 12.5px;
+    font-family: inherit;
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+.ow-cs-mg-tab:hover { color: var(--ow-text-title); }
+.ow-cs-mg-tab.is-active {
+    background: var(--ow-primary-strong);
+    color: var(--ow-on-accent);
+}
 .ow-cs-mg-form { margin-bottom: 14px; }
 .ow-cs-mg-form .ow-input { margin-bottom: 8px; }
 .ow-cs-mg-btns {
