@@ -1,5 +1,6 @@
 /**
- * 登录日志插件 - 后台交互（v1.0.0，v1.1.12 增加结果筛选与失败/登出渲染）
+ * 登录日志插件 - 后台交互（v1.0.0；v1.1.12 增加结果筛选与失败/登出渲染；
+ * v1.2.0 概览改 KPI 卡片、失败徽标改语义红，与全站后台通用风格统一）
  * 全局对象 OwLL：页面 HTML 由插件后台页注入，函数在点击时执行，
  * 依赖的 OwApi / toast / esc / OwAdmin 由主 chat.js 提供。
  * 兼容老浏览器：仅使用 var / function，不使用箭头函数、let/const、fetch。
@@ -10,6 +11,12 @@
 
     /* 当前查询状态（v1.1.12 增加 result） */
     var state = { uid: 0, q: '', d1: '', d2: '', result: '', page: 1, psize: 20, total: 0, pages: 1 };
+
+    /* KPI 卡（v1.2.0：与全站后台统计风格统一，参照 daily-checkin 的 ow-ci-kpi）。
+       v 为服务端下发的数字，label 纯文本需 esc。 */
+    function kpi(v, label) {
+        return '<div class="ow-ll-kpi"><b>' + v + '</b><span>' + esc(label) + '</span></div>';
+    }
 
     w.OwLL = {
         /* 初始化：加载统计 + 首屏列表 */
@@ -29,24 +36,26 @@
             OwLL.load(1);
         },
 
-        /* 加载统计 */
+        /* 加载统计（v1.2.0：改 KPI 卡片，与 daily-checkin / level-trust 同款） */
         loadStats: function () {
             OwApi.post('plugin_login_logs_stats', {}, function (r) {
                 if (!r || !r.ok) return;
-                var h =
-                      '<div class="owLLStatItem"><div class="num">' + r.total + '</div><div class="lbl">日志总数</div></div>'
-                    + '<div class="owLLStatItem"><div class="num">' + r.users + '</div><div class="lbl">独立用户</div></div>'
-                    + '<div class="owLLStatItem"><div class="num">' + r.today + '</div><div class="lbl">今日登录（' + r.today_str + '）</div></div>'
-                    + '<div class="owLLStatItem"><div class="num">' + r.fail_today + '</div><div class="lbl">今日失败</div></div>'
-                    + '<div class="owLLStatItem"><div class="num">' + r.fail + '</div><div class="lbl">累计失败</div></div>'
-                    + '<div class="owLLStatItem"><div class="num">' + r.logout + '</div><div class="lbl">主动登出</div></div>';
+                var items = [
+                    kpi(r.total, '日志总数'),
+                    kpi(r.users, '独立用户'),
+                    kpi(r.today, '今日登录（' + (r.today_str || '') + '）'),
+                    kpi(r.fail_today, '今日失败'),
+                    kpi(r.fail, '累计失败'),
+                    kpi(r.logout, '主动登出')
+                ];
                 // 指纹不符是安全事件（会话被销毁，疑似 Cookie 被盗），非零时才提示，
                 // 平时不占位，免得把真正的告警淹在恒为 0 的数字里。
                 if (r.fp_mismatch > 0) {
-                    h += '<div class="owLLStatItem"><div class="num" style="color:var(--ow-orange)">' + r.fp_mismatch
-                       + '</div><div class="lbl">指纹不符（疑似盗用）</div></div>';
+                    items.push('<div class="ow-ll-kpi"><b class="ow-ll-alert">' + r.fp_mismatch
+                        + '</b><span>指纹不符（疑似盗用）</span></div>');
                 }
-                $('owLLStatCard').innerHTML = h;
+                $('owLLStatCard').innerHTML = '<h3 style="margin:0 0 10px">统计</h3>'
+                    + '<div class="ow-ll-kpis">' + items.join('') + '</div>';
             });
         },
 
@@ -73,13 +82,13 @@
             });
         },
 
-        /* 结果徽标配色。
-           ⚠️ 只用 CSS 里**真实存在**的 ow-tag-* 类（已逐一 grep 确认）：
-           green / owner / vip / member / guest / title。
-           没有 ow-tag-red、没有 ow-tag-gray —— 别臆造，会静默退化成无背景的裸文字。
-           失败借用 owner（橙红，视觉上最接近警示），登出用 member（灰）。 */
+        /* 结果徽标：只用核心**真实存在**的 ow-tag-* 类（grep owlsgo.css 逐一确认）：
+           green=成功 / red=危险 / owner=橙 / vip / member=灰 / guest / title。
+           v1.2.0 前 fail 借用 owner（橙），理由是当时误判「没有 ow-tag-red」——
+           实际 .ow-tag-red 一直在（第 591 行，且第 321 行有深色主题变体），
+           登录失败是安全事件，改回语义红。 */
         resultTag: function (r) {
-            var map = { ok: 'green', fail: 'owner', logout: 'member' };
+            var map = { ok: 'green', fail: 'red', logout: 'member' };
             var cls = 'ow-tag ow-tag-' + (map[r.result] || 'guest');
             return '<span class="' + cls + '">' + esc(r.result_cn || r.result || '') + '</span>';
         },
@@ -106,11 +115,11 @@
                     + '<td>' + OwLL.resultTag(r) + '</td>'
                     + '<td>' + (r.user_id ? r.user_id : '<span style="color:var(--ow-text-sub)">—</span>') + '</td>'
                     + '<td>' + esc(who) + '</td>'
-                    + '<td title="' + esc(r.email) + '">' + esc(r.email) + '</td>'
+                    + '<td class="ow-ll-email" title="' + esc(r.email) + '">' + esc(r.email) + '</td>'
                     + '<td>' + esc(r.ip) + '</td>'
                     + '<td>' + esc(r.method_cn) + '</td>'
                     + '<td>' + (extra || '<span style="color:var(--ow-text-sub)">—</span>') + '</td>'
-                    + '<td title="' + esc(r.user_agent) + '">' + esc(r.user_agent) + '</td>'
+                    + '<td class="ow-ll-ua" title="' + esc(r.user_agent) + '">' + esc(r.user_agent) + '</td>'
                     + '<td>' + esc(r.time_text) + '</td>'
                     + '</tr>';
             }

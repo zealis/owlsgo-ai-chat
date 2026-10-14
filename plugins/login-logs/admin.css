@@ -1,87 +1,70 @@
 /**
- * 登录日志插件 - 后台样式（v1.0.0）
- * 复用主程序 ow- 前缀变量，移动端适配表格横向滚动。
- * 选择器限定 #owLLTable，避免影响其他后台表格。
+ * 登录日志插件 - 后台样式（v1.2.0 起与全站后台通用风格对齐）
+ * 纪律：
+ *   - 只引核心 --ow-* 变量，不写死任何颜色（深浅两套主题自动跟随）；
+ *   - 插件类一律 ow-ll- 前缀，**不覆盖核心选择器** —— v1.1.x 曾在 @media 里
+ *     裸写 .ow-form-row / .ow-form-item，而本文件随合并 CSS 在每个后台页加载，
+ *     等于把全后台的表单在窄屏下一律改成竖排（已移除，筛选表单交回核心 flex-wrap）；
+ *   - 参照对象：daily-checkin 的 .ow-ci-kpi（KPI 卡）、level-trust v1.1.5 的同款改造。
  */
 
-/* 覆盖主程序 .ow-table{width:100%}，让表格按内容撑开，
-   外层容器 overflow-x:auto 负责横向滚动 */
+/* ---------- 统计 KPI 卡（与 daily-checkin .ow-ci-kpi 同款） ---------- */
+.ow-ll-kpis {
+    display: flex; display: -webkit-flex;
+    flex-wrap: wrap; -webkit-flex-wrap: wrap;
+    gap: 10px; -webkit-gap: 10px;
+}
+.ow-ll-kpi {
+    flex: 1; -webkit-flex: 1;
+    min-width: 110px;
+    background: var(--ow-bg-sub);
+    border-radius: 10px;
+    padding: 10px 12px;
+}
+.ow-ll-kpi b {
+    display: block;
+    font-size: 20px;
+    color: var(--ow-text-title);
+    font-variant-numeric: tabular-nums;
+}
+.ow-ll-kpi span { font-size: 12px; color: var(--ow-text-sub); }
+/* 指纹不符是安全告警：数字用语义橙，深浅两档都可读 */
+.ow-ll-kpi b.ow-ll-alert { color: var(--ow-orange); }
+
+/* ---------- 工具栏（清理按钮 + 计数文字） ---------- */
+.ow-ll-toolbar {
+    display: flex; display: -webkit-flex;
+    flex-wrap: wrap; -webkit-flex-wrap: wrap;
+    align-items: center; -webkit-align-items: center;
+    gap: 8px; -webkit-gap: 8px;
+    margin-bottom: 10px;
+}
+.ow-ll-count { font-size: 12px; color: var(--ow-text-sub); }
+
+/* ---------- 列表表格 ----------
+   覆盖核心 .ow-table{width:100%}：nowrap 内容会把列压扁，放开成 auto + min-width:100%
+   让表格按内容撑开，外层 .ow-table-wrap 负责横向滚（与 level-trust 移动端表格同思路）。 */
 #owLLTable {
     width: auto;
     min-width: 100%;
     table-layout: auto;
 }
-
-/* 单元格不换行，中文不逐字拆分 */
-#owLLTable th,
-#owLLTable td {
+/* 单元格不折行，中文不逐字拆分 */
+#owLLTable th, #owLLTable td {
     white-space: nowrap;
     word-break: keep-all;
     overflow-wrap: normal;
 }
+/* 邮箱 / User-Agent 两列允许超长省略（完整内容在 title 里，悬停可见）。
+   ⚠️ 用类名而不是 :nth-child：v1.1.12 加了「结果」列后 nth-child 全部错位一格
+   （邮箱实际是第 5 列、UA 是第 9 列，旧规则写的 4 和 7），截断落到了昵称/方式列上。 */
+#owLLTable .ow-ll-email { max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+#owLLTable .ow-ll-ua { max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
 
-/* 邮箱列（第 4 列）允许超长省略 */
-#owLLTable td:nth-child(4) {
-    max-width: 200px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-/* User-Agent 列（第 7 列）允许超长省略 */
-#owLLTable td:nth-child(7) {
-    max-width: 280px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-/* 统计卡片三栏自适应 */
-#owLLStatCard {
-    display: flex;
-    display: -webkit-flex;
-    flex-wrap: wrap;
-    -webkit-flex-wrap: wrap;
-    gap: 12px;
-    padding: 12px 16px;
-}
-.owLLStatItem {
-    flex: 1 1 160px;
-    -webkit-flex: 1 1 160px;
-    min-width: 140px;
-}
-.owLLStatItem .num {
-    font-size: 22px;
-    font-weight: 600;
-    color: var(--ow-text, #333);
-    line-height: 1.2;
-}
-.owLLStatItem .lbl {
-    font-size: 12px;
-    color: var(--ow-text-sub, #999);
-    margin-top: 2px;
-}
-
-/* 移动端：筛选表单纵向堆叠 */
+/* ---------- 窄屏（≤720px） ---------- */
 @media (max-width: 720px) {
-    .ow-form-row {
-        flex-direction: column;
-        -webkit-flex-direction: column;
-        align-items: stretch;
-        -webkit-align-items: stretch;
-    }
-    .ow-form-row .ow-form-item {
-        min-width: 0 !important;
-        width: 100%;
-    }
-    .ow-form-row > .ow-btn {
-        width: 100%;
-    }
-    #owLLStat {
-        display: block;
-        margin-left: 0 !important;
-        margin-top: 8px;
-    }
-    #owLLTable td:nth-child(4) { max-width: 130px; }
-    #owLLTable td:nth-child(7) { max-width: 160px; }
+    #owLLTable .ow-ll-email { max-width: 130px; }
+    #owLLTable .ow-ll-ua { max-width: 160px; }
+    .ow-ll-kpi { min-width: 92px; padding: 8px 10px; }
+    .ow-ll-kpi b { font-size: 18px; }
 }

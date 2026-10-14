@@ -229,7 +229,10 @@
         adminUpload: function (file) {
             if (!file) {
                 var fi = $('owCBEditFileInput');
-                if (!fi || !fi.files || !fi.files[0]) return;
+                if (!fi) return;
+                // 同前台上传：没有文件时先主动打开系统选择框，而不是直接 return
+                // （那个 input 是 display:none，否则「上传」按钮点了没反应）
+                if (!fi.files || !fi.files[0]) { fi.click(); return; }
                 file = fi.files[0];
             }
             if (!state.attachEnabled) { toast('附件上传插件未启用'); return; }

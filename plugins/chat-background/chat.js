@@ -47,11 +47,11 @@
         });
     }
 
-    /* ---------- 应用背景（前端兜底：服务端 page.head 已注入则跳过） ---------- */
-    function applyBg() {
-        if (!state.setting || state.setting.mode === 'none') return;
-        if (d.getElementById('ow-cb-style')) return;   // 服务端已注入
+    /* ---------- 组装要注入的 CSS ----------
+       返回空串 = 既没有背景图也没有叠加色 → 不需要注入（保持/回到核心默认）。 */
+    function buildCss() {
         var st = state.setting;
+        if (!st) return '';
         var url = '', tile = false;
         if (st.mode === 'item' && st.item_id) {
             for (var i = 0; i < state.items.length; i++) {
@@ -62,47 +62,87 @@
             if (st.custom_url) url = st.custom_url;
             else if (st.custom_preview) url = st.custom_preview;
         }
-        if (!url) return;
-        var bgCss = tile
-            ? "background-image:url('" + url + "');background-repeat:repeat;background-size:auto;"
-            : "background-image:url('" + url + "');background-repeat:no-repeat;background-size:cover;background-position:center;";
         var ovr = state.overlays[st.overlay] || 'none';
+        var hasImg = !!url;
+        // 「默认」模式（无图）也允许只叠一层色：叠加色是独立于背景图的选择，
+        // 只在图上才有意义的话，用户在默认模式里点颜色就等于白点。
+        if (!hasImg && ovr === 'none') return '';
         var op = (Math.max(0, Math.min(100, st.opacity || 50)) / 100).toFixed(2);
-        var css = 'body.ow-chat-body .ow-layout{position:relative;}'
-            // 背景层挂在 .ow-layout（100vh×100%）上 = 铺满全屏；::before 画图、::after 画叠加色。
-            // .ow-layout 不设 z-index，不自建层叠上下文 → 伪元素的 z-index:0 落在根层叠上下文，
-            // 高于 body/.ow-layout 底色、低于被抬到 z-index:1 的正文内容。
-            + 'body.ow-chat-body .ow-layout::before{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;' + bgCss + '}'
-            + (ovr !== 'none' ? 'body.ow-chat-body .ow-layout::after{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;background:' + ovr + ';opacity:' + op + ';}' : '')
-            // 只抬 .ow-layout 的直接子级（.ow-topbrand / .ow-body），其内部整体位于背景图之上。
-            + 'body.ow-chat-body .ow-layout > *{position:relative;z-index:1;}'
-            // 主区与消息区去掉自身不透明底色，露出全屏背景图
-            + 'body.ow-chat-body .ow-main{background-color:transparent;background-image:none;}'
+        var bgCss = hasImg
+            ? (tile
+                ? "background-image:url('" + url + "');background-repeat:repeat;background-size:auto;"
+                : "background-image:url('" + url + "');background-repeat:no-repeat;background-size:cover;background-position:center;")
+            : '';
+        return 'body.ow-chat-body .ow-main{position:relative;' + (hasImg ? 'background-color:transparent;' : '') + '}'
+            + (hasImg ? 'body.ow-chat-body .ow-main::before{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;' + bgCss + '}' : '')
+            + (ovr !== 'none' ? 'body.ow-chat-body .ow-main::after{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;background:' + ovr + ';opacity:' + op + ';}' : '')
+            // ⚠️ 只抬 .ow-topbar / .ow-messages / .ow-inputbar 这三个固定布局子级，
+            // 绝不能写成 > * —— .ow-main 同时是 flex 容器，核心的表情面板 #owEmojiPanel
+            // 与 gif-stickers 插件的 .ow-gif-panel 都挂在它下面，靠 position:absolute +
+            // z-index:30 浮在输入栏上方；被 > * 命中后 position 会被改写成 relative，
+            // 面板立刻掉进文档流并错位（表现为「一开启聊天背景，gif 面板样式就乱」）。
+            + 'body.ow-chat-body .ow-main > .ow-topbar,'
+            + 'body.ow-chat-body .ow-main > .ow-messages,'
+            + 'body.ow-chat-body .ow-main > .ow-inputbar{position:relative;z-index:1;}'
             + 'body.ow-chat-body .ow-messages{background-color:transparent;background-image:none;}'
-            // 顶栏与输入栏半透明，让背景图在其下若隐若现（与 main.php 的 page.head 注入保持一致）。
+            // 顶栏与输入栏半透明，让背景图/叠加色在其下若隐若现（与 main.php 的 page.head 注入保持一致）。
             // color-mix 从主题变量 --ow-bg-chat 派生半透明色：不写死颜色、深浅模式各自成立；
             // 不支持时该声明被丢弃、自动回退核心的不透明底色。输入框加 :not(:focus) 以保住聚焦态底色。
             // 不用 backdrop-filter（毛玻璃）：项目样式规范明确「禁毛玻璃」。
             + 'body.ow-chat-body .ow-main .ow-topbar,'
             + 'body.ow-chat-body .ow-main .ow-inputbar{background-color:color-mix(in srgb, var(--ow-bg-chat) 78%, transparent);}'
-            + 'body.ow-chat-body .ow-main .ow-inputbar .ow-input:not(:focus){background-color:color-mix(in srgb, var(--ow-bg-chat) 72%, transparent);}';
-            // rail 与侧栏不做覆盖 —— 保留核心不透明底色 --ow-bg-chat，背景图被完全遮住、肉眼看不到。
-        var st2 = d.createElement('style');
-        st2.id = 'ow-cb-style';
-        st2.textContent = css;
-        d.head.appendChild(st2);
+            + 'body.ow-chat-body .ow-main .ow-inputbar .ow-input:not(:focus){background-color:color-mix(in srgb, var(--ow-bg-chat) 72%, transparent);}'
+            // 左侧图标条与侧栏同样半透明。⚠️ 它们不在 .ow-main 内（是兄弟节点），
+            // 选择器不能带 .ow-main；透出来的是 .ow-layout 的 --ow-bg，
+            // 即「没有背景图在下面」，效果是朝页面底色略提亮。
+            + 'body.ow-chat-body .ow-rail,'
+            + 'body.ow-chat-body .ow-sidebar{background-color:color-mix(in srgb, var(--ow-bg-chat) 78%, transparent);}';
+    }
+
+    /* ---------- 写入 <style id="ow-cb-style">（存在则复用，不存在才建） ---------- */
+    function injectStyle(css) {
+        var el = d.getElementById('ow-cb-style');
+        if (!el) {
+            el = d.createElement('style');
+            el.id = 'ow-cb-style';
+            d.head.appendChild(el);
+        }
+        el.textContent = css;
+    }
+
+    /* ---------- 前端兜底：仅当服务端 page.head 没注入时才补一次（首屏） ---------- */
+    function applyBg() {
+        if (d.getElementById('ow-cb-style')) return;   // 服务端已注入
+        var css = buildCss();
+        if (!css) return;
+        injectStyle(css);
+    }
+
+    /* ---------- 保存后强制刷新 ----------
+       ⚠️ 这里**不能**走 applyBg：page.head 在页面加载时就写死了那一份样式，
+       applyBg 见元素已存在会直接 return，于是「保存后仍是旧背景、要刷新页面才生效」。
+       故保存后必须按当前 state 重算并覆盖该元素（无图无叠加色则连元素一起撤掉）。 */
+    function refreshBg() {
+        var css = buildCss();
+        if (!css) {
+            var el = d.getElementById('ow-cb-style');
+            if (el && el.parentNode) el.parentNode.removeChild(el);
+            return;
+        }
+        injectStyle(css);
     }
 
     /* ---------- 在「个人设置」弹窗里追加背景区块 ----------
        做法：猴补丁 OwChat.openSettings —— 调原函数打开弹窗，然后把背景区块并进「外观」那一页
-       （v1.3.112 起个人设置成分组标签，背景与日夜模式、色系是同一类偏好）。
-       老核心没有 data-setpane 这个结构，回落到「插到保存按钮之前」，两边都不报错。 */
+       （v1.3.112 起个人设置成分组标签，背景与日夜模式、色系是同一类偏好；
+       v1.3.113 标签换成通用轮子 owTabs，面板属性从 data-setpane 改名为 data-pane）。
+       老核心没有 data-pane 这个结构，回落到「插到保存按钮之前」，两边都不报错。 */
     var origOpenSettings = OwChat.openSettings;
     OwChat.openSettings = function () {
         origOpenSettings.apply(this, arguments);
         var modal = $('owModal');
         if (!modal) return;
-        var host = modal.querySelector('[data-setpane="look"]');
+        var host = modal.querySelector('[data-pane="look"]');
         var saveBtn = modal.querySelector('button.ow-btn-primary.ow-btn-block');
         if (!host && !saveBtn) return;
         if (modal.querySelector('.ow-cb-section')) return;   // 已注入
@@ -340,7 +380,11 @@
             if (!file) {
                 var fi = $('owCBFileInput');
                 if (!fi) return;
-                if (!fi.files || !fi.files[0]) return;
+                // 首次点击时 input 里还没有文件 —— 这里必须主动打开系统选择框。
+                // 原来直接 return，于是「上传」按钮点了毫无反应（那个 input 是
+                // display:none，用户没有任何方式去选中文件）。选完文件后由它的
+                // onchange 带着 file 再进来，才真正走上传。
+                if (!fi.files || !fi.files[0]) { fi.click(); return; }
                 file = fi.files[0];
             }
             if (!state.cfg.can_custom) { toast(state.cfg.custom_reason || '当前等级不可使用自定义背景'); return; }
@@ -376,8 +420,8 @@
         OwCBUser.saveBg(function (ok) {
             if (!ok) return;
             origSaveSettings.apply(OwChat, arguments);
-            // 昵称保存后背景 CSS 可能被刷新页面，重新注入兜底样式
-            setTimeout(applyBg, 50);
+            // 按刚保存的 state 强制刷新背景样式（applyBg 会被「元素已存在」挡住，必须用 refreshBg）
+            setTimeout(refreshBg, 50);
         });
     };
 

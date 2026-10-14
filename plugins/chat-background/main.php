@@ -745,7 +745,7 @@ Plugin::route('plugin_chat_background_path', function (array $ctx) {
 /* ============================ page.head：注入用户背景 CSS ============================ */
 /**
  * 仅在聊天页（?page=chat 或缺省）+ 已登录用户时应用。
- * 用户未选背景（mode=none）时注入一条空规则占位，避免误以为没生效。
+ * 既没有背景图、也没有叠加色时不注入任何东西（保持核心默认）。
  */
 Plugin::on('page.head', function () {
     $page = (string)($_GET['page'] ?? '');
@@ -755,16 +755,16 @@ Plugin::on('page.head', function () {
     if (!$u) return;
     $uid = (int)$u['id'];
     $st = owCBUserSetting($uid);
-    if ((string)$st['mode'] === 'none') return;
 
-    // 解析最终 URL
+    // 解析最终 URL（「默认」模式下为空）
     $url = '';
     $tile = false;   // 是否平铺（SVG 图案）
     if ((string)$st['mode'] === 'item' && (int)$st['item_id'] > 0) {
         $item = DB::one('SELECT * FROM plugin_chat_bg_items WHERE id=? AND enabled=1', [(int)$st['item_id']]);
-        if (!$item) return;
-        $url = owCBItemUrl($item);
-        $tile = (string)$item['kind'] === 'svg';
+        if ($item) {
+            $url = owCBItemUrl($item);
+            $tile = (string)$item['kind'] === 'svg';
+        }
     } elseif ((string)$st['mode'] === 'custom') {
         if ((string)$st['custom_url'] !== '') {
             $url = (string)$st['custom_url'];
@@ -772,36 +772,45 @@ Plugin::on('page.head', function () {
             $url = owCBUserFileUrl((string)$st['custom_file']);
         }
     }
-    if ($url === '') return;
 
     $overlays = owCBOverlays();
     $ovr = (string)$st['overlay'];
     if (!isset($overlays[$ovr])) $ovr = 'none';
     $ovrCss = $overlays[$ovr];
+    $hasImg = ($url !== '');
+    $hasOvr = ($ovrCss !== 'none');
+    // 既无图又无叠加色 → 不注入，保持核心默认。
+    // 「默认」模式（无图）也允许只叠一层色：叠加色本就是独立于背景图的选择，
+    // 若只在有图时才有意义，用户在默认模式里点颜色就等于白点。
+    // 前端 buildCss() 是同一套判断，两边必须一致，否则「保存后」与「刷新后」长相不同。
+    if (!$hasImg && !$hasOvr) return;
+
     $opacity = max(0, min(100, (int)$st['opacity'])) / 100;
 
-    // 生成 CSS：注入到 :root 与 .ow-main 伪元素
+    // 生成 CSS：注入到 .ow-main 的伪元素
     $bgCss = $tile
         ? "background-image: url('" . $url . "'); background-repeat: repeat; background-size: auto;"
         : "background-image: url('" . $url . "'); background-repeat: no-repeat; background-size: cover; background-position: center;";
 
-    // 叠加层：::after 半透明（opacity 控制 .ow-layout::after 自身的透明度，
+    // 叠加层：::after 半透明（opacity 控制 .ow-main::after 自身的透明度，
     // 用 background + opacity 影响子元素，故改用「叠加色 + 半透明 alpha」合成）。
     // 这里用简化方案：直接把叠加色按 opacity 重新生成（渐变里的 alpha 已固定，外层再叠 opacity）。
+    // ⚠️ 无图、只有叠加色时**不动** .ow-main 自身底色 —— 否则聊天区会从 --ow-bg-chat 变成
+    //    body 的 --ow-bg-sub（深色下两者不同色），白白改了聊天区外观。
     echo '<style id="ow-cb-style">'
-       // 背景层挂在 .ow-layout（100vh × 100%）上 = 铺满全屏；::before 画图、::after 画叠加色。
-       // .ow-layout 只加 position、不设 z-index，故不自建层叠上下文：两个伪元素的 z-index:0
-       // 落在根层叠上下文里 —— 高于 body/.ow-layout 的底色，低于被抬到 z-index:1 的正文内容。
-       . 'body.ow-chat-body .ow-layout{position:relative;}'
-       . 'body.ow-chat-body .ow-layout::before{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;' . $bgCss . '}'
-       . ($ovrCss !== 'none'
-           ? 'body.ow-chat-body .ow-layout::after{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;background:' . $ovrCss . ';opacity:' . number_format($opacity, 2, '.', '') . ';}'
+       . 'body.ow-chat-body .ow-main{position:relative;' . ($hasImg ? 'background-color:transparent;' : '') . '}'
+       . ($hasImg ? 'body.ow-chat-body .ow-main::before{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;' . $bgCss . '}' : '')
+       . ($hasOvr
+           ? 'body.ow-chat-body .ow-main::after{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;background:' . $ovrCss . ';opacity:' . number_format($opacity, 2, '.', '') . ';}'
            : '')
-       // 只抬 .ow-layout 的**直接子级**（.ow-topbrand / .ow-body）：它们一旦 position+z-index 就自成
-       // 层叠上下文，内部（rail / 侧栏 / 主区 / 右栏）整体位于背景图之上，不必逐个再写 z-index。
-       . 'body.ow-chat-body .ow-layout > *{position:relative;z-index:1;}'
-       // 主区与消息区去掉自身不透明底色，露出全屏背景图
-       . 'body.ow-chat-body .ow-main{background-color:transparent;background-image:none;}'
+       // ⚠️ 只抬这三个**固定布局子级**，绝不能写成 > * —— .ow-main 同时是 flex 容器，
+       //    表情面板（核心的 #owEmojiPanel）与 GIF 面板（gif-stickers 插件把 .ow-gif-panel
+       //    挂在同一父节点上）都是它的直接子级，靠 position:absolute + z-index:30 浮在输入栏上方。
+       //    被 > * 命中后 position 会被改写成 relative，两个面板立刻掉进文档流并错位
+       //    （实测表现为「一开启聊天背景，gif 面板样式就乱」）。
+       . 'body.ow-chat-body .ow-main > .ow-topbar,'
+       . 'body.ow-chat-body .ow-main > .ow-messages,'
+       . 'body.ow-chat-body .ow-main > .ow-inputbar{position:relative;z-index:1;}'
        . 'body.ow-chat-body .ow-messages{background-color:transparent;background-image:none;}'
        // 顶栏与输入栏半透明，让背景图在其下若隐若现。
        // 用 color-mix 从主题变量 --ow-bg-chat 派生半透明色：不写死颜色、深浅色模式各自成立；
@@ -811,8 +820,11 @@ Plugin::on('page.head', function () {
        . 'body.ow-chat-body .ow-main .ow-topbar,'
        . 'body.ow-chat-body .ow-main .ow-inputbar{background-color:color-mix(in srgb, var(--ow-bg-chat) 78%, transparent);}'
        . 'body.ow-chat-body .ow-main .ow-inputbar .ow-input:not(:focus){background-color:color-mix(in srgb, var(--ow-bg-chat) 72%, transparent);}'
-       // rail 与侧栏**不做任何覆盖** —— 保留核心的不透明底色 --ow-bg-chat，
-       // 于是背景图虽铺到它们底下，却被完全遮住，肉眼看不到。
+       // 左侧图标条与侧栏同样半透明。⚠️ 它们**不在** .ow-main 内，是它的兄弟节点，
+       // 故选择器不能带 .ow-main；透出来的是 .ow-layout 的 --ow-bg（浅色为白），
+       // 即「没有背景图在下面」—— 效果是朝页面底色略提亮，而不是透出背景图。
+       . 'body.ow-chat-body .ow-rail,'
+       . 'body.ow-chat-body .ow-sidebar{background-color:color-mix(in srgb, var(--ow-bg-chat) 78%, transparent);}'
        . '</style>';
 });
 

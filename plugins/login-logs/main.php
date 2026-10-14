@@ -196,8 +196,8 @@ Plugin::adminPage('login-logs', '登录日志', function () {
         . '<code>logout.before_destroy</code> / <code>session.destroyed</code>，'
         . '仅记录启用本插件之后的事件。「指纹不符」表示会话被服务端销毁（疑似 Cookie 被盗用），'
         . '与主动登出是两回事。系统每天自动清理 90 天前的旧日志（计划任务 <code>purge_old</code>，可在「计划任务」页启停）。</p>'
-        // 统计卡
-        . '<div class="ow-card" id="owLLStatCard" style="margin-bottom:12px"></div>'
+        // 统计卡（KPI 卡片由 admin.js 渲染，样式见 admin.css 的 .ow-ll-kpi）
+        . '<div class="ow-card" id="owLLStatCard"></div>'
         // 筛选
         . '<div class="ow-card"><div class="ow-form-row">'
         . '<div class="ow-form-item" style="flex:1;min-width:120px"><label>用户 ID</label>'
@@ -220,16 +220,17 @@ Plugin::adminPage('login-logs', '登录日志', function () {
         . '</div></div>'
         // 列表
         . '<div class="ow-card">'
-        . '<div style="margin-bottom:10px">'
+        . '<div class="ow-ll-toolbar">'
         . '<button class="ow-btn ow-btn-danger" onclick="OwLL.clearOld()">清理 90 天前日志</button>'
-        . '<span id="owLLStat" style="margin-left:12px;color:var(--ow-text-sub,#999);font-size:12px"></span>'
+        . '<span id="owLLStat" class="ow-ll-count"></span>'
         . '</div>'
-        . '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">'
-        . '<table class="ow-table" id="owLLTable">'
+        // 横滚容器用核心 .ow-table-wrap（与核心后台表格同一套；OwAdmin 的自动包表
+        // 观察器见到父级已是 ow-table-wrap 会跳过，不会套两层）
+        . '<div class="ow-table-wrap"><table class="ow-table" id="owLLTable">'
         . '<tr><th>ID</th><th>结果</th><th>用户 ID</th><th>昵称</th><th>邮箱</th>'
         . '<th>IP</th><th>方式</th><th>原因 / 登录标识</th><th>User-Agent</th><th>时间</th></tr>'
         . '</table></div>'
-        . '<div id="owLLPager" style="margin-top:12px"></div>'
+        . '<div id="owLLPager"></div>'
         . '</div>';
 });
 
