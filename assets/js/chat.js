@@ -7043,11 +7043,56 @@
                 }
                 h += '<div id="owUpdResult" style="margin-top:8px;font-size:13px"></div>'
                     + '<div id="owUpdBak" style="margin-top:8px;font-size:12px;color:var(--ow-text-sub)"></div>';
+                /* ---------- GitHub token（可选，v1.3.138） ----------
+                   未认证的 API 限额是 60 次/小时，而一次升级要花「差异文件数 + 3」次调用 ——
+                   站方 2026-10-15 线上就卡在「63 个文件 > 上限 45」。这里让站长可选地配一个
+                   token 把限额提到 5000 次/小时；不配也不会再卡死：服务端会改用整包下载
+                   （一次调用拿全部差异），只有「服务器没有 phar 扩展」时才回落逐文件拉取。
+                   说明文字照全站约定：可见文字只留「好处 + 代价」，细节进 ⓘ 气泡
+                   （<p> + 字号 ≤12.5px，OwTip.scan 认的就是这两条）。 */
+                h += '<div class="ow-form-item" style="margin-top:12px;border-top:1px solid var(--ow-border);padding-top:10px">'
+                    + '<label>' + esc(owTr('GitHub token')) + '（' + esc(owTr('可选')) + '）</label>'
+                    + '<input class="ow-input" id="owUpdToken" type="password" autocomplete="new-password" style="max-width:240px" placeholder="'
+                    + esc(r.token_masked ? owTr('已配置 {m}，留空则不改', { m: r.token_masked }) : owTr('粘贴 token')) + '">'
+                    + '<button type="button" class="ow-btn ow-btn-ghost" onclick="OwAdmin.upgrade.saveToken()">' + esc(owTr('保存')) + '</button>'
+                    + (r.token_masked ? '<button type="button" class="ow-btn ow-btn-ghost" onclick="OwAdmin.upgrade.clearToken()">' + esc(owTr('清除')) + '</button>' : '')
+                    + '<span id="owUpdTokenMsg" style="font-size:12px;color:var(--ow-text-sub);margin-left:8px"></span>'
+                    + '<p style="font-size:12px;color:var(--ow-text-sub);margin-top:4px">'
+                    // ⚠️ 整句写成**一整块字面量**：语言包按整个文本节点精确匹配，拆成几段拼接时
+                    //    字典键稍有出入就匹配不上，而那种错只有在英文界面才看得见。
+                    //    .tools/lang-upgrade-check.js ①④ 两条推的就是这个。
+                    + '配了它 GitHub 限额从 60 次/小时提到 5000，一次能搬的文件数上限从 45 放宽到 500；用 fine-grained token、只勾 Contents: Read、只授权本仓库即可，不需要任何写权限。不配也能升级：会自动改用整包下载（一次调用拿全部差异），只有服务器没有 phar 扩展时才会退回逐文件拉取。</p>'
+                    + '</div>';
                 panel.innerHTML = h;
                 OwAdmin.upgrade.loadBackups();
+                // v1.2.45 约定：新插入的 DOM 要自己扫一遍，<p> 提示才会变成 label 上的 ⓘ 气泡
+                if (w.OwTip && typeof w.OwTip.scan === 'function') w.OwTip.scan(panel);
                 // 红点只跟「仓库确有新版」走（与 settings.update_info.has_update 同口径），
                 // 手动检查后即时同步；本地差异那一态不点亮——那是我自己的事。
                 OwAdmin.upgrade.dotOn(st === 'update');
+            },
+
+            /** 保存 GitHub token（敏感路由：POST + 一次性票据）。只回掩码，完整值不回显 */
+            saveToken: function () {
+                var el = $('owUpdToken'), msg = $('owUpdTokenMsg');
+                if (!el) return;
+                var v = String(el.value || '').replace(/^\s+|\s+$/g, '');
+                if (!v) { if (msg) msg.textContent = owTr('请先粘贴 token'); return; }
+                OwApi.secure('admin_upgrade_token', { token: v }, function (r) {
+                    toast(r.msg);
+                    if (!r.ok) return;
+                    el.value = '';
+                    if (OwAdmin.upgrade.info) { OwAdmin.upgrade.info.token_masked = r.token_masked || ''; OwAdmin.upgrade.render(OwAdmin.upgrade.info); }
+                });
+            },
+
+            /** 清除 token：回到未认证限额（整包下载那条路仍然可用） */
+            clearToken: function () {
+                OwApi.secure('admin_upgrade_token', { token: '' }, function (r) {
+                    toast(r.msg);
+                    if (!r.ok) return;
+                    if (OwAdmin.upgrade.info) { OwAdmin.upgrade.info.token_masked = ''; OwAdmin.upgrade.render(OwAdmin.upgrade.info); }
+                });
             },
 
             apply: function () {

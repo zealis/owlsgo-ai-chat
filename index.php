@@ -438,7 +438,8 @@ if ($action !== '') {
         // 都属不可恢复操作，与 cron 日志清理同档，一律走一次性票据。
         'admin_logs_batch', 'admin_syslog_clear',
         // v1.3.39 在线升级：覆盖整站代码文件 = 全站最高危操作，必须 POST + 一次性票据。
-        'admin_upgrade_apply', 'admin_upgrade_rollback',
+        // v1.3.138 起多一条 admin_upgrade_token：GitHub token 是凭据，写入同档。
+        'admin_upgrade_apply', 'admin_upgrade_rollback', 'admin_upgrade_token',
         // v1.3.55 修改密码：拿到当前密码就能接管账号（后续可关掉两步验证），
         // 与登出同档，必须 POST + 一次性票据，防签名窗口期内的重放。
         'change_password',

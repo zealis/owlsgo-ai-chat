@@ -440,6 +440,24 @@ class Admin
             case 'admin_upgrade_backups':
                 Api::json(['ok' => true, 'data' => Upgrade::backups()]);
 
+            case 'admin_upgrade_token':
+                /* v1.3.138：GitHub token（可选）。配了之后 API 限额 60 → 5000 次/小时，
+                   单次升级的文件上限随之放宽；没配也不会再卡死 —— 整包下载那条路只花 2 次调用。
+                   敏感路由（index.php $SENSITIVE）：这是凭据，写入必须 POST + 一次性票据。
+                   ⚠️ 只回显掩码，完整值不出库、不进日志。 */
+                $tk = $p('token');
+                if ($tk === '') {
+                    DB::setSetting('github_token', '');
+                    Sec::log('upgrade_token_clear', (string)($actor['nickname'] ?? ''), []);
+                    Api::json(['ok' => true, 'token_masked' => '', 'msg' => '已清除 token']);
+                }
+                if (strlen($tk) < 20 || strlen($tk) > 255 || preg_match('/\s/', $tk)) {
+                    Api::json(['ok' => false, 'msg' => 'token 格式不像 GitHub 的（20~255 个非空白字符）']);
+                }
+                DB::setSetting('github_token', $tk);
+                Sec::log('upgrade_token_set', (string)($actor['nickname'] ?? ''), ['mask' => Upgrade::maskToken($tk)]);
+                Api::json(['ok' => true, 'token_masked' => Upgrade::maskToken($tk), 'msg' => 'token 已保存']);
+
             // ---------- 站点设置 ----------
             case 'admin_settings_get':
                 $rows = DB::all('SELECT k, v FROM settings');

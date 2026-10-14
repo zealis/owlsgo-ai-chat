@@ -626,6 +626,18 @@
         /* ---------- left rail avatar + account menu (v1.3.134) ---------- */
         '个人主页': 'Profile',
         '账号菜单': 'Account menu',
+        /* ---------- GitHub token in the upgrade panel (v1.3.138) ---------- */
+        'GitHub token': 'GitHub token',
+        '可选': 'optional',
+        '清除': 'Clear',
+        '粘贴 token': 'Paste token',
+        '请先粘贴 token': 'Paste a token first',
+        '已配置 {m}，留空则不改': 'Configured: {m} — leave blank to keep it',
+        '已清除 token': 'Token cleared',
+        'token 已保存': 'Token saved',
+        'token 格式不像 GitHub 的（20~255 个非空白字符）': 'That does not look like a GitHub token (20–255 non-space characters).',
+        '配了它 GitHub 限额从 60 次/小时提到 5000，一次能搬的文件数上限从 45 放宽到 500；用 fine-grained token、只勾 Contents: Read、只授权本仓库即可，不需要任何写权限。不配也能升级：会自动改用整包下载（一次调用拿全部差异），只有服务器没有 phar 扩展时才会退回逐文件拉取。':
+            'With a token GitHub allows 5000 requests/hour instead of 60, and the per-upgrade file cap rises from 45 to 500. Use a fine-grained token with only “Contents: Read” on this repository — no write access is needed. Without a token upgrades still work: they switch to a single whole-repo download, and only fall back to fetching files one by one when the server lacks the phar extension.',
         '色系': 'Color scheme',
         '经典蓝': 'Classic blue',
         '翡翠绿': 'Emerald',

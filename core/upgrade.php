@@ -75,6 +75,7 @@ class Upgrade
     private static function get(string $url, ?string &$err = null): ?string
     {
         $err = null;
+        $auth = self::authHeader();
         if (function_exists('curl_init')) {
             $ch = curl_init($url);
             curl_setopt_array($ch, [
@@ -82,7 +83,7 @@ class Upgrade
                 CURLOPT_FOLLOWLOCATION => true,
                 CURLOPT_TIMEOUT        => 30,
                 CURLOPT_CONNECTTIMEOUT => 10,
-                CURLOPT_HTTPHEADER     => ['User-Agent: Owlsgo-Updater', 'Accept: application/vnd.github+json'],
+                CURLOPT_HTTPHEADER     => array_merge(['User-Agent: Owlsgo-Updater', 'Accept: application/vnd.github+json'], $auth),
             ]);
             $ca = self::caBundle();
             if ($ca !== null) curl_setopt($ch, CURLOPT_CAINFO, $ca);
@@ -97,13 +98,48 @@ class Upgrade
         $ssl = ['verify_peer' => true, 'verify_peer_name' => true];
         $ca = self::caBundle();
         if ($ca !== null) $ssl['cafile'] = $ca;
+        $hdr = "User-Agent: Owlsgo-Updater\r\n" . ($auth ? $auth[0] . "\r\n" : '');
         $ctx = stream_context_create([
-            'http' => ['timeout' => 30, 'header' => "User-Agent: Owlsgo-Updater\r\n"],
+            'http' => ['timeout' => 30, 'header' => $hdr],
             'ssl'  => $ssl,
         ]);
         $body = @file_get_contents($url, false, $ctx);
         if ($body === false) { $err = '网络请求失败：' . (error_get_last()['message'] ?? '未知'); return null; }
         return $body;
+    }
+
+    /* ---------- GitHub token 与限额（v1.3.138） ----------
+       未认证的 API 限额是 60 次/小时，一次升级要花 N+3 次（1 tree + 1 VERSION blob +
+       再 1 tree + N 个文件 blob），所以差异一多就必然撞墙 —— 站方 2026-10-15 线上
+       就卡在「63 个文件 > 上限 45」。两条路一起上：
+         · 配了 token → 5000 次/小时，上限跟着放宽；
+         · 没配 token → 走整包（tarball）那条，一次升级只花 2 次，多少文件都一样。
+       token 存在 settings，面板只回显掩码，绝不吐完整值。 */
+    public static function token(): string
+    {
+        try { return trim((string)DB::setting('github_token', '')); } catch (Throwable $e) { return ''; }
+    }
+
+    /** 单次升级允许的差异文件数：按有无 token 分档，留出 tree/VERSION 的余量 */
+    public static function fileLimit(): int
+    {
+        return self::token() !== '' ? 500 : 45;
+    }
+
+    /** 只露头尾各 4 位（面板与回执都只给这个形式） */
+    public static function maskToken(string $t): string
+    {
+        $t = trim($t);
+        if ($t === '') return '';
+        if (strlen($t) <= 10) return str_repeat('•', strlen($t));
+        return substr($t, 0, 4) . '…' . substr($t, -4);
+    }
+
+    /** 有 token 才加 Authorization。跨主机重定向（api → codeload）时 curl 会自动摘掉它，正合适 */
+    private static function authHeader(): array
+    {
+        $t = self::token();
+        return $t === '' ? [] : ['Authorization: Bearer ' . $t];
     }
 
     /** 远端文件树：[path => blobSha]（只收 blob；tree 被截断视为不支持） */
@@ -184,6 +220,53 @@ class Upgrade
         return $bin;
     }
 
+    /**
+     * 整包下载（v1.3.138）：`/tarball/{branch}` 一次 API 调用拿到**整份仓库**，
+     * 真正的下载走 codeload（不占 API 限额）—— 于是「一次升级 = 1 tree + 1 tarball」，
+     * 差异是 63 个还是 630 个都一样，未认证的 60 次/小时也永远够。
+     *
+     * 不做整包解压：解压要写几十 MB、要走目录树，而我们要的只是那几十个差异文件。
+     * 直接用 phar:// 按条目名读（读 .tar.gz 走 zlib，phar/zlib 都是默认扩展）。
+     * 失败返回 null，调用方回落逐文件拉 blob —— 那条路配了 token 才宽裕。
+     * @return array{file:string,top:string}|null
+     */
+    public static function fetchTarball(string $tmpDir, ?string &$err = null): ?array
+    {
+        $err = null;
+        if (!class_exists('PharData')) { $err = '服务器未启用 phar 扩展，无法整包下载'; return null; }
+        $bin = self::get('https://api.github.com/repos/' . self::REPO . '/tarball/' . self::BRANCH, $err);
+        if ($bin === null) return null;
+        return self::prepareTarball($bin, $tmpDir, $err);
+    }
+
+    /**
+     * 落盘 + 认出顶层目录（与网络无关的那一半，单独拆出来是为了能离线自检）。
+     * @param string $bin gzip 原始字节
+     */
+    public static function prepareTarball(string $bin, string $tmpDir, ?string &$err = null): ?array
+    {
+        $err = null;
+        if (!class_exists('PharData')) { $err = '服务器未启用 phar 扩展'; return null; }
+        // gzip 魔数：codeload 给的是 .tar.gz；网关改写或拿到 JSON 错误页时在这里就拦住
+        if (strlen($bin) < 100 || strncmp($bin, "\x1f\x8b", 2) !== 0) { $err = '整包响应不是 gzip（可能被网关改写）'; return null; }
+        $file = $tmpDir . '/src.tar.gz';
+        if (@file_put_contents($file, $bin) === false) { $err = '整包写入临时文件失败'; return null; }
+        // 顶层目录形如 zealis-owlsgo-ai-chat-<sha>：从包里现取，不猜 sha
+        $top = '';
+        foreach ((array)@scandir('phar://' . $file) as $n) {
+            if ($n !== '.' && $n !== '..') { $top = $n; break; }
+        }
+        if ($top === '') { $err = '整包结构异常（没有顶层目录）'; return null; }
+        return ['file' => $file, 'top' => $top];
+    }
+
+    /** 从整包里读一个文件（路径相对仓库根）；不存在或读不出返回 null */
+    public static function tarRead(array $tar, string $path): ?string
+    {
+        $d = @file_get_contents('phar://' . $tar['file'] . '/' . $tar['top'] . '/' . $path);
+        return $d === false ? null : $d;
+    }
+
     /** 差异比对：added（远端有本地无）+ modified（sha 不同）。保护名单与非法路径跳过 */
     public static function diff(array $tree): array
     {
@@ -249,6 +332,9 @@ class Upgrade
             'added'          => $d['added'],
             'modified'       => $d['modified'],
             'protect'        => self::PROTECT,
+            // 面板要显示「token 配了没」与「本次能搬多少」——只给掩码，绝不回显完整凭据
+            'token_masked'   => self::maskToken(self::token()),
+            'file_limit'     => self::fileLimit(),
         ];
     }
 
@@ -312,18 +398,29 @@ class Upgrade
         $tree = self::fetchTree($err);
         if ($tree === null) return [false, '重新获取文件树失败：' . $err];
         $files = array_merge($chk['added'], $chk['modified']);
-        // 未认证 API 限流 60 次/小时：留 tree+VERSION 的余量，超 45 个差异文件直接提示分批发
-        if (count($files) > 45) {
-            return [false, '差异文件 ' . count($files) . ' 个，超过单次升级上限 45（GitHub 未认证 API 限流 60 次/小时）。请在服务器配置 GitHub token 或分批提交。'];
+        // v1.3.138：上限按有无 token 分档。没 token 时真正的出路是整包下载（只花 2 次调用），
+        // 但那条依赖 phar；这里保留上限是为了「phar 也缺、又没 token」时不要走到半程没额度。
+        $cap = self::fileLimit();
+        if (count($files) > $cap) {
+            return [false, '差异文件 ' . count($files) . ' 个，超过单次升级上限 ' . $cap
+                . '（GitHub 未认证 API 限流 60 次/小时）。可在「系统与维护 → 在线升级」填一个 GitHub token（5000 次/小时）后重试。'];
         }
         $root = self::root();
         $tmpDir = $root . '/data/upgrade/tmp';
         @mkdir($tmpDir, 0775, true);
 
-        // ---- 第一阶段：全部下载 + 逐个复核 blob sha（此阶段不碰站点文件） ----
+        // ---- 第一阶段：全部取内容 + 逐个复核 blob sha（此阶段不碰站点文件） ----
+        // 优先整包：一次 API 调用拿全部差异文件，63 个还是 630 个都一样；拿不到（无 phar、
+        // 网关拦了 codeload、gzip 被改写…）就回落逐文件拉 blob —— 那条路没 token 时会很紧。
+        $tar = self::fetchTarball($tmpDir, $tarErr);
         $contents = [];
         foreach ($files as $path) {
-            $body = self::fetchBlob($tree[$path], $e);
+            $body = $tar !== null ? self::tarRead($tar, $path) : null;
+            if ($body === null) {
+                $body = self::fetchBlob($tree[$path], $e);
+            } else {
+                $body = self::toLf($body);   // 包里就是 LF，这里只是与 sha 算法保持同一口径
+            }
             if ($body === null) { self::rrmdir($tmpDir); return [false, '下载失败：' . $path . '（' . $e . '）']; }
             if (sha1('blob ' . strlen($body) . "\0" . $body) !== $tree[$path]) {
                 self::rrmdir($tmpDir);
@@ -367,6 +464,7 @@ class Upgrade
         return [true, [
             'applied' => $done, 'backup' => basename($bakDir),
             'version' => $rv !== null ? $rv : $lv,
+            'source'  => $tar !== null ? 'tarball' : 'blob',   // 走了哪条下载路（整包 / 逐文件）
             'msg' => '升级完成：' . $done . ' 个文件已更新，备份于 data/backup/' . basename($bakDir) . '/',
         ]];
     }
