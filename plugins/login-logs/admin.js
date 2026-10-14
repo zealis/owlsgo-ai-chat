@@ -1,6 +1,6 @@
 /**
  * 登录日志插件 - 后台交互（v1.0.0；v1.1.12 增加结果筛选与失败/登出渲染；
- * v1.2.0 概览改 KPI 卡片、失败徽标改语义红，与全站后台通用风格统一）
+ * v1.2.0 概览改 KPI 卡片、失败徽标改语义红；v1.2.1 增加通用批量删除）
  * 全局对象 OwLL：页面 HTML 由插件后台页注入，函数在点击时执行，
  * 依赖的 OwApi / toast / esc / OwAdmin 由主 chat.js 提供。
  * 兼容老浏览器：仅使用 var / function，不使用箭头函数、let/const、fetch。
@@ -19,10 +19,53 @@
     }
 
     w.OwLL = {
-        /* 初始化：加载统计 + 首屏列表 */
+        /* 初始化：批量轮子 + 统计 + 首屏列表 */
         init: function () {
+            OwLL.batchBar();
             OwLL.loadStats();
             OwLL.load(1);
+        },
+
+        /* 批量操作轮子（v1.2.1：与核心「安全日志 / 群聊审核」同款的通用批量删除）。
+           下拉里只放删除一个动作——清理按日期走工具栏按钮，不基于勾选。 */
+        batchBar: function () {
+            if (!w.OwAdmin || !OwAdmin.uiBatchBar) return;
+            OwAdmin.uiBatchBar({
+                id: 'owLLBatch',
+                chkCls: 'owLLChk',
+                statBase: '共 0 条',
+                actions: [{ key: 'del', label: '批量删除所选日志', danger: true }],
+                onExec: function (act, ids) { OwLL.delBatch(ids); }
+            });
+        },
+
+        /* 全选 / 取消全选：只作用于当前页渲染出的行（与核心各后台页一致，
+           跨页全选需要服务端记选择态，成本远大于收益） */
+        toggleAll: function (cb) {
+            var boxes = d.getElementsByClassName('owLLChk');
+            for (var i = 0; i < boxes.length; i++) boxes[i].checked = cb.checked;
+            OwLL.syncBatch();
+        },
+
+        /* 勾选变化 → 同步批量轮子的执行按钮启停与「已选 N 条」 */
+        syncBatch: function () {
+            if (w.OwAdmin && OwAdmin.batchSync) {
+                OwAdmin.batchSync('owLLChk', 'owLLBatch', '共 ' + state.total + ' 条');
+            }
+        },
+
+        /* 批量删除所选（对应插件路由 plugin_login_logs_del，敏感操作走票据） */
+        delBatch: function (ids) {
+            OwAdmin.confirm('确定删除选中的 ' + ids.length + ' 条登录日志？该操作不可恢复。', function () {
+                OwApi.secure('plugin_login_logs_del', { ids: ids.join(',') }, function (r) {
+                    toast(r.msg || (r.ok ? '已删除' : '删除失败'));
+                    if (r.ok) {
+                        OwLL.loadStats();
+                        // 停在本页看结果；本页被删光时服务端会把 page 收敛到未越界的最后一页
+                        OwLL.load(state.page);
+                    }
+                });
+            });
         },
 
         /* 重置筛选 */
@@ -77,6 +120,7 @@
                 if (!r || !r.ok) { toast((r && r.msg) || '加载失败'); return; }
                 state.total = r.total;
                 state.pages = r.pages;
+                state.page = r.page || state.page;   // 删光本页后服务端会把越界 page 收敛回来
                 OwLL.render(r.data);
                 OwLL.renderPager();
             });
@@ -97,7 +141,9 @@
         render: function (rows) {
             var tbl = $('owLLTable');
             if (!tbl) return;
-            var header = '<tr><th>ID</th><th>结果</th><th>用户 ID</th><th>昵称</th><th>邮箱</th>'
+            // 首列复选框：与核心后台表格同一规格（th 宽 32px + 全选 + 行内 chk）
+            var header = '<tr><th style="width:32px"><input type="checkbox" id="owLLCheckAll" onchange="OwLL.toggleAll(this)"></th>'
+                + '<th>ID</th><th>结果</th><th>用户 ID</th><th>昵称</th><th>邮箱</th>'
                 + '<th>IP</th><th>方式</th><th>原因 / 登录标识</th><th>User-Agent</th><th>时间</th></tr>';
             var h = '';
             for (var i = 0; i < rows.length; i++) {
@@ -111,6 +157,7 @@
                     extra += (extra ? '<br>' : '') + '<span style="color:var(--ow-text-sub)">标识：' + esc(r.identity) + '</span>';
                 }
                 h += '<tr>'
+                    + '<td><input type="checkbox" class="owLLChk" value="' + r.id + '" onchange="OwLL.syncBatch()"></td>'
                     + '<td>' + r.id + '</td>'
                     + '<td>' + OwLL.resultTag(r) + '</td>'
                     + '<td>' + (r.user_id ? r.user_id : '<span style="color:var(--ow-text-sub)">—</span>') + '</td>'
@@ -123,10 +170,14 @@
                     + '<td>' + esc(r.time_text) + '</td>'
                     + '</tr>';
             }
+            // 空态列数 = 11（复选框 + 原 10 列）
             if (!rows.length) {
-                h = '<tr><td colspan="10" style="color:var(--ow-text-sub);text-align:center;padding:24px">暂无登录记录</td></tr>';
+                h = '<tr><td colspan="11" style="color:var(--ow-text-sub);text-align:center;padding:24px">暂无登录记录</td></tr>';
             }
             tbl.innerHTML = header + h;
+            var all = $('owLLCheckAll');
+            if (all) all.checked = false;   // 换页/刷新后全选态复位，避免误以为仍全选
+            OwLL.syncBatch();
             $('owLLStat').innerHTML = '第 ' + state.page + ' / ' + state.pages + ' 页 · 共 ' + state.total + ' 条';
         },
 
