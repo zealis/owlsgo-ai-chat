@@ -2156,11 +2156,15 @@ span.ow-panel-entry-ico.ow-avatar { width: 16px; height: 16px; line-height: 16px
    ⚠️ 两条坑：
    ① 改成 flex 列后，原来靠 float:right 浮在标题行的 ✕ 会变成独立一行 —— 所以这里改成绝对定位；
    ② 面板必须留 min-height:0，否则 flex 子项不肯收缩，滚动条永远出不来。
-   height 先给一个定值再被 min() 覆盖：老内核不认 min() 时退回固定 640px，不会变成自动高度。 */
+   height 先给一个定值再被 min() 覆盖：老内核不认 min() 时退回固定 640px，不会变成自动高度。
+   宽度单独放宽到 640px（站方 2026-10-14 明确「宽一点没事」）：通用弹窗只有 380px，
+   扣掉左右内边距 48、左侧导航列 128、间隙 20，右侧内容只剩 184px —— 外观页被挤得要滚 1125px 高。
+   实测同一页内容：380→184 宽/1125 高、560→364/904、640→444/891、720→524/883，640 之后收益就平了。 */
 .ow-modal.ow-modal-fixed {
     position: relative;
     display: flex; display: -webkit-flex;
     flex-direction: column; -webkit-flex-direction: column;
+    max-width: 640px;
     height: 640px;
     height: min(85vh, 640px);
     max-height: none;
