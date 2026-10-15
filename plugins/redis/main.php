@@ -128,7 +128,12 @@ function owRdsAllCfg(): array
     try {
         foreach (DB::all('SELECT k, v FROM plugin_redis_cfg') as $r) {
             $k = (string)$r['k'];
-            if (array_key_exists($k, $cfg)) $cfg[$k] = (string)$r['v'];
+            $v = (string)$r['v'];
+            // ⚠️ 空串行一律忽略，不能让它盖掉默认值：老版本保存后台表单时会把留空的输入框
+            //    写成 ''（timeout 就留下过这样一行），于是输入框显示空白、看着像「没配上」，
+            //    而代码里其实走的是默认值 —— 存储与显示两套口径。新写入端已改成空值即删行，
+            //    这里再兜一道，保证「空 = 用默认」是唯一口径。
+            if ($v !== '' && array_key_exists($k, $cfg)) $cfg[$k] = $v;
         }
     } catch (Throwable $e) { /* 表还没建好等情况：按默认值走 */ }
     return $GLOBALS['_owRdsAll'] = $cfg;
@@ -566,6 +571,12 @@ function owRdsProbe(): array
         if (is_string($info) && preg_match('/^db' . $c['db'] . ':keys=(\d+),expires=(\d+)/m', $info, $m)) {
             $r['keys'] = (int)$m[1];
             $r['expires'] = (int)$m[2];
+        }
+        // ⚠️ Redis 3.0 的 INFO 里没有 maxclients（3.0 只在 CONFIG 里），所以单独问一次；
+        //    取不到就保持 0，后台显示「未知」，不假装知道。
+        if ($r['maxclients'] === 0) {
+            $mc = owRdsRawCmd($fp, ['CONFIG', 'GET', 'maxclients']);
+            if (is_array($mc) && count($mc) >= 2 && is_numeric($mc[1])) $r['maxclients'] = (int)$mc[1];
         }
         $db = owRdsRawCmd($fp, ['DBSIZE']);
         if (is_int($db) && $r['keys'] === 0) $r['keys'] = $db;
