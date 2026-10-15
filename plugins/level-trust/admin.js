@@ -184,6 +184,7 @@
                     + row('等级来源', '在线 <b>' + esc(fmtDur(p.online_sec)) + '</b>'
                         + ' · 任务 <b>' + num(p.task_days) + '</b> 天'
                         + (parseFloat(p.bonus_days) > 0.0001 ? ' · 管理员设定 <b>' + num(p.bonus_days) + '</b> 天' : '')
+                        + (parseFloat(p.decay_days) > 0.0001 ? ' · 长期未登录消退 <b>−' + num(p.decay_days) + '</b> 天' : '')
                         + '　= 合计 <b>' + num(p.total_days) + '</b> 天（1 天 = 1 级）')
                     + row('进度', '本级 <b>' + (p.pct || 0) + '%</b> · 距 Lv.' + (p.next_level || (parseInt(r.level, 10) + 1))
                         + ' 还需 <b>' + num(p.gap_days) + '</b> 天（在线满 ' + num(p.online_hours) + ' 小时算 1 天）')
@@ -210,6 +211,11 @@
                     + '<button class="ow-btn ow-btn-ghost" onclick="OwLT.op(' + r.uid + ',\'patch\')">补签（每周 1 次）</button>'
                     + '<button class="ow-btn ow-btn-ghost" onclick="OwLT.op(' + r.uid + ',\''
                     + (r.frozen ? 'unfreeze' : 'freeze') + '\')">' + (r.frozen ? '解除冻结' : '冻结今日') + '</button>'
+                    // 只在真被消退过时出现：清除后基线贴到当前不登录天数，等于「重新计时」
+                    + (parseFloat(p.decay_days) > 0.0001
+                        ? '<button class="ow-btn ow-btn-ghost" onclick="OwLT.op(' + r.uid + ',\'clear_decay\')">清除消退（还 '
+                          + num(p.decay_days) + ' 天）</button>'
+                        : '')
                     + '<button class="ow-btn ow-btn-primary" onclick="OwLT.setLevel(' + r.uid + ',' + r.level + ',' + num(p.task_days) + ')">直接设置</button>'
                     + '</div>';
                 box.innerHTML = html;

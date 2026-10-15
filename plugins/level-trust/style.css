@@ -56,6 +56,11 @@
     margin-top: 10px; font-size: 13px; color: var(--ow-text-sub);
 }
 .ow-lv-hero-meta b { color: var(--ow-text-title); }
+/* v3.1：长期不登录消退的那一项用警示色 —— 它是唯一会让等级往下走的原因，
+   与其余几项（都是「攒了多少」）语义相反，混在同一个色里会被忽略。
+   只染数字不染标签（标签留在 --ow-text-sub 的灰里），对比度按 13px 正文取 AA。 */
+.ow-lv-decay b { color: var(--ow-red); }
+.ow-lv-decay { color: var(--ow-text-sub); }
 .ow-lv-bar {
     margin-top: 10px; height: 8px; border-radius: 4px;
     background: var(--ow-bg-sub); overflow: hidden;

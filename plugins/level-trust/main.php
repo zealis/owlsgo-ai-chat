@@ -4,25 +4,34 @@
  *
  * 规则出处：设计文档/等级设计.md（该文档描述的是 v1.x 旧公式，v2.0 起以本文件注释为准）
  *
- * ── 等级公式（v3.0：在线时间 + 每日任务）─────────────────────
- *   L = 1 + ⌊ 在线天数 + 任务天数 + 设定天数 ⌋
+ * ── 等级公式（v3.1：在线时间 + 每日任务 − 长期不登录消退）──────
+ *   L = 1 + ⌊ 在线天 + 任务天 + 设定天 − 消退天 ⌋
  *     在线天数 = 累计在线秒 ÷ (online_hours × 3600)，默认 online_hours=24
  *                —— 「总共在线满一天就加一级」
  *     任务天数 = Σ 已完成任务的奖励（rw_<任务key>，后台逐任务可配，默认各 0.5 天）
  *                —— 「完成每日任务，每一个任务加多少天」；每个任务每天最多发一次
  *     设定天数 = 管理员直设等级时自动补的差额（见 owLTAlignLevel）
- *   「天」是唯一单位：1 天 = 1 级。三项相加后取整。
- *   不设满级。未完成任务不降级：等级只取 max(旧等级, 公式值)。
+ *     消退天数 = 荣誉等级（默认 ≥ 60 级）长期不登录的扣减（见 owLTCronDecay）
+ *   「天」是唯一单位：1 天 = 1 级。前四项相加后取整。
+ *   不设满级。未完成任务不降级：等级只取 max(旧等级, 公式值)——
+ *   **消退是这条规则唯一的例外**，它显式把等级按公式值往下压（见 owLTCronDecay）。
+ *
+ * ⚠️ 消退为什么必须是公式里的一个「负项」，而不是直接改小 level：
+ *    等级每次重算都走 max(旧等级, 公式值)（「只升不降」）。只把 level 改小的话，
+ *    用户下一次活跃一重算就被 max() 顶回原样，等于没退。把扣减记进公式，
+ *    max() 拿到的公式值本身就是降过的，两者一致，才真退得下去。
+ *    副作用正好是站方要的「不退不补」：消退天是固定扣着的，用户回来继续活跃时
+ *    靠新攒的在线/任务天自然把等级顶回来，不需要任何「恢复」逻辑。
+ *
+ *   v2.0 旧公式（已废弃）：L = 1 + ⌊D × lv_step⌋，D = 累计完成每日任务的天数。
+ *     v1.x 更早的公式（已废弃）：L = 1 + ⌊D + min(W, 0.5D) × 追赶系数⌋。
+ *     days / weight / file_w_days 三列保留不删（存量数据），v3.0 起不再读写。
  *
  *   ⚠️ 为什么要单列「设定天数」而不是把差额塞进任务天数（v1.3.150 的教训）：
  *     等级和「天数」是两个可以各自独立写入的量（后台用户管理那个等级输入框只写
  *     level、不动天数），一旦脱钩，页面就会同时显示「Lv.30」和「累计 4 天」，
  *     而页面自己写着 L = 1 + ⌊天数⌋ —— 整页自相矛盾。把差额显式记成「管理员设定」，
  *     等级页就能如实拆开展示，而不是拿假的任务天数糊过去。
- *
- *   v2.0 旧公式（已废弃）：L = 1 + ⌊D × lv_step⌋，D = 累计完成每日任务的天数。
- *     v1.x 更早的公式（已废弃）：L = 1 + ⌊D + min(W, 0.5D) × 追赶系数⌋。
- *     days / weight / file_w_days 三列保留不删（存量数据），v3.0 起不再读写。
  *
  * ── 在线时长怎么来的（v3.0）────────────────────────────────
  *   钩子用 index.php 的 `user.active`（每个请求都触发，含 20 秒长轮询）。
@@ -92,6 +101,8 @@ function owLTBoot(): void
         task_days    REAL    NOT NULL DEFAULT 0,     -- v3.0：每日任务奖励累计「天」（小数，等级来源之二）
         bonus_days   REAL    NOT NULL DEFAULT 0,     -- v3.0：管理员直设等级时补的差额「天」（等级来源之三）
         hb_at        INTEGER NOT NULL DEFAULT 0,     -- v3.0：上次累计在线的时间戳（算两次请求的差值用）
+        decay_days   REAL    NOT NULL DEFAULT 0,     -- v3.1：长期不登录已消退的「天」（公式里减掉，只增）
+        decay_base   INTEGER NOT NULL DEFAULT 0,     -- v3.1：已计入消退的不登录天数基线（防重复扣、支持清零重算）
         updated_at   {$ts} DEFAULT 0)");
     DB::run("CREATE TABLE IF NOT EXISTS plugin_level_config (
         k TEXT PRIMARY KEY, " . DB::textCol('v') . ")");
@@ -107,18 +118,25 @@ function owLTBoot(): void
         rooms    INTEGER NOT NULL DEFAULT 0,  -- 建群次数
         updated_at {$ts} DEFAULT 0)");
 
-    // ---------- v3.0 迁移（幂等，只跑一次）----------
-    // ⚠️ 用 plugin_level_config 里的 schema 标记短路，而不是每请求 4 次 PRAGMA 探测：
+    // ---------- 表结构迁移（幂等，只跑一次）----------
+    // ⚠️ 用 plugin_level_config 里的 schema 标记短路，而不是每请求 6 次 PRAGMA 探测：
     //    user.active 每请求都触发（含 20 秒长轮询），这段代码跑在热路径上。
     // ⚠️ 'schema' 刻意**不写进 owLTDefaults()** —— 若写进默认值，升级上来的老站点
-    //    会从默认值读到 '3' 而跳过迁移（老站点的配置表里本来就没有这一行）。
-    if (owLTCfg('schema') !== '3') {
+    //    会从默认值读到最新版号而**跳过迁移**（老站点的配置表里本来就没有这一行）。
+    // ⚠️ **加列必须同步把这里的版本号 +1**：v3.0 只写到 '3'，站点（含运行副本）跑过一次
+    //    之后永远进不来，新列就永远建不出来 —— v3.1 加消退两列时升到 '4'。
+    if (owLTCfg('schema') !== '4') {
+        $fromV2 = owLTCfg('schema') === '';     // 空 = 从没迁过（v2 表结构 / 全新安装）
         DB::ensureColumn('plugin_level_trust', 'online_sec', 'int', '0');
         DB::ensureColumn('plugin_level_trust', 'task_days', 'real', '0');
         DB::ensureColumn('plugin_level_trust', 'bonus_days', 'real', '0');
         DB::ensureColumn('plugin_level_trust', 'hb_at', 'int', '0');
-        owLTSeedV3();
-        owLTSetCfg('schema', '3');
+        DB::ensureColumn('plugin_level_trust', 'decay_days', 'real', '0');
+        DB::ensureColumn('plugin_level_trust', 'decay_base', 'int', '0');
+        // ⚠️ 折算只能跑一次：已迁到 '3' 的站点再跑一遍会把 task_days 覆盖成
+        //    「旧 days × lv_step」，用户新攒的任务天全部作废。
+        if ($fromV2) owLTSeedV3();
+        owLTSetCfg('schema', '4');
     }
 }
 
@@ -223,10 +241,14 @@ function owLTDefaults(): array
     return [
         // ---- 总开关 ----
         'gating'        => '1',     // 是否按等级限制功能（0=只看等级不做限制）
-        // ---- 等级速度（v3.0：L = 1 + ⌊ 在线天 + 任务天 + 设定天 ⌋）----
+        // ---- 等级速度（v3.0：L = 1 + ⌊ 在线天 + 任务天 + 设定天 − 消退天 ⌋）----
         'online_hours'  => '24',    // 在线满 N 小时算 1 天（= 1 级）；<1 会被兜底成 24
         'rw_login'      => '0.5',   // 「登录」任务完成一次奖励多少天
         'rw_gm'         => '0.5',   // 「群发言」任务完成一次奖励多少天
+        // ---- 长期不登录消退（v3.1：站方要求「60 级以后长期不登录自动消退，最多退到 46」）----
+        'decay_idle_days' => '30',  // 每满 N 天不登录退 1 级；0 = 关闭消退
+        'decay_from'      => '60',  // 从该等级起才消退（低于此级不动）
+        'decay_floor'     => '46',  // 最低退到该等级（默认 46 = 荣誉阶段起点）
         // ⚠️ v2.0 遗留：每日任务换算的等级进度倍率（L = 1 + ⌊D × lv_step⌋）。
         //    v3.0 起公式不再用它，但**不能删键**：① 迁移时还要读一次（把旧 days
         //    折算成新单位的天数）；② cfg_save 的白名单就是这个数组的键集合，
@@ -482,13 +504,29 @@ function owLTOnlineHours(): float
 
 /**
  * 三项合计的「天」数 —— 等级公式里 floor 之前的那个值。
- * 在线秒 / 任务奖励 / 管理员设定 三项相加，单位统一是「天」，1 天 = 1 级。
+ * 在线秒 / 任务奖励 / 管理员设定 相加，再**减去**长期不登录的消退扣减，单位统一是「天」，1 天 = 1 级。
  */
 function owLTTotalDays(array $row): float
 {
     return (float)($row['online_sec'] ?? 0) / (owLTOnlineHours() * 3600)
         + (float)($row['task_days'] ?? 0)
-        + (float)($row['bonus_days'] ?? 0);
+        + (float)($row['bonus_days'] ?? 0)
+        - (float)($row['decay_days'] ?? 0);
+}
+
+/**
+ * 消退相关参数（全部后台可调）。
+ * 返回 [每多少天不登录退 1 级, 起始等级, 最低等级]；间隔 ≤0 表示关闭消退。
+ * ⚠️ 最低等级被夹到「起始等级 - 1 以下」，否则配置写反（floor ≥ from）会让消退
+ *    一开始就把人压到 floor 以下，看起来像「一登录就掉级」。
+ */
+function owLTDecayCfg(): array
+{
+    $idle  = owLTFloat('decay_idle_days');
+    $from  = max(2, owLTInt('decay_from'));
+    $floor = max(1, owLTInt('decay_floor'));
+    if ($floor >= $from) $floor = $from - 1;
+    return [$idle, $from, $floor];
 }
 
 /** 等级公式（v3.0）：L = 1 + ⌊ 总天数 ⌋ */
@@ -554,6 +592,7 @@ function owLTSnapshot(array $row): array
         'online_days'  => (float)($row['online_sec'] ?? 0) / ($oh * 3600),
         'task_days'    => (float)($row['task_days'] ?? 0),
         'bonus_days'   => (float)($row['bonus_days'] ?? 0),
+        'decay_days'   => (float)($row['decay_days'] ?? 0),
         'total_days'   => round($total, 4),
         'online_hours' => $oh,
         'pct'          => (int)max(0, min(100, round(($total - $floor) * 100))),
@@ -593,7 +632,7 @@ function owLTSave(int $uid, array $row, array $t): void
     DB::run('UPDATE plugin_level_trust SET level=?, login_streak=?, login_days=?,'
         . ' day=?, today=?, settled=?, frozen_day=?, protect_used=?, protect_mon=?,'
         . ' patch_used=?, patch_week=?, online_sec=?, task_days=?, bonus_days=?, hb_at=?,'
-        . ' updated_at=? WHERE user_id=?', [
+        . ' decay_days=?, decay_base=?, updated_at=? WHERE user_id=?', [
         (int)$row['level'],
         (int)$row['login_streak'], (int)$row['login_days'],
         (string)$row['day'], json_encode($t, JSON_UNESCAPED_UNICODE), (int)$row['settled'],
@@ -601,6 +640,7 @@ function owLTSave(int $uid, array $row, array $t): void
         (int)$row['patch_used'], (string)$row['patch_week'],
         (int)($row['online_sec'] ?? 0), (float)($row['task_days'] ?? 0),
         (float)($row['bonus_days'] ?? 0), (int)($row['hb_at'] ?? 0),
+        (float)($row['decay_days'] ?? 0), (int)($row['decay_base'] ?? 0),
         time(), $uid,
     ]);
 }
@@ -1084,6 +1124,86 @@ Plugin::cron('purge_active_keys', 86400, function () {
     owLTPurgeActiveKeys(40);
 }, '清理 40 天前的「当日活跃」去重键（活跃趋势统计用）');
 
+// 每天一次：荣誉等级长期不登录消退（v3.1）。参数在后台「长期不登录消退」一栏。
+Plugin::cron('decay_idle', 86400, function () {
+    return owLTDecayRun();
+}, '长期不登录的荣誉等级消退（起始等级/最低等级/不登录天数均可在后台配置）');
+
+/**
+ * 长期不登录消退（v3.1，每日跑一次）。
+ *
+ * 规则（站方定案）：每满 decay_idle_days（默认 30）天不登录退 1 级；
+ * 只对 ≥ decay_from（默认 60）的用户生效；最低退到 decay_floor（默认 46）为止；
+ * **不退不补** —— 扣掉的「天」永久留着，用户回来靠自己攒在线/任务天涨回去。
+ *
+ * ⚠️ 为什么能真降下来：等级重算走 `max(旧等级, 公式值)`（只升不降），而消退天是
+ *    公式里的**负项**，公式值本身就降了。所以这里显式把 level 写成公式值
+ *    （**不能**走 owLTRecalc —— 那里有 max 保护会把它顶回去），且只往下压不往上抬。
+ *
+ * decay_base = 「已经计入消退的不登录天数」，有两个作用：
+ *   ① 让任务可重复执行：后台「立即执行」会 force 跑全部任务，多跑几次不该多退；
+ *   ② 抵消「每满 N 天」的取整，将来把 N 从 30 改成 15 也不会把历史天数一次性折成级别。
+ * 用户重新活跃后（不登录天数 < 基线）基线归零，下一次长期不来从头开始算。
+ *
+ * @return string 写进计划任务日志的一行摘要
+ */
+function owLTDecayRun(): string
+{
+    owLTBoot();
+    [$idleDays, $from, $floor] = owLTDecayCfg();
+    if ($idleDays < 1) return '消退已关闭（「长期不登录天数」为 0）';
+
+    $today = date('Y-m-d');
+    $rows  = DB::all('SELECT * FROM plugin_level_trust WHERE level>=?', [$from]);
+    $checked = count($rows);
+    $hit = 0; $dropped = 0;
+
+    foreach ($rows as $row) {
+        $uid  = (int)($row['user_id'] ?? 0);
+        $last = (string)($row['day'] ?? '');
+        if ($uid <= 0 || $last === '') continue;      // 从没活跃过 → 没有「多久没来」可言
+        $ts = strtotime($last);
+        if ($ts === false) continue;
+
+        $idle = (int)floor((strtotime($today) - $ts) / 86400);
+        if ($idle < 0) $idle = 0;
+
+        // $stored 是库里的旧基线：必须留一份再可能被归零，否则「要不要落库」判断不出来
+        // （下面的 $steps<=0 分支就是靠它对比的，写完再比就永远相等 → 归零丢在内存里）。
+        $stored = (int)($row['decay_base'] ?? 0);
+        $base = $stored;
+        if ($idle < $base) $base = 0;                 // 重新活跃过 → 新一轮从头算
+
+        $steps = (int)floor(($idle - $base) / $idleDays);
+        if ($steps <= 0) {
+            // 只有「基线被归零」这一步需要落库，不然用户回来后基线永远留在高位，
+            // 下一轮他要多等一整个周期才会被消退。
+            if ($base !== $stored) {
+                $row['decay_base'] = $base;
+                owLTSave($uid, $row, owLTDecode((string)$row['today']));
+            }
+            continue;
+        }
+        // 每步退 1 级，所以最多只退到 floor —— 多退的步数不算数，
+        // 否则「消退天」会虚涨：用户回来要攒 5 天才能回到只差 1 级的水平。
+        $maxSteps = (int)$row['level'] - $floor;
+        if ($maxSteps <= 0) continue;                 // 已经在最低等级上
+        if ($steps > $maxSteps) $steps = $maxSteps;
+
+        $before = (int)$row['level'];
+        $row['decay_days'] = (float)($row['decay_days'] ?? 0) + $steps;
+        $row['decay_base'] = $base + $steps * (int)$idleDays;
+        $calc = owLTLevelFromTotal(owLTTotalDays($row));        // 公式值（已含 −消退天）
+        $row['level'] = min($before, max($floor, $calc));       // 只降不升，且不低于 floor
+        owLTSave($uid, $row, owLTDecode((string)$row['today']));
+
+        $hit++;
+        if ((int)$row['level'] < $before) $dropped++;
+    }
+    return '检查 ' . $checked . ' 人（≥ Lv.' . $from . '），消退 ' . $hit . ' 人，'
+        . '其中 ' . $dropped . ' 人等级下降；规则：每满 ' . owLTNum($idleDays) . ' 天不登录退 1 级，最低 Lv.' . $floor;
+}
+
 /* ============================ 对外钩子（供其它插件读写等级） ============================ */
 
 /**
@@ -1252,6 +1372,9 @@ Plugin::page('level', '等级', function (array $actor, $user = null) {
             . ($snap['bonus_days'] > 0.0001
                 ? '<span>管理员设定 <b>' . owLTNum((float)$snap['bonus_days']) . '</b> 天</span>'
                 : '')
+            . ($snap['decay_days'] > 0.0001
+                ? '<span class="ow-lv-decay">长期未登录消退 <b>−' . owLTNum((float)$snap['decay_days']) . '</b> 天</span>'
+                : '')
             . '<span>连续登录 <b>' . (int)$row['login_streak'] . '</b> 天</span>'
             . '<span>距 Lv.' . (int)$snap['next_level'] . ' 还需 <b>' . owLTNum((float)$snap['gap_days']) . '</b> 天</span>'
             . '</div>'
@@ -1317,8 +1440,9 @@ Plugin::page('level', '等级', function (array $actor, $user = null) {
     }
 
     /* ---------- 等级公式 ---------- */
+    [$decayIdle, $decayFrom, $decayFloor] = owLTDecayCfg();
     $h .= '<div class="ow-card"><h3 class="ow-lv-h3">等级怎么算</h3>'
-        . '<div class="ow-lv-formula">L = 1 + ⌊ 在线天 + 任务天 + 设定天 ⌋</div>'
+        . '<div class="ow-lv-formula">L = 1 + ⌊ 在线天 + 任务天 + 设定天 − 消退天 ⌋</div>'
         . '<ul class="ow-lv-ul">'
         . '<li><b>在线天</b>：累计在线每满 <b>' . owLTNum(owLTOnlineHours()) . ' 小时</b> = 1 天 = 1 级。'
         . '页面开着就算在线；离开后再回来不会补记（单次最多记 2 分钟）</li>'
@@ -1326,7 +1450,12 @@ Plugin::page('level', '等级', function (array $actor, $user = null) {
         . '（当前：' . owLTRewardText() . '），每个任务每天只计一次</li>'
         . '<li><b>设定天</b>：仅在管理员直接设置等级时出现，用来补齐「等级」与「天」的差额，'
         . '普通用户不会有这一项</li>'
-        . '<li>三项相加后向下取整 +1 就是等级；因为取整，实际是「攒够一天跳一级」的节奏</li>'
+        . ($decayIdle >= 1
+            ? '<li><b>消退天</b>：达到 Lv.' . $decayFrom . ' 以后，连续 <b>' . owLTNum($decayIdle)
+              . ' 天</b>不登录退 1 级，最多退到 <b>Lv.' . $decayFloor . '</b> 为止。'
+              . '消退掉的进度不会自动还回来，回来继续攒在线与任务天数即可涨回去</li>'
+            : '<li>长期不登录消退当前<strong>未启用</strong>（后台「长期不登录天数」为 0）</li>')
+        . '<li>三项相加减去消退天，向下取整再加 1 就是等级；因为取整，实际是「攒够一天跳一级」的节奏</li>'
         . '<li>未完成任务不降级，已攒下的在线时长与任务奖励都不会被收回</li>'
         . '</ul>'
         . '<div class="ow-lv-tip">有效发言需同时满足：内容 ≥ ' . owLTInt('msg_min_len') . ' 字、非纯表情/纯图片/纯链接、'
@@ -1597,6 +1726,20 @@ Plugin::route('plugin_level_trust_op', function (array $ctx) use ($ltGuard) {
                     : '')
                 . '）']);
 
+        case 'clear_decay':  // v3.1：清除长期不登录消退（误消退时的运维手段）
+            // 退回已扣的「天」，并把基线贴到当前不登录天数 —— 等于「从现在起重新计时」：
+            // 不这样做的话下一次定时任务会立刻按老的不登录天数把消退重新扣一遍。
+            $row['decay_days'] = 0.0;
+            $last = (string)($row['day'] ?? '');
+            $idle = $last === '' ? 0 : (int)floor((strtotime(date('Y-m-d')) - (int)strtotime($last)) / 86400);
+            $row['decay_base'] = max(0, $idle);
+            $before = (int)$row['level'];
+            owLTRecalc($row);                 // 这里可以走 recalc：清除是「往上涨」
+            owLTSave($uid, $row, $t);
+            Api::json(['ok' => true, 'msg' => $before === (int)$row['level']
+                ? '已清除消退（等级不变，仍 Lv.' . (int)$row['level'] . '）'
+                : '已清除消退，等级回到 Lv.' . (int)$row['level']]);
+
         case 'gate':        // 限制总开关
             $v = (string)($ctx['post']['v'] ?? '1') === '1' ? '1' : '0';
             owLTSetCfg('gating', $v);
@@ -1616,10 +1759,11 @@ Plugin::adminPage('level-trust', '等级信任', function () {
             . '</div>';
     };
     $head = '<h2>等级信任</h2>'
-        . '<p class="ow-admin-desc">等级 L = 1 + ⌊ 在线天 + 任务天 + 设定天 ⌋（v3.0）：'
+        . '<p class="ow-admin-desc">等级 L = 1 + ⌊ 在线天 + 任务天 + 设定天 − 消退天 ⌋（v3.1）：'
         . '累计在线每满 <b>' . owLTNum(owLTOnlineHours()) . '</b> 小时算 1 天，完成每日任务按后台设定的奖励加「天」，'
         . '1 天 = 1 级。当前任务奖励：<b>' . Sec::e(owLTRewardText()) . '</b>。'
         . '各阶段保底任务统一为「登录 + 群发言 N 条」，每个任务各自发奖、每天各一次。'
+        . '荣誉等级（Lv.' . owLTInt('decay_from') . ' 起）长期不登录会自动消退，最低退到 Lv.' . owLTDecayCfg()[2] . '。'
         . '以下参数全部可调，改完点最下方「保存全部参数」。</p>';
 
     $head .= '<div class="ow-card" id="owLTStats"></div>'
@@ -1677,6 +1821,17 @@ Plugin::adminPage('level-trust', '等级信任', function () {
         . '任务奖励填 0 = 该任务不发奖励（只统计进度）；两个都填 1 就是「每天做完任务升 2 级」。'
         . '在线时长按「页面开着」累计，单次最多计 2 分钟（离开后再回来不会补记）。'
         . 'v2.0 的「每日进度倍率」已停用：只在存量数据迁移时读一次，不再出现在这里。</p>';
+
+    $head .= '<h4 class="ow-lt-cap">长期不登录消退（荣誉等级）</h4><div class="ow-form-row">'
+        . $f('decay_idle_days', '长期不登录天数', '每满这么多天不登录退 1 级；填 0 = 关闭消退')
+        . $f('decay_from', '从该等级起消退（Lv）', '低于此等级的用户不受影响；默认 60')
+        . $f('decay_floor', '最低退到（Lv）', '最多退到该等级为止；默认 46（荣誉阶段起点）')
+        . '</div>'
+        . '<p style="font-size:12px;color:var(--ow-text-sub);margin:0 0 14px">'
+        . '由每日计划任务「长期不登录的荣誉等级消退」执行（后台「计划任务」页可点「立即执行」手动跑一次）。'
+        . '消退掉的进度**不会自动还回来**：用户回来继续攒在线与任务天数即可涨回去。'
+        . '「最低退到」会被夹到低于「从该等级起消退」，配置写反时不会把用户一次压到更低的级别。'
+        . '单个用户被误消退时，可在下方「用户查询」里点「清除消退」还回去。</p>';
 
     $head .= '<h4 class="ow-lt-cap">有效发言判定</h4><div class="ow-form-row">'
         . $f('msg_min_len', '内容最少字数')
