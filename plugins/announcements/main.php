@@ -4,9 +4,14 @@
  *
  * 能力：
  *   - 每个群聊可由「群主 / 超级管理员」发布公告：内容、类型（bar=聊天室上方公告条 /
- *     popup=进群弹窗通知）、是否置顶（置顶优先展示）。
+ *     popup=进群弹窗通知）、是否置顶（置顶优先展示）、**公告条底色（v1.2.0，四档预设）**。
  *   - 成员点击聊天室上方公告条 → 进入群公告页面（群名称 + 全部公告卡片列表）。
  *   - 后台「群公告」管理页：查看 / 删除全部群公告。
+ *
+ * v1.2.0：公告条底色四档预设（blue / green / orange / red）。
+ *   颜色挂在**每条公告**上（新列 bar_color），不是按群或全站设一次 ——
+ *   同一群里重要公告标红、日常公告用默认色。空串 = 空库兼容：既有公告保持原来的主题灰。
+ *   四档取站内语义色（与 ow-tag 同源），每档都配好了浅 / 深两套底字，实测对比度 ≥5:1。
  *
  * v1.1.2：**彻底删除「系统公告 / 全站公告」（room_id=0）这一整套语义**。
  *   历史包袱是：room_id=0 曾被当作「对所有群生效」的全站公告标记，
@@ -40,11 +45,22 @@ $GLOBALS['oa_boot'] = function () {
         type VARCHAR(20) NOT NULL DEFAULT 'bar',
         pinned INTEGER NOT NULL DEFAULT 0,
         created_at {$ts})");
+    // v1.2.0：公告条底色，四档预设之一（blue / green / orange / red），空串 = 跟随主题的默认灰。
+    // 用核心的幂等加列：已存在直接跳过，SQLite 与 MySQL 都走同一条路。
+    DB::ensureColumn('plugin_announcements', 'bar_color', 'varchar(10)', "''");
     // v1.1.2 一次性清理：旧版遗留的 room_id=0 全站公告（当时由旧 announcements 表迁移而来）。
     // 表已是空时这条 DELETE 影响 0 行，是幂等的安全操作。
     DB::run('DELETE FROM plugin_announcements WHERE room_id<=0');
 };
 $GLOBALS['oa_boot']();
+
+/**
+ * 公告条底色白名单（v1.2.0）。
+ * ⚠️ 只认这四档：这个值最终会进 class 名（oa-bar-xxx），
+ *    虽然前端还有一道白名单，服务端也绝不能把客户端传来的字符串原样存库。
+ *    空串不在这里 —— 它表示「跟随主题」，是既有公告的默认值。
+ */
+$oaBarColors = ['blue', 'green', 'orange', 'red'];
 
 /** 群主 / 超级管理员判定（发布与删除的统一权限闸） */
 $oaCanManage = function (array $ctx, int $roomId): bool {
@@ -105,13 +121,13 @@ Plugin::route('plugin_announcements_list', function (array $ctx) {
     $roomId = (int)($ctx['post']['room_id'] ?? 0);
     if ($roomId <= 0) Api::json(['ok' => false, 'msg' => '非法群聊']);
     $rows = DB::all(
-        'SELECT id, room_id, user_id, nickname, content, type, pinned, created_at FROM plugin_announcements
+        'SELECT id, room_id, user_id, nickname, content, type, pinned, bar_color, created_at FROM plugin_announcements
          WHERE room_id=? ORDER BY pinned DESC, id DESC LIMIT 100', [$roomId]);
     Api::json(['ok' => true, 'data' => $rows]);
 });
 
 /* ---------- 发布（群主 / 超级管理员；敏感操作） ---------- */
-Plugin::route('plugin_announcements_add', function (array $ctx) use ($oaCanManage) {
+Plugin::route('plugin_announcements_add', function (array $ctx) use ($oaCanManage, $oaBarColors) {
     $roomId = (int)($ctx['post']['room_id'] ?? 0);
     // v1.1.2：room_id<=0 一律拒绝（room_id=0 是私聊虚拟空间，不是「全站公告」）
     if ($roomId <= 0) Api::json(['ok' => false, 'msg' => '非法群聊'], 400);
@@ -120,6 +136,10 @@ Plugin::route('plugin_announcements_add', function (array $ctx) use ($oaCanManag
     Chat::filterText($content, 'announcement', $ctx['actor']);   // 敏感词过滤（text.filter 钩子）
     if ($content === '') Api::json(['ok' => false, 'msg' => '公告内容不能为空']);
     $type = ($ctx['post']['type'] ?? '') === 'popup' ? 'popup' : 'bar';
+    // v1.2.0：底色只对「聊天室上方公告条」有意义（弹窗通知不画条），且必须在白名单内 ——
+    // 这个值会进前端的 class 名，服务端不认的一律丢弃，回落「跟随主题」。
+    $color = $type === 'bar' ? (string)($ctx['post']['bar_color'] ?? '') : '';
+    if (!in_array($color, $oaBarColors, true)) $color = '';
     DB::insert('plugin_announcements', [
         'room_id' => $roomId,
         'user_id' => (int)($ctx['actor']['id'] ?? 0),
@@ -127,6 +147,7 @@ Plugin::route('plugin_announcements_add', function (array $ctx) use ($oaCanManag
         'content' => mb_substr($content, 0, 600),
         'type' => $type,
         'pinned' => !empty($ctx['post']['pinned']) ? 1 : 0,
+        'bar_color' => $color,
         'created_at' => time(),
     ]);
     Sec::log('group_ann_add', $ctx['actor']['nickname'], ['room' => $roomId, 'type' => $type]);

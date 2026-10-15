@@ -56,6 +56,78 @@
     padding: 0 2px;
 }
 
+/* ---------- 公告条底色四档预设（v1.2.0） ----------
+   取值表。**四个色相与站内语义色同源**，逐字对齐核心 .ow-tag-* 那几档已经调过对比度的配底配字：
+     蓝 = 主色系（admin 标签 / 公告徽章本来就是蓝）
+     绿 = .ow-tag-green（成功）、橙 = .ow-tag-vip（会员）、红 = .ow-tag-red（危险）
+   为什么绿/橙/红要在这里写死值：核心只把这几个色相用在 .ow-tag-* 上，没抽成 token；
+   蓝那一档有 token（--ow-blue-light / --ow-primary-dark）且**深色下会自动翻转**，所以直接引用。
+   深色四档 = 核心 tag 的深色档，实测对比度 7.1 / 8.7 / 8.2 / 7.4:1，浅色 6.9 / 5.4 / 5.4 / 5.4:1，
+   全部 ≥4.5:1（AA）。文字沿用 .oa-bar-text 的 --ow-text，在四档底上分别为 15:1 / 15:1 / 14:1 / 14:1。 */
+:root {
+    --oa-bg-blue: var(--ow-blue-light);
+    --oa-fg-blue: var(--ow-primary-dark);
+    --oa-bg-green: #f6ffed;  --oa-fg-green: #237804;
+    --oa-bg-orange: #fff7e6; --oa-fg-orange: #A05000;
+    --oa-bg-red: #FFF1F0;    --oa-fg-red: #C41D1F;
+}
+[data-theme="dark"] {
+    --oa-bg-green: #17301A;  --oa-fg-green: #7BE07B;
+    --oa-bg-orange: #3A2A18; --oa-fg-orange: #FFB27A;
+    --oa-bg-red: #3A2020;    --oa-fg-red: #FF9C9A;
+}
+/* 每档把「底色 / 强调色」收进两个局部变量，下面的规则就能只写一遍 */
+.oa-bar-blue   { --oa-bg: var(--oa-bg-blue);   --oa-fg: var(--oa-fg-blue); }
+.oa-bar-green  { --oa-bg: var(--oa-bg-green);  --oa-fg: var(--oa-fg-green); }
+.oa-bar-orange { --oa-bg: var(--oa-bg-orange); --oa-fg: var(--oa-fg-orange); }
+.oa-bar-red    { --oa-bg: var(--oa-bg-red);    --oa-fg: var(--oa-fg-red); }
+.oa-bar-blue, .oa-bar-green, .oa-bar-orange, .oa-bar-red {
+    background-color: var(--oa-bg);
+    /* ⚠️ 必须显式抹掉底色渐变：基础规则里是 background-image 的 linear-gradient，
+       只改 background-color 的话渐变会盖在上面，看着还是原来的灰条 */
+    background-image: none;
+}
+/* hover：彩色条不能再走「换成另一套渐变」那条（会瞬间变回灰），改成整条压暗一点，
+   深浅两套下都是有效反馈 */
+.oa-bar-blue:hover, .oa-bar-green:hover, .oa-bar-orange:hover, .oa-bar-red:hover {
+    background-image: none;
+    filter: brightness(.96);
+}
+/* 「公告 / 置顶」徽章改成**同档反色**（浅底深字 ↔ 深底浅字）：
+   原来的蓝徽章压在蓝底上等于隐形、压在绿/橙/红底上又串色。
+   反色是同一对颜色的互换，两套主题下对比度天然一致（蓝档 7.1:1，其余同前表）。 */
+.oa-bar-blue .oa-bar-pin, .oa-bar-green .oa-bar-pin,
+.oa-bar-orange .oa-bar-pin, .oa-bar-red .oa-bar-pin {
+    background: var(--oa-fg);
+    color: var(--oa-bg);
+    border-color: transparent;
+}
+/* › 箭头同档取强调色 */
+.oa-bar-blue .oa-bar-more, .oa-bar-green .oa-bar-more,
+.oa-bar-orange .oa-bar-more, .oa-bar-red .oa-bar-more { color: var(--oa-fg); }
+
+/* ---------- 发布弹窗里的底色选择（v1.2.0） ---------- */
+.oa-picks { display: flex; display: -webkit-flex; flex-wrap: wrap; gap: 8px; }
+.oa-pick {
+    padding: 2px 14px;
+    font: inherit;                 /* <button> 不继承字体，必须显式声明 */
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.7;
+    border-radius: 4px;
+    /* 2px 透明边先占住位置：选中时只换颜色，色块不会跳一下 */
+    border: 2px solid transparent;
+    cursor: pointer;
+}
+.oa-pick-blue   { background: var(--oa-bg-blue);   color: var(--oa-fg-blue); }
+.oa-pick-green  { background: var(--oa-bg-green);  color: var(--oa-fg-green); }
+.oa-pick-orange { background: var(--oa-bg-orange); color: var(--oa-fg-orange); }
+.oa-pick-red    { background: var(--oa-bg-red);    color: var(--oa-fg-red); }
+/* 选中态就是一圈同色描边（currentColor = 该档的强调色） */
+.oa-pick.is-on { border-color: currentColor; }
+.oa-pick:hover { filter: brightness(.96); }
+.oa-pick:focus { outline: none; border-color: currentColor; }
+
 /* ---------- 置顶标签（蓝） ---------- */
 .oa-pin {
     display: inline-block;

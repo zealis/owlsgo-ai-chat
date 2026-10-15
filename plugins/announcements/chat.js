@@ -8,6 +8,13 @@
 
     var current = { roomId: 0, roomName: '', list: [], isAdmin: false, isOwner: false };
 
+    /* 公告条底色（v1.2.0）：四档预设，空串 = 跟随主题的默认灰。
+       ⚠️ 前端也过一道白名单：这个值是从库里读出来的，会被拼进 class 名。
+          服务端存的时候已经筛过一次，这里再筛是因为万一库里有历史脏数据
+          （手工改库、或将来某次迁移写坏），也不能让它变成一个任意 class。 */
+    var BAR_COLORS = { blue: 1, green: 1, orange: 1, red: 1 };
+    function colorCls(c) { return BAR_COLORS[c] ? ' oa-bar-' + c : ''; }
+
     function fmtTime(ts) {
         var dt = new Date(ts * 1000);
         function p(n) { return (n < 10 ? '0' : '') + n; }
@@ -28,9 +35,11 @@
         if (!bar) {
             bar = d.createElement('div');
             bar.id = 'oaBar';
-            bar.className = 'oa-bar';
             main.insertBefore(bar, d.getElementById('owMessages'));
         }
+        // 每次重画都重写 className：公告条元素是复用的，切到另一条公告（底色不同）时
+        // 只改 innerHTML 会把上一条的底色留在条上。
+        bar.className = 'oa-bar' + colorCls(top.bar_color);
         bar.innerHTML = '<span class="oa-bar-pin' + (top.pinned === 1 ? ' is-pin' : '') + '">' + (top.pinned === 1 ? '置顶' : '公告') + '</span>'
             + '<span class="oa-bar-text">' + esc(top.content) + '</span>'
             + '<span class="oa-bar-more" title="群公告">›</span>';
@@ -136,7 +145,7 @@
         if (addBtn) addBtn.onclick = function () { showPublish(); };
     }
 
-    /** 发布 / 管理弹窗（群主）：内容、类型、置顶 */
+    /** 发布 / 管理弹窗（群主）：内容、类型、底色、置顶 */
     function showPublish() {
         w.OwChat.openModal(
             '<h3>发布群公告</h3>'
@@ -144,18 +153,43 @@
             + '<textarea class="ow-input" id="oaContent" rows="4" maxlength="600" placeholder="最多 600 字"></textarea></div>'
             + '<div class="ow-form-item"><label>展示类型</label>'
             + '<select class="ow-input" id="oaType"><option value="bar">聊天室上方公告条</option><option value="popup">进群弹窗通知</option></select></div>'
+            + '<div class="ow-form-item" id="oaColorRow"><label>公告条底色</label>'
+            + '<div class="oa-picks" id="oaPicks">'
+            +   '<button type="button" class="oa-pick oa-pick-blue is-on" data-c="blue">蓝</button>'
+            +   '<button type="button" class="oa-pick oa-pick-green" data-c="green">绿</button>'
+            +   '<button type="button" class="oa-pick oa-pick-orange" data-c="orange">橙</button>'
+            +   '<button type="button" class="oa-pick oa-pick-red" data-c="red">红</button>'
+            + '</div>'
+            // ⓘ 约定（PLUGIN.md / v1.3.30）：说明写成 .ow-form-item 内的无 class、≤12.5px 的 <p>，
+            // 核心的 OwTip.scan 会把它收进 label 右侧的气泡里。可见文字只留控件本身。
+            + '<p style="font-size:12px">只对「聊天室上方公告条」生效，进群弹窗通知不画条、与底色无关。'
+            + '四档都按站内语义色配好了文字色，深浅两种主题下都清楚。</p></div>'
             + '<div class="ow-form-item"><label class="oa-check"><input type="checkbox" id="oaPinned"> 置顶该公告（在公告条与列表优先展示）</label></div>'
             + '<div class="ow-modal-actions">'
             + '<button class="ow-btn ow-btn-ghost" onclick="OwChat.closeModal()">取消</button>'
             + '<button class="ow-btn ow-btn-primary" id="oaPubBtn">发布</button></div>'
         );
+        // 底色只在「公告条」这一档下有意义 —— 切到弹窗通知时整行收起，
+        // 免得让人以为弹窗也能染成红的。
+        var typeSel = d.getElementById('oaType'), colorRow = d.getElementById('oaColorRow');
+        typeSel.onchange = function () { colorRow.style.display = typeSel.value === 'bar' ? '' : 'none'; };
+        var picks = d.getElementById('oaPicks').getElementsByTagName('button');
+        for (var pi = 0; pi < picks.length; pi++) {
+            picks[pi].onclick = function () {
+                for (var pj = 0; pj < picks.length; pj++) picks[pj].className = picks[pj].className.replace(' is-on', '');
+                this.className += ' is-on';
+            };
+        }
         d.getElementById('oaPubBtn').onclick = function () {
             var content = d.getElementById('oaContent').value.replace(/^\s+|\s+$/g, '');
             if (!content) { toast('公告内容不能为空'); return; }
+            var type = typeSel.value;
+            var on = d.getElementById('oaPicks').querySelector('.is-on');
             OwApi.secure('plugin_announcements_add', {
-                room_id: current.roomId, content: content,
-                type: d.getElementById('oaType').value,
-                pinned: d.getElementById('oaPinned').checked ? 1 : 0
+                room_id: current.roomId, content: content, type: type,
+                pinned: d.getElementById('oaPinned').checked ? 1 : 0,
+                // 弹窗通知不传底色；服务端还会再筛一次白名单
+                bar_color: type === 'bar' && on ? on.getAttribute('data-c') : ''
             }, function (r) {
                 toast(r.msg);
                 if (r.ok) { w.OwChat.closeModal(); load(); }
