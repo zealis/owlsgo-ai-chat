@@ -47,7 +47,9 @@
                 toast(t);
             };
             if (data.provider === 'apihz') {
-                OwApi.post('plugin_gif_stickers_search', { words: '', page: 1 }, function (r) {
+                // nocache：自测必须打真接口 —— 命中缓存时「代理可用」是假的（上游挂了也照样秒回）。
+                // 这个开关只对管理员生效，普通访客传了也没用（见 main.php 里的 $noCache）。
+                OwApi.post('plugin_gif_stickers_search', { words: '', page: 1, nocache: 1 }, function (r) {
                     say(!!r.ok, r.ok ? ('代理可用，取到 ' + ((r.data || []).length) + ' 张') : (r.msg || '测试失败'));
                 });
                 return;

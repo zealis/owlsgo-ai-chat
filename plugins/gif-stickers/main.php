@@ -28,11 +28,23 @@
  * 资源：样式表与脚本走 Plugin::asset 登记，由核心的 ?action=assets 合并输出
  * 路由：plugin_gif_stickers_conf     前端首次打开面板时取的公共配置
  *       plugin_gif_stickers_save    管理员保存配置（敏感，需一次性票据）
- *       plugin_gif_stickers_search  apihz 服务端代理搜索
+ *       plugin_gif_stickers_search  apihz 服务端代理搜索（v1.2.0 起带缓存）
+ *
+ * v1.2.0：apihz 那条路加缓存。API 盒子按天限额（免费档 150 次/天），
+ *   热门与搜索走的是同一个代理路由、同样吃限额，所以两样都按「线路 + 关键词 + 页码 + 条数」
+ *   整包缓存，天数由后台「缓存天数」设（0 = 关闭，默认 7，上限 90）。
+ *   只存接口返回的地址与分页信息，不落图片文件（与收藏同一口径）。
  */
 declare(strict_types=1);
 
 DB::run("CREATE TABLE IF NOT EXISTS plugin_gif_stickers_config (k VARCHAR(64) PRIMARY KEY, v TEXT)");
+/* v1.2.0：apihz 返回的缓存表。
+   API 盒子按天限额（免费档 150 次/天），热门与搜索都走同一个代理路由，
+   所以按「线路 + 关键词 + 页码 + 条数」把**接口原始返回**整包存下来，期限内不再重复请求。
+   ⚠️ 只存地址与分页信息，不落任何图片文件 —— 与收藏同一口径：存的是「别重复请求」，
+      不是「把图搬回家」；图仍在他们图床上，撤图/换地址这张贴纸就打开不了（提示文案早已写明）。
+   k 是 md5（32 字符），expire_at 用 BIGINT 存 unix 时间戳，两种驱动都能放。 */
+DB::run("CREATE TABLE IF NOT EXISTS plugin_gif_stickers_cache (k VARCHAR(64) PRIMARY KEY, v TEXT, expire_at BIGINT NOT NULL)");
 
 /** 配置默认值。键名即配置表里的 k，也是保存接口的字段名。 */
 function owGSConf(): array
@@ -47,6 +59,8 @@ function owGSConf(): array
         'klipy_per_page' => '24', 'klipy_ads' => '1', 'klipy_powered' => '0',
         // API 盒子：服务端代理
         'apihz_line' => 'cn', 'apihz_id' => '', 'apihz_key' => '', 'apihz_limit' => '20',
+        // v1.2.0：接口限额 150 次/天，所以默认开 7 天缓存；0 = 关闭（每次真调）
+        'apihz_cache_days' => '7',
     ];
     try {
         foreach (DB::all('SELECT k, v FROM plugin_gif_stickers_config') as $r) {
@@ -292,6 +306,12 @@ Plugin::adminPage('gif-stickers', '表情包', function () {
         . '<input class="ow-input" type="number" min="1" max="20" step="1" data-owgs-field="apihz_limit"'
         . ' value="' . max(1, min(20, (int)$c['apihz_limit'])) . '">'
         . '<p style="font-size:12px;color:var(--ow-text-sub)">接口上限 20 条；关键词最长 10 个汉字。</p></div>';
+    $h .= '<div class="ow-form-item" style="min-width:140px"><label>缓存天数</label>'
+        . '<input class="ow-input" type="number" min="0" max="90" step="1" data-owgs-field="apihz_cache_days"'
+        . ' value="' . max(0, min(90, (int)$c['apihz_cache_days'])) . '">'
+        . '<p style="font-size:12px;color:var(--ow-text-sub)">API 盒子按天限额（免费档 150 次/天），'
+        . '所以同一关键词 + 同一页在期限内只真调一次，热门与搜索结果都算；界面照常点，命中缓存时秒出。'
+        . '代价是图源那边新上的内容要等缓存过期才看得到。填 0 = 关闭缓存，每次都真调（会吃满限额）。</p></div>';
     $h .= '</div>';
 
     $h .= '<div class="ow-form-row" style="margin-top:10px">'
@@ -322,6 +342,8 @@ Plugin::route('plugin_gif_stickers_save', function (array $ctx) {
         'apihz_id' => mb_substr(preg_replace('/[^0-9]/', '', (string)($post['apihz_id'] ?? '')), 0, 20),
         'apihz_key' => mb_substr(trim((string)($post['apihz_key'] ?? '')), 0, 100),
         'apihz_limit' => (string)max(1, min(20, (int)($post['apihz_limit'] ?? 20))),
+        // v1.2.0：缓存天数。0 = 关闭；上限 90 天（再长也没有意义，接口内容自己会轮换）
+        'apihz_cache_days' => (string)max(0, min(90, (int)($post['apihz_cache_days'] ?? 7))),
     ];
     if ($kv['klipy_locale'] === '') $kv['klipy_locale'] = 'us';
     // 选了源却没填密钥 → 拒绝保存。否则前端会出现「图标在、点开永远搜不到」的静默故障
@@ -354,6 +376,30 @@ Plugin::route('plugin_gif_stickers_search', function (array $ctx) {
     $words = mb_substr(trim((string)($ctx['post']['words'] ?? '')), 0, 10);   // 接口自身限 10 个汉字
     $page = max(1, min(50, (int)($ctx['post']['page'] ?? 1)));
     $limit = max(1, min(20, (int)$c['apihz_limit']));
+    /* ---------- v1.2.0：查缓存 ----------
+       ⚠️ 限流仍然排在上面、缓存命中也不放宽 —— 它挡的是「拿本站密钥刷第三方接口」
+          （每个新关键词都是一次真调用，缓存挡不住这种刷法）。
+       键里带上线路 / 页码 / 条数：管理员改了「每次返回」或换了线路，旧条目自然不会命中，
+       不需要额外的失效逻辑。 */
+    $cacheDays = max(0, min(90, (int)$c['apihz_cache_days']));
+    // 「测试当前源」必须打真接口 —— 否则命中缓存时看着「代理可用」，其实上游早挂了。
+    // 只认管理员：不这么限的话，任何登录用户都能用 nocache=1 把日限额刷光。
+    $noCache = $cacheDays === 0
+        || (!empty($ctx['post']['nocache']) && (string)($actor['role'] ?? '') === 'admin');
+    $ck = md5((string)$c['apihz_line'] . '|' . $words . '|' . $page . '|' . $limit);
+    if (!$noCache) {
+        $row = DB::one('SELECT v, expire_at FROM plugin_gif_stickers_cache WHERE k=?', [$ck]);
+        if ($row && (int)$row['expire_at'] > time()) {           // 过期行当未命中（由下面写入时顺手清）
+            $hit = json_decode((string)$row['v'], true);
+            if (is_array($hit) && isset($hit['data']) && is_array($hit['data'])) {
+                Api::json([
+                    'ok' => true, 'data' => $hit['data'],
+                    'page' => (int)($hit['page'] ?? $page), 'maxpage' => (int)($hit['maxpage'] ?? 1),
+                    'count' => (int)($hit['count'] ?? count($hit['data'])), 'cached' => 1,
+                ]);
+            }
+        }
+    }
     $url = owGSApihzHost((string)$c['apihz_line']) . '/api/img/apihzbqb.php'
         . '?id=' . rawurlencode((string)$c['apihz_id'])
         . '&key=' . rawurlencode((string)$c['apihz_key'])
@@ -377,12 +423,29 @@ Plugin::route('plugin_gif_stickers_search', function (array $ctx) {
         // 只收图片直链：这一串会被前端当 <img src> 用，不能是 javascript: 之类的东西
         if ($u !== '' && preg_match('#^https?://#i', $u)) $list[] = $u;
     }
-    Api::json([
-        'ok' => true, 'data' => $list,
+    $payload = [
+        'data' => $list,
         'page' => (int)($j['page'] ?? $page),
         'maxpage' => (int)($j['maxpage'] ?? 1),
         'count' => (int)($j['count'] ?? count($list)),
-    ]);
+    ];
+    // v1.2.0：真调成功才写缓存（接口报错/返回异常都不落，免得把失败记成结论）
+    if (!$noCache) {
+        DB::upsert('plugin_gif_stickers_cache', [
+            'k' => $ck,
+            'v' => (string)json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'expire_at' => time() + $cacheDays * 86400,
+        ], ['k']);
+        // 顺手清理：过期行每次写入删一遍；再兜一个 500 行上限 —— 搜索词是无限的，
+        // 不封顶的话光靠过期清不干净（7 天里能存下成千上万个词）。
+        // LIMIT 只能拼（是算出来的整数，不是用户输入）；子查询再套一层是 MySQL 的硬要求。
+        DB::run('DELETE FROM plugin_gif_stickers_cache WHERE expire_at < ?', [time()]);
+        $n = (int)DB::val('SELECT COUNT(*) FROM plugin_gif_stickers_cache');
+        if ($n > 500) {
+            DB::run('DELETE FROM plugin_gif_stickers_cache WHERE k IN (SELECT k FROM (SELECT k FROM plugin_gif_stickers_cache ORDER BY expire_at ASC LIMIT ' . ($n - 500) . ') x)');
+        }
+    }
+    Api::json(['ok' => true] + $payload);
 });
 
 /**
