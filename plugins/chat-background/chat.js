@@ -27,11 +27,14 @@
         overlays: {},          // 叠加色清单
     };
 
-    /* 叠加色中文标签（与后端 owCBOverlays() 一一对应） */
+    /* 遮罩中文标签（与后端 owCBOverlays() 一一对应，键必须齐） */
     var OVR_LABELS = {
         none: '无', light: '浅', dark: '深', dim: '暗',
         blue: '蓝', purple: '紫', green: '绿', orange: '橙',
-        pink: '粉', sepia: '棕'
+        pink: '粉', sepia: '棕',
+        // 多色渐变遮罩
+        'g-sunset': '晚霞', 'g-ocean': '深海', 'g-aurora': '极光', 'g-grape': '葡萄',
+        'g-ember': '余烬', 'g-candy': '糖果', 'g-forest': '森林', 'g-night': '夜幕'
     };
 
     /* ---------- 载入设置 ---------- */
@@ -149,7 +152,7 @@
         var section = d.createElement('div');
         section.className = 'ow-cb-section';
         section.innerHTML = '<h4>聊天背景</h4>'
-            + '<p class="ow-cb-desc">为聊天区设置背景图，并叠加一层颜色遮罩以保证文字可读。</p>'
+            + '<p class="ow-cb-desc">为聊天区挑一张背景图，或只用一层颜色 / 渐变遮罩；遮罩叠在图上还能压暗背景、保证文字可读。</p>'
             + '<div class="ow-cb-tabs" id="owCBTabs"></div>'
             + '<div id="owCBBody"></div>'
             + '<div class="ow-cb-overlays" id="owCBOverlays"></div>'
@@ -184,8 +187,10 @@
         if (!tabs) return;
         var canCustom = state.cfg ? state.cfg.can_custom : true;
         var customReason = state.cfg ? state.cfg.custom_reason : '';
+        // 「默认」这一档现在只剩遮罩语义（不加载图片、只叠一层颜色/渐变），故正名为「遮罩」。
+        // ⚠️ 键名仍沿用 'none'：存量用户设置存的就是它，改键名要迁移数据，不划算。
         var modes = [
-            { k: 'none',    t: '默认' },
+            { k: 'none',    t: '遮罩' },
             { k: 'item',    t: '内置' },
             { k: 'custom',  t: '自定义', disabled: !canCustom, title: customReason }
         ];
@@ -205,7 +210,7 @@
         if (!body || !state.setting) return;
         var st = state.setting;
         if (st.mode === 'none') {
-            body.innerHTML = '<p class="ow-cb-desc">使用站点默认背景（无背景图）。</p>';
+            body.innerHTML = '<p class="ow-cb-desc">只用一层颜色 / 渐变遮罩，不加载图片。在下方挑一个遮罩色即可。</p>';
             return;
         }
         if (st.mode === 'item') {

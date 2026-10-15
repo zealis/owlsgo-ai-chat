@@ -137,6 +137,12 @@ function owCBSaveConfig(array $in): array
  */
 function owCBOverlays(): array
 {
+    // 键的顺序 = 前台的展示顺序。分两组：
+    //   · 前 10 个：单色调「压暗 / 染色」——同色相不同 alpha 的竖向渐变，用来压暗背景图、保文字可读；
+    //   · 后 8 个（g- 前缀）：**多色渐变遮罩**——在「遮罩」档单独使用时色彩更明确。
+    // 一律用 rgba 自带 alpha（再由用户的「透明度」滑块整体缩放），
+    // 所以既能叠在背景图上，也能单独盖在默认底色上。
+    // ⚠️ 值里不许出现引号 —— 前台是把它拼进 style="background:…" 属性里的。
     return [
         'none'    => 'none',
         'light'   => 'linear-gradient(rgba(255,255,255,0.35), rgba(255,255,255,0.55))',
@@ -148,6 +154,15 @@ function owCBOverlays(): array
         'orange'  => 'linear-gradient(rgba(180,90,0,0.30), rgba(90,40,0,0.50))',
         'pink'    => 'linear-gradient(rgba(200,60,120,0.30), rgba(110,20,60,0.50))',
         'sepia'   => 'linear-gradient(rgba(120,80,30,0.30), rgba(60,40,10,0.50))',
+        // —— 多色渐变遮罩（135° 斜向；alpha 0.58~0.82，让颜色真的看得出来）——
+        'g-sunset' => 'linear-gradient(135deg, rgba(255,120,60,0.62), rgba(216,60,140,0.66))',
+        'g-ocean'  => 'linear-gradient(135deg, rgba(0,170,205,0.60), rgba(20,60,165,0.70))',
+        'g-aurora' => 'linear-gradient(135deg, rgba(30,190,140,0.58), rgba(60,90,225,0.62), rgba(155,55,205,0.62))',
+        'g-grape'  => 'linear-gradient(135deg, rgba(150,65,225,0.62), rgba(45,35,125,0.72))',
+        'g-ember'  => 'linear-gradient(135deg, rgba(245,85,45,0.62), rgba(250,185,45,0.58))',
+        'g-candy'  => 'linear-gradient(135deg, rgba(250,110,190,0.58), rgba(150,110,240,0.62))',
+        'g-forest' => 'linear-gradient(135deg, rgba(25,145,95,0.62), rgba(10,55,50,0.72))',
+        'g-night'  => 'linear-gradient(135deg, rgba(35,45,100,0.70), rgba(10,10,25,0.82))',
     ];
 }
 
