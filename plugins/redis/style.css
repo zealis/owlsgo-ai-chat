@@ -123,6 +123,8 @@
     white-space: nowrap;
 }
 .ow-rds-st.is-on { color: var(--ow-green); border-color: var(--ow-green); }
+/* 已实现但还等核心补火点：用品牌蓝表示「待接线」，既不是失败也不是刻意不接 */
+.ow-rds-st.is-wait { color: var(--ow-primary-strong); border-color: var(--ow-primary-strong); }
 .ow-rds-todo-d {
     font-size: 12px;
     line-height: 1.7;

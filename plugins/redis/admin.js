@@ -77,6 +77,17 @@
             + kpiCell(sumAct, '单日最高活跃')
             + kpiCell((r.rooms || []).length, '已镜像群数')
             + '</div>';
+
+        // 读路径现状：房间列表缓存热不热，是这一版最需要盯的一项
+        var rc = r.rooms_cache || {};
+        box.innerHTML += '<h3 style="margin:14px 0 10px">读路径</h3><div class="ow-card-meta">'
+            + meta('房间列表缓存', !rc.on
+                ? '已关闭'
+                : (rc.warm
+                    ? '<span class="ow-rds-ok">已热</span> ' + num(rc.rows) + ' 行 · 剩余 ' + num(rc.ttl) + ' 秒'
+                    : '<span class="ow-rds-bad">未热</span> —— 会被每分钟的计划任务补上；'
+                      + '核心补上 rooms.rows 那个 fire 点后，热着的时候才能真正省掉那句 SELECT'))
+            + '</div>';
     }
 
     function kpiCell(v, label) {
@@ -176,6 +187,7 @@
                 + kpiCell(p.latency, '连接延迟(ms)')
                 + kpiCell(p.keys, '当前库键数')
                 + kpiCell(p.expires, '其中带过期')
+                + kpiCell(p.clients, '当前连接数')
                 + kpiCell(rate === '—' ? 0 : String(rate).replace('%', ''), '命中率(%)')
                 + '</div>'
                 + '<div class="ow-card-meta" style="margin-top:10px">'
@@ -184,9 +196,15 @@
                 + meta('客户端', esc(p.client) + (p.ext ? '（已检测到扩展）' : '（未装扩展，走内置客户端）'))
                 + meta('Redis 版本', esc(p.version || '未知'))
                 + meta('内存占用', esc(p.memory || '未知'))
+                + meta('连接数上限', num(p.maxclients) > 0 ? num(p.maxclients) : '未知')
                 + meta('鉴权', p.auth ? '已配置密码' : '未配置密码')
                 + meta('写—读—删探针', p.rw ? '<span class="ow-rds-ok">通过</span>' : '<span class="ow-rds-bad">未通过</span>')
-                + '</div></div>';
+                + '</div>'
+                + '<p style="font-size:12px;margin:10px 0 0">说明：本插件每次请求会开一条 Redis 连接，'
+                + '长轮询（最长 20 秒）期间会一直持有 —— 所以「并发长轮询人数 ≈ Redis 连接数」。'
+                + 'Redis 默认 maxclients 10000，几百人在线无压力；这是「每请求打点」这套设计的真实代价，'
+                + '把「实时计数」关掉可以让与插件无关的请求完全不连 Redis。</p>'
+                + '</div>';
             box.innerHTML = h;
         });
     };
@@ -200,7 +218,7 @@
 
     var KEYS = ['enable', 'host', 'port', 'pass', 'db', 'prefix', 'timeout',
                 'mirror', 'mirror_keep', 'mirror_days', 'mirror_dm', 'stat', 'stat_days',
-                'readpath', 'ratelimit'];
+                'readpath', 'ratelimit', 'rooms', 'rooms_ttl'];
 
     R.saveCfg = function () {
         var data = {}, i, el;

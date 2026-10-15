@@ -106,6 +106,9 @@ function owRdsDefaults(): array
         // ---- 读路径接手（核心 v1.3.155 起的 6 处 fire 点）----
         'readpath'    => '1',          // history.rows / poll.hint / online.track+list
         'ratelimit'   => '1',          // rate.limit（INCR + EXPIRE；mail* 桶一律不接，见注释）
+        // ---- 公开房间列表缓存（读得最频繁的一处）----
+        'rooms'       => '1',          // rooms.rows：缓存 rooms 表的原始行
+        'rooms_ttl'   => '180',        // 缓存寿命（秒）；另有一个 60 秒的计划任务保活
     ];
 }
 
@@ -148,8 +151,12 @@ function owRdsInt(string $k): int
 function owRdsSetCfg(string $k, string $v): void
 {
     owRdsBoot();
+    // ⚠️ 空值一律删行、不留空串：DB 里留一行 v='' 会被 owRdsAllCfg 覆盖掉默认值，
+    //    于是后台输入框显示空白、看着像「没配上」（timeout 就这么空过一回），
+    //    而代码里其实走的是默认值 —— 存储与显示两套口径，最容易误读。
+    //    删行之后「空 = 用默认」就成了唯一口径：输入框显示默认、前端提交空也算用默认。
     DB::run('DELETE FROM plugin_redis_cfg WHERE k=?', [$k]);
-    DB::run('INSERT INTO plugin_redis_cfg (k, v) VALUES (?,?)', [$k, $v]);
+    if ($v !== '') DB::run('INSERT INTO plugin_redis_cfg (k, v) VALUES (?,?)', [$k, $v]);
     unset($GLOBALS['_owRdsAll'], $GLOBALS['_owRdsConn'], $GLOBALS['_owRdsTtl']);  // 立刻失效
 }
 
@@ -358,7 +365,12 @@ function owRdsMirrorPush(int $roomId, array $f): bool
     owRdsCmd(['LTRIM', $key, '0', (string)($keep - 1)]);
     $days = owRdsInt('mirror_days');
     if ($days > 0) owRdsEnsureTtl($key, $days * 86400);
-    if ($roomId > 0) owRdsCmd(['SADD', owRdsRoomsKey(), (string)$roomId]);
+    if ($roomId > 0) {
+        owRdsCmd(['SADD', owRdsRoomsKey(), (string)$roomId]);
+        // 索引 Set 也要有过期时间：不给它 TTL 就会一直攒房间号（只增不减，虽然一天也就几条）。
+        // 索引掉了不影响正确性 —— 它只是后台群榜的入口，下一条消息进来会重新 SADD。
+        if ($days > 0) owRdsEnsureTtl(owRdsRoomsKey(), $days * 86400);
+    }
     return true;
 }
 
@@ -514,7 +526,7 @@ function owRdsProbe(): array
         'client' => class_exists('Redis') ? 'phpredis 扩展' : '内置 RESP（无扩展依赖）',
         'ok' => false, 'msg' => '', 'latency' => 0, 'version' => '', 'memory' => '',
         'keys' => 0, 'hits' => 0, 'misses' => 0, 'expires' => 0, 'rw' => false,
-        'auth' => $c['pass'] !== '',
+        'auth' => $c['pass'] !== '', 'clients' => 0, 'maxclients' => 0,
     ];
     if (!$r['enable']) { $r['msg'] = '插件总开关处于关闭状态'; return $r; }
 
@@ -546,6 +558,8 @@ function owRdsProbe(): array
                 elseif (strpos($ln, 'used_memory_human:') === 0) $r['memory'] = substr($ln, 18);
                 elseif (strpos($ln, 'keyspace_hits:') === 0)  $r['hits'] = (int)substr($ln, 14);
                 elseif (strpos($ln, 'keyspace_misses:') === 0) $r['misses'] = (int)substr($ln, 16);
+                elseif (strpos($ln, 'connected_clients:') === 0) $r['clients'] = (int)substr($ln, 18);
+                elseif (strpos($ln, 'maxclients:') === 0)     $r['maxclients'] = (int)substr($ln, 11);
             }
         }
         // dbN:keys=12,expires=3,avg_ttl=0 —— 只认目标库那一行
@@ -841,6 +855,90 @@ function owRdsRateLimit(string &$handled, string $bucket, string $ident, int $wi
     $handled = ((int)$n === 1 || (int)$n <= $max) ? '1' : '0';
 }
 
+/* ---------------------------- 公开房间列表缓存 ---------------------------- */
+/*
+ * 为什么值得缓存：Chat::rooms() 的第一句是 `SELECT * FROM rooms WHERE status=1 ORDER BY id`，
+ * 而前端进聊天页、切群、建房之后都会打一次 ?action=rooms —— 全站最频繁的查询之一。
+ * 关键是**这批行对所有人相同**：按身份的过滤（is_public / min_role / 成员关系 / 能否编辑）
+ * 全在后面用 PHP 做。所以分工与 online.list 一致：**插件只提供 rooms 表的原始行，
+ * 可见性过滤一律留在核心**，插件不复制任何一条可见性规则。
+ *
+ * ⚠️ 与 online.list 的关键差别，决定了这里必须有计划任务：
+ *    那一处核心是「先 fire、插件回填了就不查库」，插件要真省掉查询就得自己能拿出行；
+ *    而本处若改成「核心先查库再把行交给你」的回填点，查询**已经发生**了、省不掉。
+ *    所以本插件改用「计划任务保活（60 秒）+ 房间变更时立刻刷新」：正常路径上缓存总是热的，
+ *    只有从未热过时才回落给核心查库（那一次不写缓存，交给 60 秒后的计划任务补齐）。
+ *    代价是这里有一份与 core/chat.php:290 逐字一致的查询 —— 同一句话抄在 owRdsRoomsQuery()，
+ *    并有 TTL 兜底（默认 180 秒）。**改核心那句 SQL 时必须同步改这里**。
+ *
+ * ⚠️ 缓存前**剥掉 password 列**：本文档的 Redis 就在本机、默认还没有密码，
+ *    房间密码的哈希没必要在另一个存储里多存一份。剥掉是安全的：
+ *      · Chat::rooms() 的输出数组本来就不含 password；
+ *      · 真正校验密码的 checkRoomPassword() 走 Chat::room() 的独立查询，与这份缓存无关；
+ *      · canEnter() 只读 is_public / type / min_role / owner_id，不需要 password。
+ */
+
+function owRdsRoomsListKey(): string { return owRdsPrefix() . 'roomslist'; }
+
+/** 与 core/chat.php:290 逐字一致的查询 —— **改核心那句时必须同步改这里** */
+function owRdsRoomsQuery(): array
+{
+    try {
+        return DB::all('SELECT * FROM rooms WHERE status=1 ORDER BY id');
+    } catch (Throwable $e) { return []; }
+}
+
+function owRdsRoomsTtl(): int
+{
+    $t = owRdsInt('rooms_ttl');
+    if ($t < 30) $t = 30;
+    if ($t > 3600) $t = 3600;
+    return $t;
+}
+
+/** 写入缓存（剥 password）；TTL 兜底，最坏情况只是这一段时间内看到旧列表 */
+function owRdsRoomsStore(array $rows): bool
+{
+    if (!$rows || owRdsCfg('rooms') !== '1' || owRdsConn() === null) return false;
+    $clean = [];
+    foreach ($rows as $r) {
+        if (is_array($r) && isset($r['id'])) { unset($r['password']); $clean[] = $r; }
+    }
+    if (!$clean) return false;
+    $json = (string)json_encode($clean, JSON_UNESCAPED_UNICODE);
+    return owRdsCmd(['SET', owRdsRoomsListKey(), $json, 'EX', (string)owRdsRoomsTtl()]) !== null;
+}
+
+/** 取缓存行；null = 没热过（交回核心查库，不由插件代查） */
+function owRdsRoomsServe(): ?array
+{
+    if (owRdsCfg('rooms') !== '1' || owRdsConn() === null) return null;
+    $raw = owRdsCmd(['GET', owRdsRoomsListKey()]);
+    if (!is_string($raw) || $raw === '') return null;
+    $rows = json_decode($raw, true);
+    return (is_array($rows) && $rows) ? $rows : null;
+}
+
+/** 房间表变了：立刻失效并重刷。这条路径不在热路上，多一次查询无所谓 */
+function owRdsRoomsRefresh(): void
+{
+    if (owRdsCfg('rooms') !== '1' || owRdsConn() === null) return;
+    owRdsCmd(['DEL', owRdsRoomsListKey()]);
+    owRdsRoomsStore(owRdsRoomsQuery());
+}
+
+/** 后台展示用：缓存热不热、几行、还剩多久 */
+function owRdsRoomsState(): array
+{
+    $on = owRdsCfg('rooms') === '1';
+    if (owRdsConn() === null) return ['on' => $on, 'warm' => false, 'rows' => 0, 'ttl' => -1];
+    $ttl = owRdsCmd(['TTL', owRdsRoomsListKey()]);
+    $n = 0;
+    $raw = owRdsCmd(['GET', owRdsRoomsListKey()]);
+    if (is_string($raw)) { $d = json_decode($raw, true); if (is_array($d)) $n = count($d); }
+    return ['on' => $on, 'warm' => $n > 0, 'rows' => $n, 'ttl' => is_int($ttl) ? $ttl : -1];
+}
+
 /* ============================ 钩子（写入侧，只有一个方向） ============================ */
 
 /**
@@ -943,6 +1041,37 @@ Plugin::on('rate.limit', function (&$handled, $bucket, $ident, $window, $max) {
     } catch (Throwable $e) { /* 同上 */ }
 });
 
+/* ---------- 公开房间列表（缓存 rooms 表的原始行，可见性过滤留给核心） ---------- */
+
+/**
+ * rooms.rows —— **这一处需要核心补一个 fire 点才生效**（Chat::rooms 里那句 SELECT 之前）：
+ *
+ *     $list = [];
+ *     Plugin::fire('rooms.rows', [&$list, $actor]);
+ *     if (!$list) $list = DB::all('SELECT * FROM rooms WHERE status=1 ORDER BY id');
+ *
+ * 契约与 online.list 完全一致：回填了行（哪怕只有一行）核心就不再查库；仍是空数组则照查库。
+ * 核心没补之前，这个处理器永远不会被调用 —— 挂在这里不会有害，补上那两行即自动生效。
+ * ⚠️ 处理器刻意写得防御：参数形状不对就什么都不做（宁可回落查库，也不能把房间列表弄坏）。
+ */
+Plugin::on('rooms.rows', function (&$list = null, $actor = null) {
+    try {
+        if (!is_array($list)) return;                 // 形状不符合预期：不碰
+        if ($list) return;                            // 已经有行了：不覆盖
+        $rows = owRdsRoomsServe();
+        if ($rows) $list = $rows;
+    } catch (Throwable $e) { /* 旁路失败绝不冒泡 */ }
+});
+
+/** 房间表被改（建房 / 改名改简介改头像 / 回收站撤销）→ 立刻失效并重刷 */
+function owRdsOnRoomChanged(): void
+{
+    try { owRdsRoomsRefresh(); } catch (Throwable $e) { /* 同上 */ }
+}
+Plugin::on('room.created', 'owRdsOnRoomChanged');
+Plugin::on('room.after_update', 'owRdsOnRoomChanged');
+Plugin::on('room.restored', 'owRdsOnRoomChanged');
+
 /* ============================ 计划任务 ============================ */
 
 /**
@@ -971,6 +1100,22 @@ Plugin::cron('rds_sync', 300, function () {
     } catch (Throwable $e) { /* 定时任务出错不影响其它任务（核心也会兜） */ }
 }, 'Redis 每日计数落库');
 
+/**
+ * 每分钟把公开房间列表刷进缓存 —— 这是「省掉那句 SELECT」的前提：
+ * 房间表很少变（改变时另有 room.* 钩子立刻重刷），所以正常路径上缓存总是热的，
+ * 只有 Redis 刚重启 / 缓存过期且此刻没有房间变更时，才会回落给核心查库一次。
+ * 间隔 60 秒：这是一条 SELECT，一分钟一次可以忽略；TTL 默认 180 秒，留两次容错。
+ */
+Plugin::cron('rds_rooms', 60, function () {
+    try {
+        if (owRdsCfg('enable') !== '1') return;
+        if (owRdsCfg('rooms') !== '1') return '房间列表缓存已关闭（rooms=0）';
+        $rows = owRdsRoomsQuery();
+        if (!$rows) return '房间表为空，未写缓存';
+        return owRdsRoomsStore($rows) ? ('已刷新 ' . count($rows) . ' 行房间列表缓存') : '写入失败（Redis 不可用？）';
+    } catch (Throwable $e) { return '刷新异常：' . $e->getMessage(); }
+}, '刷新公开房间列表缓存（每分钟）');
+
 /* ============================ 后台路由 ============================ */
 
 /** 管理员鉴权（use 捕获的是变量值，必须先定义） */
@@ -995,6 +1140,7 @@ Plugin::route('plugin_redis_stats', function (array $ctx) use ($rdsGuard, $rdsMa
         'rooms' => owRdsMirrorRooms(10),
         'cfg' => $rdsMaskedCfg(),
         'connected' => owRdsConn() !== null,
+        'rooms_cache' => owRdsRoomsState(),
     ]);
 });
 
@@ -1152,6 +1298,12 @@ Plugin::adminPage('redis', 'Redis 缓存', function () {
             . '仍在 Sec::loginFail() 里、成功清零在 Sec::loginOk() 里。插件若自己计数，就得把阈值、锁定分钟数、到期重算'
             . '这三条**安全规则**复制一份，而错的方向是「锁定失效 = 暴力破解可绕过」。要接，请核心先给一个写入侧钩子'
             . '（如 login.fail_add / login.fail_clear），插件只当计数器。'],
+        ['rooms.rows', '已实现·待核心补钩子', 'core/chat.php:290 那句 SELECT 之前', 'wait',
+            '公开房间列表是**全站查得最频繁的一处**（进聊天页 / 切群 / 建房后都要打一次 ?action=rooms），'
+            . '而那批行对所有人都一样（按身份的过滤在后面用 PHP 做）→ 插件只缓存**原始行**、可见性过滤仍留给核心。'
+            . '插件侧已写好并在缓存热时提供行；**还差核心补两行**（与 online.list 同款契约）：'
+            . '$list = []; Plugin::fire(\'rooms.rows\', [&$list, $actor]); if (!$list) $list = DB::all(...)。'
+            . '补上之前这个处理器不会被调用 —— 挂在这里无害，补上那两行即自动生效。'],
     ];
     $h .= '<div class="ow-card"><h3 style="margin:0 0 10px">读路径接手（核心 v1.3.155 起的 6 处 fire 点）</h3>'
         . '<p style="font-size:12px">下面每一处都标注了接手状态与理由。<strong>能不能接取决于核心有没有同时开写入侧</strong>：'
@@ -1162,14 +1314,18 @@ Plugin::adminPage('redis', 'Redis 缓存', function () {
             '关闭后 history.rows / poll.hint / online.* 一律不接手，完整恢复核心原行为')
         . $sel('ratelimit', '限流计数', ['1' => '放进 Redis', '0' => '留给核心（写 rate_limits 表）'],
             '只作用于非 mail 桶；出问题可一键关回去')
+        . $sel('rooms', '房间列表缓存', ['1' => '开启', '0' => '关闭'],
+            '缓存 rooms 表的原始行（剥掉 password 列）；等核心补 rooms.rows 那个 fire 点后才真正省下查询')
+        . $f('rooms_ttl', '房间列表缓存寿命（秒）', '30~3600；另有每分钟的计划任务保活')
         . '</div>';
     // 说明里用 **…** 标重点：先 Sec::e() 转义再换成 <strong>（转义不会碰星号，顺序反了就是 XSS）
     $em = function (string $s): string {
         return (string)preg_replace('/\*\*(.+?)\*\*/s', '<strong>$1</strong>', Sec::e($s));
     };
     foreach ($rp as $t) {
+        $stCls = ['on' => 'is-on', 'wait' => 'is-wait', 'off' => 'is-off'][$t[3]] ?? 'is-off';
         $h .= '<div class="ow-rds-todo"><div class="ow-rds-todo-h"><b>' . Sec::e($t[0]) . '</b>'
-            . '<em class="ow-rds-st ' . ($t[3] === 'on' ? 'is-on' : 'is-off') . '">' . Sec::e($t[1]) . '</em>'
+            . '<em class="ow-rds-st ' . $stCls . '">' . Sec::e($t[1]) . '</em>'
             . '<span>' . Sec::e($t[2]) . '</span></div>'
             . '<div class="ow-rds-todo-d">' . $em($t[4]) . '</div></div>';
     }
