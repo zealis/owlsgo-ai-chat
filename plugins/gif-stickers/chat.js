@@ -8,7 +8,9 @@
  * 两个源的调用方式不同，这是**内容源条款决定的**，不是实现偏好：
  *   - klipy：由浏览器直接请求 api.klipy.com。他们的《Integration Requirements》
  *     明文要求请求由终端用户客户端发起、媒体直接从返回 URL 加载、不得经服务器代理或缓存。
- *   - apihz：走本站路由 plugin_gif_stickers_search，密钥只留在服务端。
+ *     v1.2.0 的缓存因此只能落在**访客自己的 localStorage**（见下面 kc* 那一节）：
+ *     请求仍是终端发起的，只是同一天里同一个查询不重复请求 —— 服务端缓存才是它禁的那条。
+ *   - apihz：走本站路由 plugin_gif_stickers_search，密钥只留在服务端（缓存在服务端，见 main.php）。
  * 收藏也是**只存地址、不下载到本站**（v1.3.81 站方定）：把 KLIPY 的图取回来落盘正是他们
  * 条款禁止的「存储 / 镜像 / 转存」。代价直接说给用户听 —— 图源撤图、换地址或链接过期，
  * 这张贴纸就打不开了（★ 的 title 与收藏成功的提示里都写着）。
@@ -123,6 +125,58 @@
     }
 
     /** KLIPY：浏览器直连。空关键词走 trending，有关键词走 search —— 都是他们的官方端点 */
+    /* ---------- KLIPY 结果的浏览器端缓存（v1.2.0） ----------
+       ⚠️ 为什么只在浏览器里缓存、不做服务端缓存：KLIPY 的《Integration Requirements》写明
+          「请求必须由终端用户客户端发起 …… 不得经服务器 / 代理转发或缓存」。
+          服务端缓存要先由本站替访客去请求，正好撞在它明文禁止的那一条上；
+          浏览器自己的缓存不碰这条 —— 请求仍然是这台终端发出的，只是同一天里同一个查询不多请求第二遍。
+          存的也只是**解析后的条目**（一串图片地址与「有没有下一页」），图仍然是浏览器
+          直接从他们的 URL 拉的，与「不得存储 / 镜像媒体」那条也不冲突。
+       落在 localStorage：条目自带过期时间，另有一个索引把条目数压在 40 条以内
+       （搜索词是无限的，光靠过期清不干净）。localStorage 不可用（无痕 / 配额满）时
+       整个缓存层静默失效 —— 退化成每次都真调，功能不受影响。 */
+    var KC_PREFIX = 'owGsKC:', KC_INDEX = 'owGsKI', KC_MAX = 40;
+
+    /** 后台设的缓存天数；0 = 关闭（默认也是 0，等于没配过时行为与从前一致） */
+    function kcDays() {
+        var d = parseInt((cfg && cfg.klipy && cfg.klipy.cache_days) || 0, 10);
+        return (isNaN(d) || d < 0) ? 0 : Math.min(90, d);
+    }
+    /** 32 位 djb2：只当键用；值里存着原 URL，读回来还要对一次，撞了就当未命中 */
+    function kcHash(s) {
+        var h = 5381, i;
+        for (i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+        return (h >>> 0).toString(36);
+    }
+    function kcGet(url) {
+        if (!kcDays()) return null;
+        try {
+            var raw = w.localStorage.getItem(KC_PREFIX + kcHash(url));
+            if (!raw) return null;
+            var o = JSON.parse(raw);
+            if (!o || o.u !== url || !o.p || !o.p.items) return null;
+            if (!(o.e > (new Date()).getTime())) return null;
+            return o.p;
+        } catch (e) { return null; }
+    }
+    function kcSet(url, parsed) {
+        var days = kcDays();
+        if (!days || !parsed || !parsed.items || !parsed.items.length) return;   // 空结果不缓存，没意义
+        var key = KC_PREFIX + kcHash(url);
+        try {
+            w.localStorage.setItem(key, JSON.stringify({
+                u: url, e: (new Date()).getTime() + days * 86400000, p: parsed
+            }));
+            var idx = [], raw = w.localStorage.getItem(KC_INDEX), i, at = -1;
+            if (raw) { try { idx = JSON.parse(raw) || []; } catch (e2) { idx = []; } }
+            for (i = 0; i < idx.length; i++) if (idx[i] === key) at = i;
+            if (at >= 0) idx.splice(at, 1);
+            idx.push(key);                                   // 最近写过的排最后
+            while (idx.length > KC_MAX) w.localStorage.removeItem(idx.shift());
+            w.localStorage.setItem(KC_INDEX, JSON.stringify(idx));
+        } catch (e) { /* 配额满 / 不可用：静默放弃缓存，不影响本次渲染 */ }
+    }
+
     function loadKlipy() {
         var k = cfg.klipy || {};
         var qs = ['per_page=' + (k.per_page || 24), 'page=' + page];
@@ -146,38 +200,48 @@
     }
 
     function getKlipy(url) {
+        var hit = kcGet(url);
+        if (hit) { handleKlipy(hit, null, 200); return; }     // 命中：一个网络请求都不发
         var x = new XMLHttpRequest();
         x.open('GET', url, true);
         x.timeout = 12000;
         x.onload = function () {
-            loading = false;
             var j = null;
             try { j = JSON.parse(x.responseText || '{}'); } catch (e) { j = null; }
-            if (!j) { grid('<p class="ow-gif-msg">KLIPY 返回异常（HTTP ' + x.status + '）</p>'); return; }
-            var parsed = parseKlipy(j);
-            hasMore = !!parsed.next;
-            render(parsed.items, page > 1);
-            if (!parsed.items.length && page === 1) {
-                if (x.status === 200) {
-                    // 「200 但 0 条」有两种完全不同的原因：源真的没给内容（密钥/授权问题），
-                    // 或响应结构与我们理解的不一样。界面必须说清是哪一种，
-                    // 否则管理员只能盲猜「是不是密钥错了」。
-                    var s = inspectKlipy(j);
-                    if (w.console && w.console.warn) w.console.warn('[gif-stickers] KLIPY 返回 200 但解析不出结果，原始响应：', j);
-                    grid('<p class="ow-gif-msg">' + (s.found < 0
-                        ? 'KLIPY 返回的内容里找不到结果数组（结构已记在浏览器控制台）'
-                        : ('KLIPY 正常返回，但这条请求给了 ' + s.found + ' 条'
-                            + (s.dropped ? '（' + s.dropped + ' 条取不到图片地址）' : '')
-                            + ' —— 请核对密钥对应的产品与已授权域名')) + '</p>');
-                } else {
-                    grid('<p class="ow-gif-msg">没有结果，换个关键词试试</p>');
-                }
-            }
-            foot();
+            var parsed = j ? parseKlipy(j) : null;
+            // 只缓存「HTTP 200 且解析出了条目」的：空结果缓存下来没有意义，
+            // 而「200 但 0 条」那三种诊断必须每次都看到实时响应
+            if (parsed && x.status === 200) kcSet(url, parsed);
+            handleKlipy(parsed, j, x.status);
         };
         x.onerror = function () { loading = false; grid('<p class="ow-gif-msg">连不上 KLIPY：可能被网络策略或广告拦截挡住</p>'); };
         x.ontimeout = function () { loading = false; grid('<p class="ow-gif-msg">KLIPY 请求超时</p>'); };
         x.send();
+    }
+
+    /** 真调与缓存命中共用这条渲染路径（否则命中缓存时会漏掉「200 但 0 条」那套诊断） */
+    function handleKlipy(parsed, j, status) {
+        loading = false;
+        if (!parsed) { grid('<p class="ow-gif-msg">KLIPY 返回异常（HTTP ' + status + '）</p>'); return; }
+        hasMore = !!parsed.next;
+        render(parsed.items, page > 1);
+        if (!parsed.items.length && page === 1) {
+            if (status === 200) {
+                // 「200 但 0 条」有两种完全不同的原因：源真的没给内容（密钥/授权问题），
+                // 或响应结构与我们理解的不一样。界面必须说清是哪一种，
+                // 否则管理员只能盲猜「是不是密钥错了」。
+                var s = inspectKlipy(j);
+                if (w.console && w.console.warn) w.console.warn('[gif-stickers] KLIPY 返回 200 但解析不出结果，原始响应：', j);
+                grid('<p class="ow-gif-msg">' + (s.found < 0
+                    ? 'KLIPY 返回的内容里找不到结果数组（结构已记在浏览器控制台）'
+                    : ('KLIPY 正常返回，但这条请求给了 ' + s.found + ' 条'
+                        + (s.dropped ? '（' + s.dropped + ' 条取不到图片地址）' : '')
+                        + ' —— 请核对密钥对应的产品与已授权域名')) + '</p>');
+            } else {
+                grid('<p class="ow-gif-msg">没有结果，换个关键词试试</p>');
+            }
+        }
+        foot();
     }
 
     /**

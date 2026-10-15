@@ -30,10 +30,12 @@
  *       plugin_gif_stickers_save    管理员保存配置（敏感，需一次性票据）
  *       plugin_gif_stickers_search  apihz 服务端代理搜索（v1.2.0 起带缓存）
  *
- * v1.2.0：apihz 那条路加缓存。API 盒子按天限额（免费档 150 次/天），
- *   热门与搜索走的是同一个代理路由、同样吃限额，所以两样都按「线路 + 关键词 + 页码 + 条数」
- *   整包缓存，天数由后台「缓存天数」设（0 = 关闭，默认 7，上限 90）。
- *   只存接口返回的地址与分页信息，不落图片文件（与收藏同一口径）。
+ * v1.2.0：两条路各加一份缓存，**层的选择不是随意的**：
+ *   - apihz（服务端代理）：访客看到的是本站的响应，缓存也放服务端（新表 + 后台「缓存天数」）。
+ *   - klipy（浏览器直连）：他们的《Integration Requirements》写明「请求必须由终端用户客户端发起、
+ *     不得经服务器 / 代理转发或缓存」—— 服务端缓存正好是它禁的那一条，所以缓存只能放在
+ *     访客自己的 localStorage 里（后台「结果缓存天数」，默认 1 天）。请求仍由终端发起，条款不受影响。
+ *   两处都只存「地址与分页信息」，不落任何图片文件（与收藏同一口径）。
  */
 declare(strict_types=1);
 
@@ -57,6 +59,9 @@ function owGSConf(): array
         // 默认值会被各种环境的访客直接吃到，宽松那档必须由管理员显式选。
         'klipy_app_key' => '', 'klipy_content_filter' => 'high', 'klipy_locale' => 'us',
         'klipy_per_page' => '24', 'klipy_ads' => '1', 'klipy_powered' => '0',
+        // v1.2.0：KLIPY 结果的**浏览器端**缓存天数（服务端缓存撞他们的条款，见 chat.js 里的说明）。
+        // 默认只给 1 天：他们的文档对缓存是负面的，我们只取「同一天里同一个查询不重复请求」这一档收益
+        'klipy_cache_days' => '1',
         // API 盒子：服务端代理
         'apihz_line' => 'cn', 'apihz_id' => '', 'apihz_key' => '', 'apihz_limit' => '20',
         // v1.2.0：接口限额 150 次/天，所以默认开 7 天缓存；0 = 关闭（每次真调）
@@ -110,6 +115,8 @@ function owGSPublic(array $actor): array
             'per_page' => max(8, min(50, (int)$c['klipy_per_page'])),
             'ads' => (string)$c['klipy_ads'] === '1',
             'powered' => (string)$c['klipy_powered'] === '1',
+            // v1.2.0：只下发「几天」，缓存本体在访客浏览器的 localStorage 里
+            'cache_days' => max(0, min(90, (int)$c['klipy_cache_days'])),
         ],
         'apihz' => ['limit' => max(1, min(20, (int)$c['apihz_limit']))],
     ];
@@ -284,6 +291,13 @@ Plugin::adminPage('gif-stickers', '表情包', function () {
         . '<option value="0"' . ((string)$c['klipy_powered'] !== '1' ? ' selected' : '') . '>不显示（文档标 OPTIONAL）</option>'
         . '<option value="1"' . ((string)$c['klipy_powered'] === '1' ? ' selected' : '') . '>面板底部显示</option></select>'
         . '<p style="font-size:12px;color:var(--ow-text-sub)">无论这项开关如何，搜索框占位文字都固定是 “Search KLIPY”——那是唯一标 REQUIRED 的一条，不进翻译。</p></div>';
+    $h .= '<div class="ow-form-item" style="min-width:150px"><label>结果缓存天数</label>'
+        . '<input class="ow-input" type="number" min="0" max="90" step="1" data-owgs-field="klipy_cache_days"'
+        . ' value="' . max(0, min(90, (int)$c['klipy_cache_days'])) . '">'
+        . '<p style="font-size:12px;color:var(--ow-text-sub)">同一关键词 + 同一页在这一天内不再重复请求 KLIPY，热门与搜索都算；'
+        . '缓存只落在访客自己的浏览器里、只存解析后的图片地址，不经过本站服务器 —— '
+        . '他们的《Integration Requirements》要求请求必须由终端客户端发起、不得经服务器 / 代理转发或缓存，服务端缓存正好是那条禁的。'
+        . '代价是图源新上的内容要等缓存过期才看得到。填 0 = 关闭缓存（每次都真调）。</p></div>';
     $h .= '</div>';
 
     $apihzOpen = $prov === 'apihz';
@@ -338,6 +352,8 @@ Plugin::route('plugin_gif_stickers_save', function (array $ctx) {
         'klipy_per_page' => (string)max(8, min(50, (int)($post['klipy_per_page'] ?? 24))),
         'klipy_ads' => ($post['klipy_ads'] ?? '0') === '1' ? '1' : '0',
         'klipy_powered' => ($post['klipy_powered'] ?? '0') === '1' ? '1' : '0',
+        // v1.2.0：KLIPY 结果缓存天数（浏览器端）。0 = 关闭
+        'klipy_cache_days' => (string)max(0, min(90, (int)($post['klipy_cache_days'] ?? 1))),
         'apihz_line' => ($post['apihz_line'] ?? 'cn') === 'vip' ? 'vip' : 'cn',
         'apihz_id' => mb_substr(preg_replace('/[^0-9]/', '', (string)($post['apihz_id'] ?? '')), 0, 20),
         'apihz_key' => mb_substr(trim((string)($post['apihz_key'] ?? '')), 0, 100),
