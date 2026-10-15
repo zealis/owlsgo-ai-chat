@@ -94,14 +94,15 @@ class Notice
      *
      * 通知流（?action=notices）此前只读 notices 表，插件消息没有进来的口子；
      * 侧栏行的 last_text 只够行内展示 —— 这一份收集器把插件登记的数据以「消息」的形状
-     * 交给端点并进流里（正文 = last_text，另带 at 供排序）。
+     * 交给端点并进流里（正文 = last_text，另带 at 供排序、images 供缩略图）。
      *
      * 插件写法与 notice.contacts 完全一致（同一个登记函数、同一套校验与默认值），
      * 只是钩子名不同；正文写 last_text（侧栏叫「副标题」，进消息流就是正文），
-     * at 写这条消息的时间（不写按 0 处理）：
+     * at 写这条消息的时间（不写按 0 处理），images 放缩略图（本站 uploads/ 或 https，最多 3 张）：
      *
      *     Plugin::on('notice.items', function (callable $add) {
-     *         $add(['key' => 'mykey', 'last_text' => '你的举报已处理', 'at' => time()]);
+     *         $add(['key' => 'mykey', 'last_text' => '你的举报已处理', 'at' => time(),
+     *               'images' => ['uploads/image/1a/1a3f….webp']]);
      *     });
      */
     public static function pluginItems(): array
@@ -176,7 +177,35 @@ class Notice
                 // v1.3.162：条目时间。通知流（notice.items）按它排序；侧栏行不传就是 0
                 // （行内时间列渲染空串，行为与旧版一致），传了行内会显示最新一条的时间。
                 'at' => max(0, (int)($c['at'] ?? 0)),
+                // v1.3.165：条目缩略图（notice.items 的「消息带图」）。与 at 同一处理：形状里带上、
+                // 侧栏行不渲染；校验见 pluginImages()（mediaRel 口径 + https，≤3 张）。
+                'images' => self::pluginImages($c['images'] ?? null),
             ];
+        }
+        return $out;
+    }
+
+    /**
+     * 条目缩略图（v1.3.165）：只认**本站 uploads/ 产物**或 **https 外链**，最多 3 张。
+     *
+     * 站内地址一律走 Upload::mediaRel() —— 与前台消息图片同一口径（防穿越 + 文件存在性），
+     * 通过后归一成 `uploads/<rel>` 相对形态（核心存图就是这个形态，换域名不会坏）。
+     * 外链只放行 https：http / 协议相对（//host）/ data: / javascript: 一律丢弃 ——
+     * 这个字段最终会进 `<img src>`，放行名单必须比「合法 URL」窄。
+     */
+    private static function pluginImages($v): array
+    {
+        if (!is_array($v)) return [];
+        $out = [];
+        foreach ($v as $u) {
+            if (count($out) >= 3) break;
+            $u = trim((string)$u);
+            if ($u === '') continue;
+            if (class_exists('Upload')) {
+                $rel = Upload::mediaRel($u);
+                if ($rel !== null) { $out[] = 'uploads/' . $rel; continue; }
+            }
+            if (preg_match('#^https://#i', $u)) $out[] = $u;
         }
         return $out;
     }

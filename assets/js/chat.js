@@ -4710,12 +4710,21 @@
                 // 头像用 .ow-msg-av（它负责排版），但通知没有资料卡可看，
                 // 可点暗示与悬停反馈由 CSS 的 .ow-msg-notice 规则关掉。
                 var nick = r.name || '系统通知', rav = r.avatar || av;
+                // v1.3.165：插件条目的缩略图（≤3 张，服务端已把非法值拦掉）——点开站内灯箱看原图；
+                // 与消息图片共用 .ow-msg-img / OwChat.viewImg（#owImgViewer 是现成的 200 层灯箱）
+                var imgs = r.images || [], ih = '', k;
+                for (k = 0; k < imgs.length; k++) {
+                    ih += '<img class="ow-msg-img" src="' + esc(imgs[k]) + '" onclick="OwChat.viewImg(this.src)" alt="图片">';
+                }
+                if (ih) ih = '<div class="ow-notice-imgs">' + ih + '</div>';
                 h += '<div class="ow-msg ow-msg-notice">'
                    + (rav ? '<span class="ow-msg-av">' + avatarHtml(rav, nick) + '</span>' : '')
                    + '<div class="ow-msg-body">'
                    + '<div class="ow-msg-meta"><span class="ow-msg-nick ow-notice-nick">' + esc(nick) + '</span>'
                    + '<span class="ow-msg-time">' + esc(ChatList.time((r.at || r.created_at || 0) | 0)) + '</span></div>'
                    + '<span class="ow-msg-content">' + esc(owNoticeText(r, this.noticeTexts)) + '</span>'
+                   // 缩略图插在正文与「查看」之间：正文 → 证据 → 入口，阅读顺序与处理动作一致
+                   + ih
                    // v1.3.162：可点元素只由数据决定（key 非空才有），链接样式复用正文链接的
                    // .ow-msg-link（v1.3.101：对比度按正文 4.5:1 调过，不为它新写 CSS）。
                    + (r.key ? ' <a href="javascript:;" class="ow-msg-link ow-notice-act" data-key="' + esc(r.key) + '">查看</a>' : '')

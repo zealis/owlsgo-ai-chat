@@ -1848,6 +1848,11 @@ input[type=range] {
 /* 时间必须常显：安全事件要能对上时刻。普通消息是「悬停满 2 秒才显示」
    （.ow-msg-meta .ow-msg-time { display:none }），那套交互对通知不成立。 */
 .ow-msg-notice .ow-msg-time { display: inline; }
+/* v1.3.165：通知流插件条目的缩略图（≤3 张）——横向一行小图，点开灯箱看原图。
+   高度封顶 140px 且**不裁切**（证据截图裁掉就等于毁证），保持原比例；
+   圆角 / zoom-in 光标 / 灯箱跳转都走通用 .ow-msg-img + OwChat.viewImg，不另起一套。 */
+.ow-notice-imgs { display: flex; display: -webkit-flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.ow-notice-imgs .ow-msg-img { max-width: 140px; max-height: 140px; }
 /* 空态与加载态：消息区里的一条居中小字 */
 .ow-notice-pending { text-align: center; color: var(--ow-text-sub); font-size: 12px; padding: 24px 8px; }
 /* ---------- 好友通知页（v1.3.71）：待处理请求与「我发出的」列表 ---------- */

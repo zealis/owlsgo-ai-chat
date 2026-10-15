@@ -295,7 +295,7 @@ OwChat.registerAvatarUploader(function (file, filename, onOk) {
 
 | `contact.rows` | 渲染侧栏联系人区时（`index.php` 组装 boot，**仅登录用户**） | 与 `notice.contacts` **同一个注册函数、同一套校验与默认值**（共用 `Notice::pluginRows()`），只是挂在联系人区（默认排在「新朋友」之后、真人联系人之前）。前端用 `OwChat.onContactOpen(key, fn)` 接点击。两个区整节的说明见「侧栏插件行」 |
 
-| `notice.items` | 取通知流时（`?action=notices`，**仅登录用户**） | 与 `notice.contacts` **同一个注册函数、同一套校验与默认值**（共用 `Notice::pluginRows()`）：把插件的条目并进**通知流**（与系统通知按时间混排），正文 = `last_text`，另可给 `at` 指定时间。点「查看」走 `OwChat.onNoticeContact(key)`。整节说明见「通知流条目」 |
+| `notice.items` | 取通知流时（`?action=notices`，**仅登录用户**） | 与 `notice.contacts` **同一个注册函数、同一套校验与默认值**（共用 `Notice::pluginRows()`）：把插件的条目并进**通知流**（与系统通知按时间混排），正文 = `last_text`，另可给 `at` 指定时间、`images` 放缩略图（≤3 张，本站 uploads/ 或 https）。点「查看」走 `OwChat.onNoticeContact(key)`。整节说明见「通知流条目」 |
 
 ### `Plugin::current()` —— 「这个回调是谁的」
 
@@ -488,14 +488,20 @@ OwChat.onContactOpen('checkin', function (row) { OwChat.openModal('<!-- 签到�
 
 ```php
 Plugin::on('notice.items', function (callable $add) {
-    // 正文写 last_text（侧栏叫「副标题」，进消息流就是正文）；at 写这条消息的时间
-    $add(['key' => 'content-report', 'last_text' => '财产损失举报：甲 举报 乙（广告）', 'at' => time()]);
+    // 正文写 last_text（侧栏叫「副标题」，进消息流就是正文）；at 写这条消息的时间；
+    // images 放缩略图（≤3 张，站内 uploads/ 或 https）
+    $add(['key' => 'content-report', 'last_text' => '财产损失举报：甲 举报 乙（广告）', 'at' => time(),
+          'images' => ['uploads/image/1a/1a3f….webp', 'https://…/x.png']]);
 });
 ```
 
 - **正文 = `last_text`**（服务端转成 `body` 下发，前端不走语言包、原样展示），`at` 缺省按 0 处理；
+- **缩略图（`images`，v1.3.165）**：最多 3 张，渲染在正文下方、点开站内灯箱看原图（与消息图片同一套轮子，不裁切）。
+  站内产物写 `uploads/image/…`（或本站相对/绝对地址，服务端统一归一并**校验文件确实存在**）；
+  外链只认 https（http / 协议相对 / `data:` / `javascript:` 一律丢弃 —— 这个字段会进 `<img src>`）；
+  非法值静默跳过、**不占名额**（后面合法的照常补满）；
 - 条目行显示**自己的昵称/头像**（默认值规则与侧栏行一模一样：没给昵称用插件名、没给头像用按插件 id 派生的 open-peeps），
-  没给 `at` 的侧栏行时间列仍是空的 —— 两个区的行**行为不变**，`at` 只是顺带的增量字段；
+  没给 `at` 的侧栏行时间列仍是空的 —— 两个区的行**行为不变**，`at` / `images` 只是顺带的增量字段；
 - **「查看」按钮**：`key` 非空的条目，正文后附一个「查看」，点击等价于点侧栏那一行 ——
   走 `OwChat.onNoticeContact(key)`（与 `notice.contacts` 共用同一个处理器，插件不用写第二份）；
 - **一个 `key` 只认第一行**（与两个区共用同一份去重）：一个插件在通知流里是**一条「最新动态」**。
