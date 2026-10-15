@@ -641,23 +641,70 @@ function owCRAiEnqueue(array $rep, array $cfg): ?array
 }
 
 /** 把某条消息下所有「还没处理」的举报标成待超管处理 */
-/**
- * v1.2.2：以超管身份**自动撤回**违规消息。走核心 Chat::recall —— 物理删行 + 删附件 +
- * msg.after_recall 钩子，与人工撤回完全同一条路（前端长轮询会立刻看到消息消失）。
- * 权限按核心模型：群聊超管可撤任何人的违规内容；**私聊核心明确不许超管撤他人消息**
- * （隐私口径），撤不了就回落「交超管人工」—— 不在插件里绕开核心的权限检查。
- */
-function owCRAutoRecall(int $msgId): bool
+/** 内容归一化（比对「重复刷屏」用）：去掉全部空白后精确比对；图片/文件是 JSON，天然互不相等 */
+function owCRContentNorm(string $content): string
 {
-    if ($msgId <= 0 || !class_exists('Chat') || !method_exists('Chat', 'recall')) return false;
+    return preg_replace('/\s+/u', '', $content);
+}
+
+/**
+ * v1.2.4：以超管身份**自动撤回**违规消息。走核心 Chat::recall —— 物理删行 + 删附件 +
+ * msg.after_recall 钩子，与人工撤回完全同一条路（前端长轮询会立刻看到消息消失）。
+ *
+ * 站方口径：刷屏/灌水「不能只是删除举报的一条」。所以撤回按两档扩大：
+ *   - **重复内容**（所有违规理由都做）：同房间、同发送者、被举报消息前后 10 分钟窗口内，
+ *     内容归一化后与被举报消息**完全相同**的一并撤（上限 20 条）—— 判据是确定性的，不怕误伤；
+ *   - **命中「刷屏灌水」**（理由名含「刷屏」）：窗口内该发送者的消息**全部**撤（上限 50 条）
+ *     —— 变着花样的灌水没法靠内容比对，是否构成刷屏由 AI 判（它看得见上下文），
+ *     插件只负责按窗口收尾。窗口全撤伤害大，所以只绑在这一个理由上。
+ *
+ * 返回撤回条数；0 = 没撤成（私聊 / 环境缺类 / 核心拒了）→ 交超管人工。
+ * 权限按核心模型：群聊超管可撤任何人的违规内容；**私聊核心明确不许超管撤他人消息**
+ * （隐私口径），不在插件里绕开核心的权限检查。
+ */
+function owCRAutoRecall(int $msgId, string $hit = ''): int
+{
+    if ($msgId <= 0 || !class_exists('Chat') || !method_exists('Chat', 'recall')) return 0;
     $msg = DB::one('SELECT * FROM messages WHERE id=?', [$msgId]);
-    if (!$msg || (int)$msg['room_id'] <= 0) return false;   // 私聊 / 消息已不在：不自动撤
+    if (!$msg || (int)$msg['room_id'] <= 0) return 0;       // 私聊 / 消息已不在：不自动撤
+
+    $recallOne = function (int $id) use ($msgId): bool {
+        if ($id === $msgId) return true;                     // 被举报那条已在下面撤过
+        try {
+            list($ok) = Chat::recall(['kind' => 'user', 'id' => 0, 'role' => 'admin'], $id);
+            return (bool)$ok;
+        } catch (Throwable $e) {
+            return false;
+        }
+    };
+
     try {
         list($ok) = Chat::recall(['kind' => 'user', 'id' => 0, 'role' => 'admin'], $msgId);
-        return (bool)$ok;
+        if (!$ok) return 0;
     } catch (Throwable $e) {
-        return false;                                       // 撤回失败 → 交人工，绝不静默丢内容
+        return 0;                                            // 撤回失败 → 交人工，绝不静默丢内容
     }
+
+    $n = 1;
+    $win = 600;                                              // 前后各 10 分钟
+    $burst = $hit !== '' && mb_stripos($hit, '刷屏') !== false;
+    $cap = $burst ? 50 : 20;
+    $rows = DB::all(
+        'SELECT * FROM messages WHERE room_id=? AND user_id=? AND id<>? AND deleted=0'
+        . ' AND created_at BETWEEN ? AND ? ORDER BY id ASC LIMIT 200',
+        [(int)$msg['room_id'], (int)($msg['user_id'] ?? 0), $msgId,
+         (int)$msg['created_at'] - $win, (int)$msg['created_at'] + $win]
+    );
+    if ($rows && (int)($msg['user_id'] ?? 0) > 0) {
+        $norm = owCRContentNorm((string)$msg['content']);
+        foreach ($rows as $m) {
+            if ($n >= $cap) break;
+            // 刷屏灌水：窗口内全撤；其余理由只连带「内容相同」的重复
+            if (!$burst && owCRContentNorm((string)$m['content']) !== $norm) continue;
+            if ($recallOne((int)$m['id'])) $n++;
+        }
+    }
+    return $n;
 }
 
 /** 把某条消息下所有「还没处理」的举报标成待超管处理 */
@@ -765,7 +812,7 @@ function owCRResultText(array $rep): string
         return '你的举报已审核：判定违规' . ($hit !== '' ? '（命中：' . $hit . '）' : '') . '，已交由管理员处理。';
     }
     if ($r === 'clear') return '你的举报已审核：未发现违反举报理由的内容，感谢你的反馈。';
-    if ($r === 'skipped') return '你的举报已审核：被举报内容为图片/文件，已转交管理员人工核实。';
+    if ($r === 'skipped') return '你的举报已审核：该内容无法自动核实，已转交管理员人工处理。';
     if ($r === 'manual') return '你的举报已受理，已交由超级管理员处理。';
     return '你的举报已审核完成。';
 }
@@ -801,18 +848,19 @@ function owCRAiApply(array $q, array $r, int $items): array
          mb_substr((string)($r['note'] ?? ''), 0, 300), $items, (int)($r['ms'] ?? 0), $now, $now, $qid]);
 
     if ($violate) {
-        if (owCRAutoRecall($msgId)) {
+        $recalled = owCRAutoRecall($msgId, (string)$r['reason']);
+        if ($recalled > 0) {
             // 自动撤回成功：处置即完成 —— 举报直接落「已处理」，不进待办、不通知举报人
             DB::run('UPDATE plugin_content_report SET status=1 WHERE msg_id=? AND status=0', [$msgId]);
             Sec::log('content_report_auto_recall', (string)$q['target_nick'],
-                ['msg' => $msgId, 'reason' => (string)$r['reason']]);
-            return ['violate' => true, 'auto' => true];
+                ['msg' => $msgId, 'reason' => (string)$r['reason'], 'count' => $recalled]);
+            return ['violate' => true, 'auto' => $recalled];
         }
         // 撤不了（私聊 / 环境缺类）：交超管人工 —— 也照旧不写 result（违规不推前台）
         $n = owCRAlertMsg($msgId);
         Sec::log('content_report_ai_hit', (string)$q['target_nick'],
             ['msg' => $msgId, 'reason' => (string)$r['reason'], 'alerts' => $n]);
-        return ['violate' => true, 'auto' => false];
+        return ['violate' => true, 'auto' => 0];
     }
 
     // 判「正常」：结论回写给举报人（同消息下所有还没结果的举报一次补齐）+ 自动关单
@@ -876,6 +924,13 @@ function owCRAiTick(): string
             $status = $attempts >= OWCR_AI_TRY_MAX ? 'failed' : 'pending';
             DB::run('UPDATE plugin_content_report_ai SET status=?, attempts=?, note=?, elapsed=?, updated_at=? WHERE id=?',
                 [$status, $attempts, mb_substr((string)$r['raw'], 0, 300), (int)($r['ms'] ?? 0), $now, $qid]);
+            if ($status === 'failed') {
+                // v1.2.4：重试耗尽、审核确实失败了 —— 与「内容非文字」同一待遇：
+                // 结论回写给举报人（推前台：「已转交管理员人工核实」），举报进超管待办。
+                // 不能让举报人傻等一个永远不会来的结论。
+                owCRSetResult($msgId, 'skipped', '', $now);
+                owCRAlertMsg($msgId);
+            }
             Sec::log('content_report_ai_fail', (string)$q['target_nick'],
                 ['msg' => $msgId, 'err' => mb_substr((string)$r['raw'], 0, 120)]);
             $failN++;
@@ -883,12 +938,12 @@ function owCRAiTick(): string
         }
 
         $applied = owCRAiApply($q, $r, count($ctx));
-        if ($applied['violate']) { $hitN++; if ($applied['auto']) $autoN++; }
+        if ($applied['violate']) { $hitN++; $autoN += (int)$applied['auto']; }
         $okN++;
     }
-    return '审核 ' . $okN . ' 条（违规 ' . $hitN . '，其中自动撤回 ' . $autoN
+    return '审核 ' . $okN . ' 条（违规 ' . $hitN . '，自动撤回 ' . $autoN
         . ' 条；正常 ' . ($okN - $hitN) . ' 条已通知举报人并自动结单），'
-        . '转人工 ' . $skipN . ' 条，失败 ' . $failN . ' 条';
+        . '转人工 ' . $skipN . ' 条，失败 ' . $failN . ' 条（失败已转人工并通知举报人）';
 }
 
 /* ============================ 通知联系人 ============================ */
@@ -1473,7 +1528,8 @@ Plugin::route('plugin_content_report_submit', function (array $ctx) {
             // v1.2.2 新口径：此前已判违规 → 不通知举报人，直接自动处置。
             // 消息多半已被自动撤回（物理删行）：撤得掉或已不在都直接结单；
             // 还在但撤不掉（私聊）才交超管人工。
-            if (owCRAutoRecall($msgId) || !DB::one('SELECT id FROM messages WHERE id=?', [$msgId])) {
+            if (owCRAutoRecall($msgId, (string)($queueRow['hit'] ?? '')) > 0
+                || !DB::one('SELECT id FROM messages WHERE id=?', [$msgId])) {
                 DB::run('UPDATE plugin_content_report SET status=1 WHERE id=?', [$repId]);
             } else {
                 DB::run('UPDATE plugin_content_report SET alerted=1, alert_at=? WHERE id=?', [$now, $repId]);

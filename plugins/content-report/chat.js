@@ -381,6 +381,19 @@
         } catch (e) { /* 红点是装饰，失败不影响举报本身 */ }
     };
 
+    /**
+     * 把侧栏选中框指回「内容举报」这一行。
+     * ⚠️ 核心 renderNoticeRow() 在 noticeMode 下固定点亮「系统通知」那行（activeKey='dm:notice'），
+     * 而 markSeen / 其它触发重画的地方都会调它 —— 消息箱开着时要在每次重画后补一次，
+     * 否则用户点了「内容举报」、选中框又跳回「系统通知」。
+     */
+    CR.repointActive = function () {
+        var mb = $('owMessages');
+        if (mb && mb.getAttribute('data-cr-box')) {
+            ChatList.activate('owNoticeList', 'dm:' + NOTICE_KEY);
+        }
+    };
+
     /** 上报已读水位（敏感操作）——「不要一刷新又是未读」就靠服务端这个水位 */
     CR.markSeen = function (id) {
         OwApi.secure('plugin_content_report_seen', { id: id || 0 }, function (r) {
@@ -389,6 +402,7 @@
                 for (var i = 0; i < cs.length; i++) if (cs[i].key === NOTICE_KEY) cs[i].unread = 0;
                 if (typeof OwChat.renderNoticeRow === 'function') OwChat.renderNoticeRow();
             } catch (e) {}
+            CR.repointActive();          // 重画完把选中框指回「内容举报」（否则跳回系统通知）
             CR.paintDot(0);
         });
     };
@@ -536,6 +550,7 @@
             for (var i = 0; i < list.length; i++) h += boxMsgHtml(list[i], isAdmin, av, nick);
             box.innerHTML = h;
             box.scrollTop = box.scrollHeight;
+            CR.repointActive();              // 消息箱渲染完把侧栏选中框定在「内容举报」上
             // 打开过就算已读：水位上报后，刷新也不会再变回未读
             if (parseInt(d.max_id, 10) > 0) CR.markSeen(d.max_id);
         });
