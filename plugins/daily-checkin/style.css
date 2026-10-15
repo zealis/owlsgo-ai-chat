@@ -308,6 +308,26 @@
     font-variant-numeric: tabular-nums;
 }
 
+/* ---------- 等级荣誉榜（v1.2.0，数据来自等级信任插件）----------
+   行骨架完全复用上面的 .ow-ci-rank-*（名次 / 头像 / 昵称），只在末尾换一列：
+   签到榜那列是「N 天」，这里是「Lv.N」。
+   ⚠️ 等级列刻意**不用 .ow-lt-badge**：level-cultivation 插件会扫描全站
+   .ow-lt-badge 并把内容替换成修仙图标，本卡里那个徽章是等级数字的唯一来源，
+   被换掉就什么也读不到了；纯文本在启用/未启用该插件两种场景下都成立。 */
+.ow-ci-rank-lv {
+    flex: none; -webkit-flex: none;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ow-text);
+    font-variant-numeric: tabular-nums;
+}
+/* 荣誉等级是金色语义：前三名用 --ow-yellow（浅色下深金 / 深色下亮金，两套主题都过对比度） */
+.ow-ci-honor .ow-ci-rank-lv.top { color: var(--ow-yellow); }
+/* 整行可点开资料卡（OwChat.userCard），给出手型反馈 */
+.ow-ci-honor .ow-ci-rank-i { cursor: pointer; }
+.ow-ci-honor .ow-ci-rank-i:hover { background: var(--ow-hover-bg); }
+.ow-ci-honor .ow-ci-rank-i.me:hover { background: var(--ow-blue-light); }
+
 /* ---------- 空态 / 游客 / 关闭态 ---------- */
 .ow-ci-empty {
     padding: 18px 8px;

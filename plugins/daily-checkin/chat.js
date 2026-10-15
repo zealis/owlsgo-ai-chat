@@ -26,7 +26,9 @@
         busy: 0,
         month: '',
         level: null,        // 等级信任插件的「我的等级 + 今日任务」（该插件停用时为 null）
-        levelOff: false     // mine 接口不可用（插件停用/未安装）→ 不再重试
+        levelOff: false,    // mine 接口不可用（插件停用/未安装）→ 不再重试
+        honor: null,        // 等级荣誉榜（v1.2.0）：{min_level, list}，与 level 同生命周期
+        honorOff: false     // rank 接口不可用（等级插件停用/未安装）→ 不再重试
     };
     w.OwCI = CI;
 
@@ -42,6 +44,17 @@
 
     function monthLabel(m) {
         return parseInt(m.substr(0, 4), 10) + ' 年 ' + parseInt(m.substr(5, 2), 10) + ' 月';
+    }
+
+    /**
+     * 把字符串序列化成可安全嵌进 onclick/on* 属性里当 JS 字符串实参的字面量。
+     * 核心 assets/js/chat.js 的 jsAttr 是 IIFE 内部函数，**没有暴露成全局**，
+     * 插件引用不到 —— 但核心那段注释里的结论照搬适用：esc() 在属性内嵌 JS 的
+     * 上下文防不住注入（浏览器执行 onclick 前会把 &#39; 解码回 '，照样闭合字符串）。
+     * 昵称允许含引号，所以荣誉榜行内 onclick 一律经这里再拼。
+     */
+    function jsAttr(s) {
+        return esc(JSON.stringify(String(s == null ? '' : s)));
     }
 
     /* ---------- 数据 ---------- */
@@ -220,8 +233,9 @@
         var x = CI.data;
         if (!x) { box.innerHTML = '<div class="ow-ci-empty">正在加载…</div>'; return; }
         if (x.enabled !== 1) { box.innerHTML = empty('站点未开放签到', '管理员关闭了签到功能，欢迎下次再来。'); return; }
-        if (x.guest === 1) { box.innerHTML = guestHtml(x); return; }
-        box.innerHTML = heroHtml(x) + tasksHtml(x) + calHtml(x) + rankHtml(x);
+        if (x.guest === 1) box.innerHTML = guestHtml(x);
+        else box.innerHTML = heroHtml(x) + tasksHtml(x) + calHtml(x) + rankHtml(x) + honorHtml();
+        loadHonor();
     }
 
     function empty(title, desc) {
@@ -380,7 +394,76 @@
         return h + '</div>';
     }
 
-    /* ---------- 今日任务（数据来自等级信任插件，v1.1.0） ---------- */
+    /* ---------- 等级荣誉榜（数据来自等级信任插件，v1.2.0） ---------- */
+
+    /**
+     * 「本月签到榜」**正下方**的等级荣誉榜：达到荣誉等级（默认 Lv.60，由等级插件
+     * 的「荣誉标识」配置决定）的用户按等级降序取 TOP N。
+     *
+     * 与「今日任务」同一套 pull 模式（数据走 plugin_level_trust_rank，不反向依赖）：
+     *   ① 等级插件未启用（OwLevel 全局不存在）；② rank 接口不可用（honorOff）；
+     *   ③ 返回空榜（还没人达到荣誉等级）—— 三种情形整卡不显示。
+     *   榜单本身是公开信息，游客也照常展示。
+     * 上榜人数直接复用签到自己的「排行榜人数」配置：两个榜都是 N 条，
+     * 后台只在一个地方改，不会出现「签到榜 8 人、荣誉榜 5 人」的错位。
+     */
+    function honorHtml() {
+        if (!w.OwLevel || !OwLevel.LABEL) return '';
+        if (CI.honorOff) return '';
+        var h = '<div class="ow-ci-card ow-ci-honor" id="owCiHonor">';
+        if (!CI.honor) return h + '<div class="ow-ci-h"><span>等级荣誉榜</span></div>'
+            + '<div class="ow-ci-empty">加载中…</div></div>';
+        var list = CI.honor.list || [];
+        if (!list.length) return '';                 // 空榜：整卡不显示，不留空壳
+        var minLv = parseInt(CI.honor.min_level, 10) || 60;
+        h += '<div class="ow-ci-h"><span>等级荣誉榜</span><em>Lv.' + minLv + '+ 才能上榜</em></div>';
+        for (var i = 0; i < list.length; i++) {
+            var r = list[i];
+            var no = i + 1;
+            // ⚠️ 等级数字用纯文本，**不要**用 .ow-lt-badge：level-cultivation 插件会扫描
+            //    全站 .ow-lt-badge 并把内容替换成修仙图标（它的设计就是接管等级徽章），
+            //    换了之后这一列就没有等级数字可看了。纯文本反而两边都成立
+            //    （徽章语义、金蓝描边另有 .ow-ci-rank-lv 承担）。
+            h += '<div class="ow-ci-rank-i" title="查看资料" onclick="OwChat.userCard(' + r.uid + ',' + jsAttr(r.nickname) + ')">'
+                + '<span class="ow-ci-rank-n' + (no <= 3 ? ' t' + no : '') + '">' + no + '</span>'
+                + '<img class="ow-ci-rank-av" src="' + esc(r.avatar) + '" alt="" loading="lazy">'
+                + '<span class="ow-ci-rank-t">' + esc(r.nickname) + '</span>'
+                + '<span class="ow-ci-rank-lv' + (i < 3 ? ' top' : '') + '">Lv.' + r.level + '</span>'
+                + '</div>';
+        }
+        // 门槛被后台调低时给一句解释，免得「榜上并不是 60 级」看着像 bug（默认 60 不出现）
+        if (minLv !== 60) {
+            h += '<div class="ow-ci-tip">荣誉线当前为 <b>Lv.' + minLv + '</b>'
+                + '（后台「等级信任 → 荣誉标识」可调）。</div>';
+        }
+        return h + '</div>';
+    }
+
+    function loadHonor() {
+        if (!w.OwLevel || !OwLevel.LABEL || CI.honorOff) return;
+        var n = (CI.data && CI.data.cfg && CI.data.cfg.rank_size) || 8;
+        OwApi.post('plugin_level_trust_rank', { n: n }, function (r) {
+            if (!r || !r.ok) { CI.honorOff = true; paintHonor(); return; }
+            CI.honor = r;
+            paintHonor();
+        });
+    }
+
+    /** 只重绘荣誉榜卡：整块换新（同 paintTasks 的思路），不碰月历/签到榜 */
+    function paintHonor() {
+        if (!CI.box) return;
+        var old = d.getElementById('owCiHonor');
+        var tmp = d.createElement('div');
+        tmp.innerHTML = honorHtml();
+        var fresh = tmp.firstChild;
+        if (!fresh) {                                // 空榜 / 接口不可用：骨架与旧卡一并撤掉
+            if (old && old.parentNode) old.parentNode.removeChild(old);
+            return;
+        }
+        if (old && old.parentNode) old.parentNode.replaceChild(fresh, old);
+        else CI.box.appendChild(fresh);
+    }
+
 
     /**
      * 等级信任插件的「今日任务」卡：保底任务逐条展示进度。
