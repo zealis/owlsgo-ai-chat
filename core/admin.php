@@ -168,6 +168,9 @@ class Admin
                 $trash('toggle_status', ['status' => (int)$room['status']]);
                 DB::run('UPDATE rooms SET status=? WHERE id=?', [$to, $id]);
                 Sec::log('room_review', (string)$id, ['act' => $to ? 'unban' : 'ban']);
+                // v1.3.159：封禁 / 解封也要通知插件 —— redis 插件的「公开房间列表」缓存的正是
+                // status=1 那批行，不通知的话它最坏要等 TTL 过期才不再列出已封的群。
+                Plugin::fire('room.after_update', [$id, ['status' => $to], $actor]);
                 return [true, ($to ? '已解封' : '已封禁') . '（可在回收站撤销）'];
             }
             return [false, '未知审核动作'];
@@ -303,6 +306,9 @@ class Admin
                         ]);
                         DB::run('DELETE FROM rooms WHERE id=? AND slug!=?', [$idB, 'public']);
                         Sec::log('room_review', (string)$idB, ['act' => 'delete']);
+                        // v1.3.159：删群同样要通知插件（房间列表缓存靠它精确失效，
+                        // 否则最坏等 TTL 过期才不再列出这个已删的群）
+                        Plugin::fire('room.after_update', [$idB, ['deleted' => 1], $actor]);
                         $okB++;
                         continue;
                     }
@@ -379,6 +385,8 @@ class Admin
                 ]);
                 DB::run('DELETE FROM rooms WHERE id=? AND slug!=?', [$id, 'public']);
                 Sec::log('room_review', (string)$id, ['act' => 'delete']);
+                // v1.3.159：与批量删除同口径 —— 通知插件精确失效房间列表缓存
+                Plugin::fire('room.after_update', [$id, ['deleted' => 1], $actor]);
                 Api::json(['ok' => true, 'msg' => '已删除（可在回收站撤销）']);
 
             // ---------- 公告 ----------

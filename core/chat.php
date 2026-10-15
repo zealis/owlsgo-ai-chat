@@ -287,7 +287,16 @@ class Chat
 
     public static function rooms(array $actor): array
     {
-        $list = DB::all('SELECT * FROM rooms WHERE status=1 ORDER BY id');
+        /* v1.3.159：插件可用缓存里的房间行整段接手（redis 插件就是这种）——
+           「公开房间列表」是全站读得最频繁的一处（每进一次聊天页都要一次）。
+           契约与 online.list 完全一致：回填了行（哪怕只有一行）核心就不再查库；
+           仍是空数组时照旧查库。**可见性 / 密码房 / 游客这些过滤一律留在下面**，
+           插件只提供原始行 —— 规则复制一份的话，核心一改口径插件就错。
+           ⚠️ 于是「缓存里确实一个房间都没有」这种权威结论插件表达不出来：核心会退回去查库，
+              不会给错答案，只是那一次查询省不掉。 */
+        $list = [];
+        Plugin::fire('rooms.rows', [&$list, $actor]);
+        if (!$list) $list = DB::all('SELECT * FROM rooms WHERE status=1 ORDER BY id');
         // v1.1.11：一次性取出「我加入的所有群」，避免在循环里逐群查成员表（N+1）。
         $mineSet = self::memberRoomIds($actor);
         $out = [];
