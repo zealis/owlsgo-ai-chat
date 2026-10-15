@@ -108,7 +108,10 @@ function owReEnsureTable(): void
         last_used_at $int NOT NULL DEFAULT 0,
         revoked $int NOT NULL DEFAULT 0
     )");
-    DB::run("CREATE INDEX IF NOT EXISTS idx_ow_re_tok_room ON plugin_room_embed_tokens (room_id)");
+    // ⚠️ 索引不能用原生 `CREATE INDEX IF NOT EXISTS`：那是 SQLite 语法，MySQL 直接 1064 报错
+    //    （而且建表失败会把这个插件的每一次页面加载都变成 500）。统一走 DB::createIndex()，
+    //    它按驱动分派（MySQL 先查 information_schema 再建），与 login-logs / oauth-core 同口径。
+    DB::createIndex('idx_ow_re_tok_room', 'plugin_room_embed_tokens', 'room_id');
     // v1.3.0：域名白名单列（存量行空值 = 不限制，向后兼容）
     DB::ensureColumn('plugin_room_embed_tokens', 'domains', 'text', "''");
     // v2.0.0：登录授权表（弹窗 OAuth 式登录）。一张表两种 kind：
@@ -128,7 +131,7 @@ function owReEnsureTable(): void
         used_at $int NOT NULL DEFAULT 0,
         revoked $int NOT NULL DEFAULT 0
     )");
-    DB::run("CREATE INDEX IF NOT EXISTS idx_ow_re_auth_kind ON plugin_room_embed_auth (kind, revoked)");
+    DB::createIndex('idx_ow_re_auth_kind', 'plugin_room_embed_auth', 'kind, revoked');
 }
 owReEnsureTable();
 

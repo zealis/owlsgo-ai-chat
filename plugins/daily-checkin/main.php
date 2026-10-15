@@ -55,14 +55,19 @@ function owCIBoot(): void
     DB::run("CREATE TABLE IF NOT EXISTS plugin_checkin_log (
         id           {$id},
         user_id      INTEGER NOT NULL,
-        " . DB::textCol('day') . ",                 -- Y-m-d
+        day          VARCHAR(10) NOT NULL DEFAULT '',  -- Y-m-d
+        -- ⚠️ day 不能用 DB::textCol()（MySQL 下是 TEXT）：它在下面被两条索引用到
+        --    （user_id,day 唯一 + day 单列），而 MySQL 的 TEXT/BLOB 做键要指定长度 → 1170。
         points       INTEGER NOT NULL DEFAULT 0,   -- 本次实发积分（补签为 0）
         streak       INTEGER NOT NULL DEFAULT 0,   -- 本次完成后的连续天数
         " . DB::textCol('kind', "'normal'") . ",    -- normal 普通 / patch 补签 / admin 管理员代签
         created_at   {$ts} DEFAULT 0)");
 
+    // ⚠️ k 必须是 VARCHAR 不能是 TEXT：MySQL 下 TEXT/BLOB 列做键要指定长度，否则建表 1170 报错
+    //    （"BLOB/TEXT column 'k' used in key specification without a key length"），
+    //    建表失败会把该插件的每一次页面加载都变成 500；SQLite 不挑，本机看不出问题。
     DB::run("CREATE TABLE IF NOT EXISTS plugin_checkin_cfg (
-        k TEXT PRIMARY KEY, " . DB::textCol('v') . ")");
+        k VARCHAR(64) PRIMARY KEY, " . DB::textCol('v') . ")");
 
     // (user_id, day) 唯一：并发下重复提交由数据库兜底，比「先查后插」可靠。
     // day 单独一条索引：月历与排行榜都按日期区间筛，没有它就得全表扫。

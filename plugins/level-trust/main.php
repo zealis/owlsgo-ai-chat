@@ -104,12 +104,16 @@ function owLTBoot(): void
         decay_days   REAL    NOT NULL DEFAULT 0,     -- v3.1：长期不登录已消退的「天」（公式里减掉，只增）
         decay_base   INTEGER NOT NULL DEFAULT 0,     -- v3.1：已计入消退的不登录天数基线（防重复扣、支持清零重算）
         updated_at   {$ts} DEFAULT 0)");
+    // ⚠️ k 必须是 VARCHAR 不能是 TEXT：MySQL 下 TEXT/BLOB 列做键要指定长度，否则建表 1170 报错
+    //    （"BLOB/TEXT column 'k' used in key specification without a key length"），
+    //    建表失败会把该插件的每一次页面加载都变成 500；SQLite 不挑，本机看不出问题。
     DB::run("CREATE TABLE IF NOT EXISTS plugin_level_config (
-        k TEXT PRIMARY KEY, " . DB::textCol('v') . ")");
+        k VARCHAR(64) PRIMARY KEY, " . DB::textCol('v') . ")");
     // v1.2.44：按自然日归档的活跃数据（后台「活跃趋势」用）。
     //   不逐条记流水 —— 那样表会无上限膨胀，而趋势图只需要每天的汇总数。
     DB::run("CREATE TABLE IF NOT EXISTS plugin_level_daily (
-        day      TEXT PRIMARY KEY,            -- Y-m-d
+        day      VARCHAR(10) PRIMARY KEY,     -- Y-m-d
+                                              -- ⚠️ 同上：TEXT 当主键在 MySQL 下直接 1170，这里改成 VARCHAR(10)
         actives  INTEGER NOT NULL DEFAULT 0,  -- 当日活跃过的用户数（去重）
         logins   INTEGER NOT NULL DEFAULT 0,  -- 当日新增登录人天
         upgrades INTEGER NOT NULL DEFAULT 0,  -- 当日升级次数

@@ -122,7 +122,10 @@ function csBoot(): void
     DB::createIndex('idx_cs_cast_due', 'plugin_chat_scripts_cast', 'enabled, next_run_at', false);
 
     // 配置（k/v）
-    DB::run("CREATE TABLE IF NOT EXISTS plugin_chat_scripts_cfg (k TEXT PRIMARY KEY, " . DB::textCol('v') . ")");
+    // ⚠️ k 必须是 VARCHAR 不能是 TEXT：MySQL 下 TEXT/BLOB 列做键要指定长度，否则
+    //    建表直接 1170 报错（"BLOB/TEXT column 'k' used in key specification without a key length"），
+    //    而建表失败会把这个插件的每一次页面加载都变成 500。SQLite 对此不挑，所以本机一路看不出问题。
+    DB::run("CREATE TABLE IF NOT EXISTS plugin_chat_scripts_cfg (k VARCHAR(64) PRIMARY KEY, " . DB::textCol('v') . ")");
 
     // 发送日志（B/C 的每次自动发送留痕，后台可查）
     DB::run("CREATE TABLE IF NOT EXISTS plugin_chat_scripts_log (
