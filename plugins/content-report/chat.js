@@ -281,8 +281,10 @@
         if (imgs.length) {
             h += '<div class="ow-cr-alert-imgs">';
             for (var i = 0; i < imgs.length; i++) {
-                h += '<a href="' + esc(imgs[i]) + '" target="_blank" rel="noopener">'
-                   + '<img src="' + esc(imgs[i]) + '" alt="举报截图 ' + (i + 1) + '"></a>';
+                // 点开用**站内灯箱**（OwChat.viewImg，与消息里的图片同一套；它的 z-index 200
+                // 高于弹窗遮罩 100，所以能盖在弹窗上放大，不必新开标签页）
+                h += '<img src="' + esc(imgs[i]) + '" alt="举报截图 ' + (i + 1) + '"'
+                   + ' title="点击查看大图" onclick="OwChat.viewImg(this.src)">';
             }
             h += '</div>';
         }

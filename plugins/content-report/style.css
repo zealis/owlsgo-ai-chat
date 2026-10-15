@@ -106,6 +106,7 @@
     object-fit: cover;
     border-radius: 6px;
     border: 1px solid var(--ow-border);
+    cursor: zoom-in;      /* 点开走站内灯箱（OwChat.viewImg） */
 }
 .ow-cr-alert-ops {
     display: flex;
