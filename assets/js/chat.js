@@ -5551,8 +5551,12 @@
          * 把菜单开在某个触发按钮的旁边。
          * align='bottom' 给沉底的 ☰：菜单往上长、底边与按钮底边对齐；
          * align='top'    给品牌条上的头像：菜单往下长（顶边落在按钮下沿之外，不去盖品牌条）。
-         * 横向默认开在按钮**右侧**（rail 贴最左，只能往右）；触发点在右半边时自动翻到左侧，
+         * 横向默认开在按钮**右侧**（rail 贴最左，只能往右）；触发点在右半边时自动翻过去，
          * 品牌条那颗头像就是这种（v1.3.142）—— 不翻的话整张菜单会掉出视口右沿。
+         * ⚠️ 翻过去时取「菜单右沿 = 触发点右沿」，不是「菜单摆在触发点左边留 8px 缝」：
+         *   后者实测把 136px 宽的菜单推到胶囊左沿之外（胶囊 left 1275、菜单 right 1267），
+         *   整张菜单离它的触发点 120px 远，看着像从聊天区标题里长出来的（v1.3.145 站方截图）。
+         *   右沿对齐才是下拉菜单的常规接法，且天然不会掉出视口（触发点右沿本就在 16px 内边距里）。
          * 上下也各自夹在视口里，别盖到品牌条上面。
          */
         _ctxOpenAt: function (items, from, anchor, align) {
@@ -5579,7 +5583,8 @@
             if (top < 8) top = 8;
             if (top + mh > vh - 8) top = Math.max(8, vh - 8 - mh);
             var left = r.right + 8;
-            if (left + mw > vw - 8) left = Math.max(8, r.left - mw - 8);
+            if (left + mw > vw - 8) left = r.right - mw;
+            if (left < 8) left = Math.max(8, vw - mw - 8);
             menu.style.left = left + 'px';
             menu.style.top = top + 'px';
         },
