@@ -126,7 +126,12 @@
     CS.renderAi = function () {
         if (!$('owCsAiOn')) return;                    // 还没渲染出 AI 那张卡
         var ai = (CS.data && CS.data.ai) || {};
-        $('owCsAiOn').checked = !!ai.on;
+        var on = $('owCsAiOn');
+        on.checked = !!ai.on;
+        /* v1.2.1：AI 开关换成核心的通用开关轮子后，轨道（.ow-switch 的 is-on 类）要跟着
+           checkbox 走 —— 服务端渲染时还不知道状态（配置是 AJAX 拿的），所以在这一刻同步一次。
+           轮子由核心导出（chat.js 挂在 window 上），与 attachment-manager / sensitive-words 同款。 */
+        if (w.bindSwitches) w.bindSwitches(on);
         $('owCsAiTimeout').value = ai.timeout || 10;
         $('owCsAiDaily').value = ai.daily || 0;
         $('owCsAiCtx').value = ai.ctx || 0;

@@ -1121,8 +1121,18 @@ Plugin::adminPage('chat-scripts', '群聊自动化', function () {
         . '<p style="font-size:12px">开启后，群里<b>有人 @ 机器人</b>时，机器人会用配置的模型回答那个人的问题，'
         . '并以自己的身份发出（回复前面带 @提问者）。<b>没人 @ 它就不调用接口</b>，所以平时不烧钱。'
         . '关键词自动回复仍是「没人 @ 也应答」的兜底，两者不抢同一条消息。</p>'
-        . '<div class="ow-form-item"><label class="ow-cs-check"><input type="checkbox" id="owCsAiOn">'
-        . '<span>启用 AI 应答</span></label></div>'
+        /* v1.2.1：改用核心的通用开关轮子（.ow-switch-row）—— 后台布尔项一律用开关，
+           裸勾选框只表达「勾了没有」，一排设置下来要逐个读文字才知道站点现在是什么行为。
+           结构照核心 switchHtml()：隐藏 checkbox（真实状态载体）+ for 到它的轨道 label。
+           ⚠️ 开关行**不要包 .ow-form-item**：包了会被 .ow-form-row 的 min-width 卡成窄列、
+              轨道被推到列最右侧（核心 switchHtml 的注释里记着这个坑）。
+           ⚠️ 初始不给 is-on：这页 HTML 是服务端死的，真实状态由 admin.js 拉回来后再同步
+              （renderAi 里调核心的 bindSwitches），写在服务端只会写错。 */
+        . '<div class="ow-switch-row">'
+        . '<span class="ow-switch-label">启用 AI 应答</span>'
+        . '<input type="checkbox" class="ow-switch-input" id="owCsAiOn">'
+        . '<label class="ow-switch" for="owCsAiOn"></label>'
+        . '</div>'
         . '<div class="ow-form-row">'
         . '<div class="ow-form-item"><label>超时（秒）</label>'
         . '<input class="ow-input" id="owCsAiTimeout" type="number" min="3" max="30" style="width:90px"></div>'
