@@ -213,6 +213,22 @@ function owCRReasonsMigrate(): bool
 }
 owCRReasonsMigrate();
 
+/**
+ * v1.2.2 一次性存量收尾：AI 已经判「正常」的举报不该再挂在超管待处理里
+ * （截图反馈：结论=正常、状态还停在「待处理」）。自动标成已处理。
+ * 结论回写 v1.2.0 起就做了，这里只关单；幂等靠 config 标记，只跑一次。
+ */
+function owCRClearMigrate(): void
+{
+    $done = DB::one('SELECT v FROM plugin_content_report_config WHERE k=?', ['ai_clear_migrated']);
+    if ($done) return;
+    DB::run("UPDATE plugin_content_report SET status=1 WHERE status=0 AND alerted=0 AND msg_id>0"
+        . " AND msg_id IN (SELECT msg_id FROM plugin_content_report_ai"
+        . " WHERE status='done' AND verdict='clear')");
+    owCRSetConfig('ai_clear_migrated', '1');
+}
+owCRClearMigrate();
+
 /* ============================ 通知头像 ============================ */
 
 /**
@@ -625,6 +641,26 @@ function owCRAiEnqueue(array $rep, array $cfg): ?array
 }
 
 /** 把某条消息下所有「还没处理」的举报标成待超管处理 */
+/**
+ * v1.2.2：以超管身份**自动撤回**违规消息。走核心 Chat::recall —— 物理删行 + 删附件 +
+ * msg.after_recall 钩子，与人工撤回完全同一条路（前端长轮询会立刻看到消息消失）。
+ * 权限按核心模型：群聊超管可撤任何人的违规内容；**私聊核心明确不许超管撤他人消息**
+ * （隐私口径），撤不了就回落「交超管人工」—— 不在插件里绕开核心的权限检查。
+ */
+function owCRAutoRecall(int $msgId): bool
+{
+    if ($msgId <= 0 || !class_exists('Chat') || !method_exists('Chat', 'recall')) return false;
+    $msg = DB::one('SELECT * FROM messages WHERE id=?', [$msgId]);
+    if (!$msg || (int)$msg['room_id'] <= 0) return false;   // 私聊 / 消息已不在：不自动撤
+    try {
+        list($ok) = Chat::recall(['kind' => 'user', 'id' => 0, 'role' => 'admin'], $msgId);
+        return (bool)$ok;
+    } catch (Throwable $e) {
+        return false;                                       // 撤回失败 → 交人工，绝不静默丢内容
+    }
+}
+
+/** 把某条消息下所有「还没处理」的举报标成待超管处理 */
 function owCRAlertMsg(int $msgId): int
 {
     if ($msgId <= 0) return 0;
@@ -743,7 +779,17 @@ function owCRResultText(array $rep): string
  * @param int   $items 本次送审的消息条数
  * @return bool 是否判违规
  */
-function owCRAiApply(array $q, array $r, int $items): bool
+/**
+ * 一次判定写回队列并按结论处置。返回 ['violate'=>bool, 'auto'=>bool]（auto=自动撤回是否成功）。
+ *
+ * v1.2.2 站方口径（两点都反过来了）：
+ *   - 判「正常」→ **要**通知前台：结论回写给举报人（消息箱里能看到「未发现违规」），
+ *     并把该消息下的举报自动标「已处理」—— AI 已给出结论的举报不该再挂在超管待办里
+ *     等人手动点「已处理」。
+ *   - 判「违规」→ **不**通知前台：直接自动撤回被举报消息（群聊），处置即完成、举报自动关单；
+ *     撤回失败（私聊 / 消息已不在）才回落「交超管人工」。
+ */
+function owCRAiApply(array $q, array $r, int $items): array
 {
     $now = time();
     $qid = (int)$q['id'];
@@ -753,14 +799,26 @@ function owCRAiApply(array $q, array $r, int $items): bool
         . ' item_count=?, elapsed=?, reviewed_at=?, updated_at=? WHERE id=?',
         ['done', $violate ? 'violate' : 'clear', $violate ? (string)$r['reason'] : '',
          mb_substr((string)($r['note'] ?? ''), 0, 300), $items, (int)($r['ms'] ?? 0), $now, $now, $qid]);
+
     if ($violate) {
+        if (owCRAutoRecall($msgId)) {
+            // 自动撤回成功：处置即完成 —— 举报直接落「已处理」，不进待办、不通知举报人
+            DB::run('UPDATE plugin_content_report SET status=1 WHERE msg_id=? AND status=0', [$msgId]);
+            Sec::log('content_report_auto_recall', (string)$q['target_nick'],
+                ['msg' => $msgId, 'reason' => (string)$r['reason']]);
+            return ['violate' => true, 'auto' => true];
+        }
+        // 撤不了（私聊 / 环境缺类）：交超管人工 —— 也照旧不写 result（违规不推前台）
         $n = owCRAlertMsg($msgId);
         Sec::log('content_report_ai_hit', (string)$q['target_nick'],
             ['msg' => $msgId, 'reason' => (string)$r['reason'], 'alerts' => $n]);
+        return ['violate' => true, 'auto' => false];
     }
-    // v1.2.0：判定出来后把结论回写给**举报人**（同消息下所有还没结果的举报一次补齐）
-    owCRSetResult($msgId, $violate ? 'violate' : 'clear', (string)$r['reason'], $now);
-    return $violate;
+
+    // 判「正常」：结论回写给举报人（同消息下所有还没结果的举报一次补齐）+ 自动关单
+    owCRSetResult($msgId, 'clear', '', $now);
+    DB::run('UPDATE plugin_content_report SET status=1 WHERE msg_id=? AND status=0 AND alerted=0', [$msgId]);
+    return ['violate' => false, 'auto' => false];
 }
 
 /**
@@ -776,7 +834,7 @@ function owCRAiTick(): string
     $rows = DB::all("SELECT * FROM plugin_content_report_ai WHERE status='pending' ORDER BY id ASC LIMIT $limit");
     if (!$rows) return '';
 
-    $okN = 0; $hitN = 0; $failN = 0; $skipN = 0;
+    $okN = 0; $hitN = 0; $failN = 0; $skipN = 0; $autoN = 0;
     foreach ($rows as $q) {
         $now = time();
         $qid = (int)$q['id'];
@@ -824,10 +882,12 @@ function owCRAiTick(): string
             continue;
         }
 
-        if (owCRAiApply($q, $r, count($ctx))) $hitN++;
+        $applied = owCRAiApply($q, $r, count($ctx));
+        if ($applied['violate']) { $hitN++; if ($applied['auto']) $autoN++; }
         $okN++;
     }
-    return '审核 ' . $okN . ' 条（违规 ' . $hitN . '、正常 ' . ($okN - $hitN) . '），'
+    return '审核 ' . $okN . ' 条（违规 ' . $hitN . '，其中自动撤回 ' . $autoN
+        . ' 条；正常 ' . ($okN - $hitN) . ' 条已通知举报人并自动结单），'
         . '转人工 ' . $skipN . ' 条，失败 ' . $failN . ' 条';
 }
 
@@ -1404,11 +1464,18 @@ Plugin::route('plugin_content_report_submit', function (array $ctx) {
         // 这条消息此前已被判违规 → 本次举报一并标成待超管处理，并把已有结论直接回给举报人，
         // 不必再等一次调用（v1.2.0：结果与待办在同一刻落齐）
         if ($queueRow && (string)($queueRow['verdict'] ?? '') === 'violate') {
-            DB::run('UPDATE plugin_content_report SET alerted=1, alert_at=?, result=?, result_at=?, result_hit=? WHERE id=?',
-                [$now, 'violate', $now, (string)($queueRow['hit'] ?? ''), $repId]);
+            // v1.2.2 新口径：此前已判违规 → 不通知举报人，直接自动处置。
+            // 消息多半已被自动撤回（物理删行）：撤得掉或已不在都直接结单；
+            // 还在但撤不掉（私聊）才交超管人工。
+            if (owCRAutoRecall($msgId) || !DB::one('SELECT id FROM messages WHERE id=?', [$msgId])) {
+                DB::run('UPDATE plugin_content_report SET status=1 WHERE id=?', [$repId]);
+            } else {
+                DB::run('UPDATE plugin_content_report SET alerted=1, alert_at=? WHERE id=?', [$now, $repId]);
+            }
             $route = 'violate';
         } elseif ($queueRow && (string)($queueRow['verdict'] ?? '') === 'clear') {
-            DB::run('UPDATE plugin_content_report SET result=?, result_at=? WHERE id=?',
+            // v1.2.2 新口径：判「正常」也要通知举报人（结论回写）+ 自动结单
+            DB::run('UPDATE plugin_content_report SET status=1, result=?, result_at=? WHERE id=?',
                 ['clear', $now, $repId]);
             $route = 'clear';
         }
