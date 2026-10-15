@@ -594,6 +594,30 @@ button { font-family: inherit; cursor: pointer; }
 /* 禁用态：整行半透明由 .ow-switch-row.is-disabled 管，这里只补「轨道不该是手型」 */
 .ow-switch-row.is-disabled .ow-switch { cursor: not-allowed; }
 
+/* ---------- 「知情确认」勾选框行（v1.3.156，通用轮子）----------
+   与 .ow-switch-row 并列的另一档，用途不同、别互相替代：
+     · .ow-switch-row  = 「站点现在的行为」（开着还是关着，一眼看得出）
+     · .ow-check-row   = 「我确认这一次」（降级、覆盖本地差异、清空密码这类不可逆动作前的确认）
+   一次性确认保留原生勾选框，但它和开关一样需要这层 flex：**原生 checkbox 按 baseline 对齐，
+   跟 13px 的中文摆一行会明显上下错位** —— 升级页那两个确认框就是这么歪的（站方反馈）。
+   结构（整行可点，因为 label 包着 input）：
+     <label class="ow-check-row"><input type="checkbox" id="…"> 确认文字</label>
+   ⚠️ 复选框定死 16×16 且不许被压扁：与文字同高才不歪（照 .ow-cs-check 那套配方）。 */
+.ow-check-row {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    line-height: 1.5;
+    cursor: pointer;
+    user-select: none; -webkit-user-select: none;
+}
+.ow-check-row > input[type="checkbox"] {
+    flex: none; -webkit-flex: none;
+    width: 16px; height: 16px;
+    margin: 0;
+}
+
 /* ---------- 折叠分组（v1.2.53，通用轮子）----------
    后台「系统设置」按主题分成若干组（基本信息 / 群聊 / 游客、存储 / 系统与维护），
    每组可点标题展开收起 —— 表单项一多时不用拖长条滚动找。

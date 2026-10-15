@@ -7096,11 +7096,11 @@
                         + '<div style="font-size:12px;max-height:200px;overflow:auto;font-family:Consolas,monospace;margin-top:4px">'
                         + names.join('<br>') + '</div></details>';
                     if (r.downgrade) {
-                        h += '<label style="display:block;margin:6px 0;font-size:13px;color:#8a5a00">'
+                        h += '<label class="ow-check-row" style="margin:6px 0;color:#8a5a00">'
                             + '<input type="checkbox" id="owUpdDown"> 远端版本低于本地，允许降级（一般应该用「恢复备份」而不是降级）</label>';
                     }
                     if (st === 'local_changes' && !r.downgrade) {
-                        h += '<label style="display:block;margin:6px 0;font-size:13px;color:#8a5a00">'
+                        h += '<label class="ow-check-row" style="margin:6px 0;color:#8a5a00">'
                             + '<input type="checkbox" id="owUpdOver"> 我确认要用仓库版本覆盖这些本地差异文件</label>';
                     }
                     h += '<button class="ow-btn ow-btn-primary" style="margin-top:6px" onclick="OwAdmin.upgrade.apply()">升级</button>';
