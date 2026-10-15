@@ -327,10 +327,16 @@ Plugin::on('captcha.form', function (array $ctx = []): string {
     // 加好友（friend_add）永远内嵌：它本身已经在弹窗里（见文件头注释）。
     $modal = ((string)($c['form_mode'] ?? 'modal') === 'modal' && $scene !== 'friend_add') ? '1' : '0';
     if ($provider === 'turnstile') {
-        $inner = '<div class="cf-turnstile" data-sitekey="' . htmlspecialchars((string)$c['turnstile_site_key'], ENT_QUOTES) . '" data-theme="auto" data-size="flexible"></div>';
+        // 弹窗模式：内层留空，由 ensureTurnstile 在**可见的弹窗容器**里建 —— 隐藏容器里
+        // 被 implicit 渲染登记过「已占用」的元素，之后 render 会被 SDK 拒绝。
+        $inner = ($modal === '1') ? ''
+            : '<div class="cf-turnstile" data-sitekey="' . htmlspecialchars((string)$c['turnstile_site_key'], ENT_QUOTES) . '" data-theme="auto" data-size="flexible"></div>';
     } elseif ($provider === 'cap') {
         $endpoint = rtrim(trim((string)$c['cap_instance_url']), '/') . '/' . trim((string)$c['cap_site_key']) . '/';
-        $inner = '<cap-widget data-cap-api-endpoint="' . htmlspecialchars($endpoint, ENT_QUOTES) . '"'
+        // 弹窗模式：内层留空，由 verify.js 在**可见的弹窗容器**里重建（隐藏容器里
+        // 初始化过的 Cap 会带着上半轮的状态，重试时它认为自己已完成、点击无反应）。
+        // 内嵌模式仍在这里直接给现成元素。
+        $inner = ($modal === '1') ? '' : '<cap-widget data-cap-api-endpoint="' . htmlspecialchars($endpoint, ENT_QUOTES) . '"'
             . ' data-cap-i18n-initial-state="进行人机验证" data-cap-i18n-verifying-label="正在验证…"'
             . ' data-cap-i18n-solved-label="验证成功" data-cap-i18n-error-label="验证出错"></cap-widget>';
     } else {
@@ -347,9 +353,10 @@ Plugin::on('captcha.form', function (array $ctx = []): string {
         . ($modal === '1' ? ' style="display:none"' : '')
         . ' data-owcv-vid="' . htmlspecialchars((string)$c['vaptcha_vid'], ENT_QUOTES) . '"'
         . ' data-owcv-gid="' . htmlspecialchars((string)$c['geetest_captcha_id'], ENT_QUOTES) . '"'
-        // v1.1.1：弹窗模式要在可见容器里**重建** Turnstile 组件（被占用的老容器 render 会被拒），
-        // sitekey 必须能从盒子上读到 —— 内层那个 .cf-turnstile 会被整个替换掉。
+        // v1.1.1：弹窗模式要在可见容器里**重建**组件（被占用的老容器 render 会被拒），
+        // sitekey / endpoint 必须能从盒子上读到 —— 内层元素会被整个替换掉。
         . ' data-owcv-sitekey="' . htmlspecialchars((string)$c['turnstile_site_key'], ENT_QUOTES) . '"'
+        . ' data-owcv-cap-endpoint="' . htmlspecialchars(rtrim(trim((string)$c['cap_instance_url']), '/') . '/' . trim((string)$c['cap_site_key']) . '/', ENT_QUOTES) . '"'
         . ' data-owcv-cap-script="' . htmlspecialchars((string)$c['cap_script_url'], ENT_QUOTES) . '">'
         . '<div class="ow-cv-box" id="' . $dom . '">' . $inner . '</div>'
         . '<p class="ow-cv-tip" role="status" aria-live="polite"></p></div>';

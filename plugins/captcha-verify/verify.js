@@ -119,10 +119,11 @@
         //       之后再 render 会被拒 —— 组件永远不出现）；
         //    ② 重试（失败后不刷新再点）时组件可能还以为手里那枚 token 有效，
         //       需要它重新出题，否则观察器永远等不到新 token。
-        //    ensureTurnstile 内部已经把这些情形分好了（解题中不动 / 已消费重出题 /
-        //    半成品重建），这里只负责「可见之后叫它一次」。
+        //    ensureTurnstile / ensureCap 内部已经把这些情形分好了（解题中不动 /
+        //    已消费重出题 / 半成品重建），这里只负责「可见之后叫它们一次」。
         clearSpentToken(ctx.form);
         if (w.OwCv.ensureTurnstile) w.OwCv.ensureTurnstile(ctx.box);
+        if (w.OwCv.ensureCap) w.OwCv.ensureCap(ctx.box);       // Cap 有自己的复位语义（见 widget.js）
         ctx.box.classList.add('ow-cv-wait');
         text(ov.querySelector('.ow-cv-mtip'), '通过验证后自动继续，无需再点按钮。');
     }

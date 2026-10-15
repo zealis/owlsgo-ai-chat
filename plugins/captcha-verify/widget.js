@@ -131,6 +131,74 @@
     /** 组件盒子初始化序号（给 VAPTCHA 的临时 id 用，跨 mount 也要唯一） */
     var owCvSeq = 0;
 
+    /**
+     * v1.1.1：确保 Cap 组件在弹窗里处于「能出 token」的状态，并在通过时通知 onToken。
+     *
+     * Cap 与 Turnstile 的差异（读 cap-widget@0.1.58 源码确认）：
+     *   - 完成时会派发 "solve" 事件到元素上（bubbles），并写 <input name="cap-token">；
+     *   - 复位用元素自身的 reset()（内部会 token=null、清倒计时、派发 "reset"）；
+     *   - reset() 会重建内部 DOM（状态文案），顺手把「重试时文案叠字」也消掉。
+     * ⚠️ 重试卡死的根因就在这：上一轮解题后 widget 内部 token 还留着，
+     *    弹窗再打开时它认为自己已完成、不再响应点击，观察器永远等不到新 token。
+     *    所以表单消费过 token（__owCvSpent）时，必须 reset 一次。
+     */
+    function ensureCap(box) {
+        if (!box || box.getAttribute('data-owcv-provider') !== 'cap') return;
+        var holder = box.querySelector('.ow-cv-box');
+        if (!holder) return;
+        var el = holder.querySelector('cap-widget');
+        var form = box.closest('form') || null;
+        var spent = !!(form && form.__owCvSpent);
+
+        var wire = function (node) {
+            if (!node || node._owCvWired) return;
+            node._owCvWired = 1;
+            node.addEventListener('solve', function () {
+                box._owCvSolved = 1;
+                w.OwCv.onToken(box);
+            });
+            node.addEventListener('error', function () { tip(box, '验证失败，请重试'); });
+        };
+        if (el) wire(el);                                     // 元素在就先挂通知（与可见性无关）
+
+        if (holder.offsetParent === null) return;             // 容器仍不可见：建/复位等弹窗打开
+
+        if (el) {
+            // 构造期已过的元素再改属性不会重跑初始化，所以 on* 一律走 addEventListener；
+            // 复位只在上次消费过 token 时做（没消费就别动，免得把正在进行的解题打断）
+            if (spent) {
+                try { if (typeof el.reset === 'function') el.reset(); box._owCvSolved = 0; }
+                catch (e) { /* 尚未升级为自定义元素：忽略 */ }
+            }
+            return;
+        }
+
+        // 没渲染（首屏藏在 display:none 里，或还没建过）：造一个再等脚本升级
+        var script = box.getAttribute('data-owcv-cap-script') || '';
+        loadScript(script, function (ok) {
+            if (!ok) tip(box, '人机验证组件加载失败，请检查后台「组件脚本地址」');
+        });
+        var fresh = d.createElement('cap-widget');
+        fresh.setAttribute('data-cap-api-endpoint', box.getAttribute('data-owcv-cap-endpoint') || '');
+        fresh.setAttribute('data-cap-i18n-initial-state', '进行人机验证');
+        fresh.setAttribute('data-cap-i18n-verifying-label', '正在验证…');
+        fresh.setAttribute('data-cap-i18n-solved-label', '验证成功');
+        fresh.setAttribute('data-cap-i18n-error-label', '验证出错');
+        holder.appendChild(fresh);
+        wire(fresh);
+        // 自定义元素可能稍后才升级完成：轮询补一次 wire（wire 自带幂等守卫）
+        var n = 0;
+        var t = setInterval(function () {
+            if (fresh._owCvWired && fresh.shadowRoot) { clearInterval(t); return; }
+            if (w.customElements && w.customElements.get && w.customElements.get('cap-widget')) {
+                wire(fresh);
+                if (fresh._owCvWired && fresh.shadowRoot) clearInterval(t);
+            }
+            if (++n > 20 || !fresh.parentNode) clearInterval(t);
+        }, 500);
+    }
+    w.OwCv.ensureCap = ensureCap;
+
     /** 同一个 URL 只加载一次（页面上有多个表单时不会重复注入 script） */
     var loaded = {};
     function loadScript(url, cb) {
@@ -199,15 +267,21 @@
         }
 
         if (provider === 'cap') {
+            // v1.1.1：服务端给的 cap-widget 元素只保证「在」，升级成自定义元素与
+            // 「solve 通知」都要在这里补 —— 内嵌模式不在弹窗里，ensureCap 不会被调，
+            // 缺了这段组件就是死的（不升级、token 字段永远不出现）。
             loadScript(box.getAttribute('data-owcv-cap-script'), function (ok) {
                 if (!ok) tip(box, '人机验证组件加载失败，请检查后台「组件脚本地址」');
             });
-            // v1.1.0：Cap 在元素上派发 solve 事件（token 同时会写进表单字段）；
-            // 挂不上也只是慢半拍 —— 弹窗侧的 token 观察器兜底
-            var cw = box.querySelector('cap-widget');
-            if (cw && cw.addEventListener) {
-                cw.addEventListener('solve', function () { w.OwCv.onToken(box); });
-            }
+            ensureCap(box);
+            // 脚本还没加载好时，元素稍后才会被 upgrade：轮询补 wire（wire 幂等）
+            var cn = 0;
+            var ct = setInterval(function () {
+                var wl = box.querySelector('cap-widget');
+                if (wl && wl._owCvWired && wl.shadowRoot) { clearInterval(ct); return; }
+                if (wl) ensureCap(box);
+                if (++cn > 20) clearInterval(ct);
+            }, 500);
             return;
         }
 
