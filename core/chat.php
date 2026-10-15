@@ -990,6 +990,12 @@ class Chat
         $asc = $fromId > 0;      // 往后取是「从早到晚」，与前面的 DESC 相反
         $sql .= ' ORDER BY id ' . ($asc ? 'ASC' : 'DESC') . ' LIMIT ' . max(1, min(100, $limit));
         $rows = DB::all($sql, $args);
+        /* v1.3.154：插件可在这里接手「这批行」—— 典型是 redis 插件在 $rows 为空时用缓存里的原始行回填。
+           pack() / 可见性 / 隐藏过滤仍由下面这段核心做（插件**只提供原始行**）：隐藏消息、密码房、
+           游客这几条规则一旦在插件里复制一份，核心改口径时插件就跟着错。
+           ⚠️ 回填的行序必须与上面那条 SQL 的 ORDER BY 一致（默认 DESC；$fromId 那条是 ASC）——
+              紧接着还有一次 array_reverse 要按这个约定翻正，序给反了时间线就是倒的。 */
+        Plugin::fire('history.rows', [&$rows, $roomId, $beforeId, $limit, $fromId, $actor]);
         // ⚠️ 只有 DESC 那条路需要翻转（原本是为「取最新 N 条」倒着取再翻正）。
         //   ASC 已经是升序，再翻一次就变回倒序 —— 前端 appendMessage 会把
         //   消息按这个顺序**追加到末尾**，结果时间线是反的。
@@ -1067,16 +1073,24 @@ class Chat
         $new = [];
         $hidden = self::hiddenIds($actor);
         while (time() < $deadline) {
-            $rows = DB::all('SELECT * FROM messages WHERE room_id=? AND id>? ORDER BY id LIMIT 200', [$roomId, $sinceId]);
-            if ($rows) {
-                $avMap = self::avatarMap($rows);   // v1.3.20：与 history 同一口径（见 pack）
-                foreach ($rows as $m) {
-                    // v1.1.14：隐藏的消息不下发，但仍要推进 sinceId，
-                    // 否则这条会被下一次轮询重新捞出来反复判断。
-                    if (!isset($hidden[(int)$m['id']]) && self::visible($m, $actor)) $new[] = self::pack($m, $actor, $avMap);
-                    $sinceId = max($sinceId, (int)$m['id']);
+            /* v1.3.154：把「这一轮该不该查库」交给插件判断（redis 插件按缓存里的最新消息 id 短路）。
+               $hit 置 '1' = 插件已确认「这段时间没有新消息」→ 跳过这次探活查询。
+               ⚠️ 语义是「跳过查询」，不是「有新消息」；一轮长轮询最多 40 次 SELECT，这里是省得最多的一处。
+               ⚠️ 无人应答（$hit 保持空串）时行为与从前完全一致 —— 照查库。 */
+            $hit = '';
+            Plugin::fire('poll.hint', [&$hit, $roomId, $sinceId]);
+            if ($hit !== '1') {
+                $rows = DB::all('SELECT * FROM messages WHERE room_id=? AND id>? ORDER BY id LIMIT 200', [$roomId, $sinceId]);
+                if ($rows) {
+                    $avMap = self::avatarMap($rows);   // v1.3.20：与 history 同一口径（见 pack）
+                    foreach ($rows as $m) {
+                        // v1.1.14：隐藏的消息不下发，但仍要推进 sinceId，
+                        // 否则这条会被下一次轮询重新捞出来反复判断。
+                        if (!isset($hidden[(int)$m['id']]) && self::visible($m, $actor)) $new[] = self::pack($m, $actor, $avMap);
+                        $sinceId = max($sinceId, (int)$m['id']);
+                    }
+                    break;
                 }
-                break;
             }
             Plugin::cronTick();
             usleep(500000); // 0.5s
@@ -2018,6 +2032,10 @@ class Chat
     {
         if ($actor['kind'] === 'none') return;
         $token = $actor['kind'] === 'user' ? 'u' . $actor['id'] : 'g' . $actor['id'];
+        /* v1.3.154：通知型 —— 「这个人在这个房间露面了」（redis 插件据此把在场状态镜像到 Redis）。
+           没有能力「跳过下面那句 upsert」：参数不是按引用的，核心照旧写库；
+           要真省掉这次写库，得让插件在 heartbeat 之前就回答，那是另一个量级的改动。 */
+        Plugin::fire('online.track', [$actor, $roomId]);
         DB::upsert('online', [
             'token' => $token,
             'user_id' => $actor['kind'] === 'user' ? $actor['id'] : null,
@@ -2031,7 +2049,15 @@ class Chat
 
     public static function onlineList(int $roomId): array
     {
-        $rows = DB::all('SELECT * FROM online WHERE room_id=? AND last_seen>? ORDER BY role=\'admin\' DESC, last_seen DESC LIMIT 300', [$roomId, time() - 45]);
+        /* v1.3.154：插件可用缓存里的在场名单**整段接手**（redis 插件就是这种）。
+           契约：回填了行（哪怕只有一条）核心就不再查库；仍是空数组时照旧查库。
+           ⚠️ 因此「Redis 里确实一个人都没有」这种权威结论，插件表达不出来 —— 核心会退回去查库。
+              不会给错答案（库里的行本来也只保留 45 秒），只是那一次查询省不掉。 */
+        $rows = [];
+        Plugin::fire('online.list', [&$rows, $roomId]);
+        if (!$rows) {
+            $rows = DB::all('SELECT * FROM online WHERE room_id=? AND last_seen>? ORDER BY role=\'admin\' DESC, last_seen DESC LIMIT 300', [$roomId, time() - 45]);
+        }
         $out = [];
         foreach ($rows as $r) {
             $out[] = [

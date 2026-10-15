@@ -126,6 +126,15 @@ class Sec
     public static function rateLimit(string $bucket, string $ident, int $window, int $max): bool
     {
         $now = time();
+        /* v1.3.154：插件可整段接手上限判定（redis 插件用 INCR + EXPIRE 做原子计数）。
+           $handled 三重态：'' = 未接手（走下面的库路径）/ '1' = 放行 / '0' = 拒绝。
+           ⚠️ 「速率窗口只读不续期」这条语义要由插件自己保住：被拒之后再查剩余时间不许顺延窗口
+              （核心的 rateRemaining() 是只读的，插件接手后也得给只读的剩余时间）。
+           ⚠️ security.php 在 plugin.php **之前** require（见 index.php），所以这里必须
+              class_exists 防御 —— 与下面 session.destroyed 那条同一原因（CLI 脚本可能只 require 部分 core）。 */
+        $handled = '';
+        if (class_exists('Plugin')) Plugin::fire('rate.limit', [&$handled, $bucket, $ident, $window, $max]);
+        if ($handled !== '') return $handled === '1';
         $row = DB::one('SELECT * FROM rate_limits WHERE bucket=? AND ident=?', [$bucket, $ident]);
         if (!$row || $now - (int)$row['window_start'] >= $window) {
             DB::upsert('rate_limits', ['bucket' => $bucket, 'ident' => $ident, 'window_start' => $now, 'count' => 1], ['bucket', 'ident']);
@@ -151,14 +160,27 @@ class Sec
     }
 
     // ---------- 登录保护 ----------
+    /* v1.3.154：下面三个「读」都开同一个钩子 login.attempt，插件可把失败计数与锁定时间搬去 Redis。
+       约定（两个哨兵参数）：
+         · $fails  失败次数，-1 = 未接手 → 照旧读库；**0 是有效值**（"确实零次失败"）。
+         · $until  锁定截止时间戳，-1 = 未接手 → 照旧读库；0 是有效值（"没锁"）。
+       ⚠️ 第 3 个参数是后加的：只声明前两个参数的处理器照跑不误（PHP 允许多传实参），
+          此时 $until 保持 -1，本函数退回读库 —— 加了参数不会让任何按文档写的处理器失灵。
+       ⚠️ 与 rate.limit 同理，security.php 先于 plugin.php require，必须 class_exists 防御。 */
     public static function loginFails(string $identity): int
     {
+        $fails = -1;
+        if (class_exists('Plugin')) Plugin::fire('login.attempt', [&$fails, $identity]);
+        if ($fails >= 0) return $fails;
         $r = DB::one('SELECT fails, locked_until FROM login_attempts WHERE identity=?', [$identity]);
         return $r ? (int)$r['fails'] : 0;
     }
 
     public static function loginLocked(string $identity): bool
     {
+        $fails = -1; $until = -1;
+        if (class_exists('Plugin')) Plugin::fire('login.attempt', [&$fails, $identity, &$until]);
+        if ($until >= 0) return $until > time();
         $r = DB::one('SELECT locked_until FROM login_attempts WHERE identity=?', [$identity]);
         return $r && $r['locked_until'] && (int)$r['locked_until'] > time();
     }
@@ -199,6 +221,11 @@ class Sec
     /** 剩余锁定时长（秒），未锁定返回 0 */
     public static function lockSeconds(string $identity): int
     {
+        /* v1.3.154：与 loginLocked 同一口径 —— 插件接手后这里也要跟着走，
+           否则会出现「闸门说锁着、倒计时却显示 0 秒」的分裂（登录页那两处就是这么用的）。 */
+        $fails = -1; $until = -1;
+        if (class_exists('Plugin')) Plugin::fire('login.attempt', [&$fails, $identity, &$until]);
+        if ($until >= 0) return max(0, $until - time());
         $r = DB::one('SELECT locked_until FROM login_attempts WHERE identity=?', [$identity]);
         if (!$r || !$r['locked_until']) return 0;
         return max(0, (int)$r['locked_until'] - time());
