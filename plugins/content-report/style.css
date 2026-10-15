@@ -1,0 +1,197 @@
+/* 内容举报插件样式（v1.1.0）
+   前台弹窗与后台页面共用这一份 —— 主程序只自动引入 `?action=assets&type=js`，
+   CSS 必须由插件自己挂 page.head 输出 <link>（见 main.php 末尾）。
+
+   两条硬规矩：
+   ① 颜色一律引核心 --ow-* 变量，深浅主题自动跟随（禁止写死 #hex / rgb()）；
+   ② 类名一律 ow-cr- 前缀，后台整页套在 .ow-cr-page 里 —— 不碰核心通用类，
+      否则一次改动会外溢到全站后台页（v1.0.x 的 admin.css 就是这么错的）。 */
+
+/* ===================== 前台：举报弹窗 ===================== */
+
+.ow-cr-tip {
+    font-size: 12px;
+    color: var(--ow-text-sub);
+    margin: 6px 0 0;
+    line-height: 1.6;
+}
+
+/* 截图缩略图：正方形裁切、等距排列；空的时候整块收起（不占一行高度） */
+.ow-cr-shots {
+    display: flex;
+    display: -webkit-flex;
+    flex-wrap: wrap;
+    -webkit-flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+.ow-cr-shots:empty { display: none; }
+
+.ow-cr-shot {
+    position: relative;
+    width: 72px;
+    height: 72px;
+    border: 1px solid var(--ow-border);
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--ow-bg-sub);
+}
+.ow-cr-shot img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+.ow-cr-shot-del {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 18px;
+    height: 18px;
+    line-height: 18px;
+    text-align: center;
+    font-size: 12px;
+    text-decoration: none;
+    color: var(--ow-on-accent);
+    background: var(--ow-red);
+    border-bottom-left-radius: 6px;
+}
+.ow-cr-shot-add { margin-top: 2px; }
+
+/* ===================== 前台：待处理举报面板 ===================== */
+
+.ow-cr-alerts {
+    max-height: 56vh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.ow-cr-alert {
+    border: 1px solid var(--ow-border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    background: var(--ow-bg-sub);
+}
+.ow-cr-alert-hd {
+    display: flex;
+    display: -webkit-flex;
+    flex-wrap: wrap;
+    -webkit-flex-wrap: wrap;
+    align-items: center;
+    -webkit-align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+.ow-cr-alert-who { font-size: 13px; color: var(--ow-text); }
+.ow-cr-alert-time { font-size: 12px; color: var(--ow-text-sub); margin-left: auto; }
+.ow-cr-alert-bd {
+    font-size: 13px;
+    color: var(--ow-text);
+    line-height: 1.7;
+    word-break: break-word;
+}
+.ow-cr-alert-imgs {
+    display: flex;
+    display: -webkit-flex;
+    flex-wrap: wrap;
+    -webkit-flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+}
+.ow-cr-alert-imgs img {
+    display: block;
+    width: 64px;
+    height: 64px;
+    object-fit: cover;
+    border-radius: 6px;
+    border: 1px solid var(--ow-border);
+}
+.ow-cr-alert-ops {
+    display: flex;
+    display: -webkit-flex;
+    gap: 14px;
+    margin-top: 8px;
+}
+.ow-cr-alert-ops a {
+    font-size: 13px;
+    color: var(--ow-primary-dark);
+    text-decoration: none;
+}
+.ow-cr-alert-ops a:hover { text-decoration: underline; }
+
+.ow-cr-empty {
+    padding: 20px 0;
+    text-align: center;
+    font-size: 13px;
+    color: var(--ow-text-sub);
+}
+
+/* ===================== 后台：配置与列表 ===================== */
+
+.ow-cr-btns {
+    display: flex;
+    display: -webkit-flex;
+    flex-wrap: wrap;
+    -webkit-flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+/* 「测试接口」的结果区：提示词很长，必须能断行，否则整页横向滚动 */
+.ow-cr-test {
+    margin-top: 10px;
+    font-size: 13px;
+    line-height: 1.7;
+    word-break: break-word;
+}
+.ow-cr-ok { color: var(--ow-green); }
+.ow-cr-bad { color: var(--ow-red); }
+.ow-cr-muted { color: var(--ow-text-sub); }
+.ow-cr-sub { font-size: 12px; color: var(--ow-text-sub); }
+
+.ow-cr-desc {
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.ow-cr-ops a { margin-right: 8px; }
+
+/* 待处理的举报整行淡蓝底：与核心其它后台页的「待处理」同一视觉语言 */
+.ow-cr-pending { background: var(--ow-blue-light); }
+
+.ow-cr-thumbs {
+    display: flex;
+    display: -webkit-flex;
+    align-items: center;
+    -webkit-align-items: center;
+    gap: 4px;
+}
+.ow-cr-thumbs img {
+    display: block;
+    width: 44px;
+    height: 44px;
+    object-fit: cover;
+    border-radius: 4px;
+    border: 1px solid var(--ow-border);
+}
+
+/* ===================== 移动端 ===================== */
+
+@media (max-width: 640px) {
+    /* 后台表单在窄屏一律竖排（核心 .ow-form-row 只是换行，输入框仍会被挤成半宽） */
+    .ow-cr-page .ow-form-row { flex-direction: column; align-items: stretch; }
+    .ow-cr-page .ow-form-row .ow-form-item { min-width: 0; }
+    .ow-cr-page .ow-form-row > .ow-btn { width: 100%; margin-left: 0; }
+    .ow-cr-page .ow-cr-btns .ow-btn { flex: 1 1 100%; }
+    .ow-cr-page .ow-table { font-size: 13px; white-space: nowrap; }
+    .ow-cr-desc { max-width: 120px; }
+
+    /* 前台：缩略图收小，时间不再右对齐独占一行（窄屏会把它挤出屏幕） */
+    .ow-cr-shot { width: 60px; height: 60px; }
+    .ow-cr-alert-imgs img { width: 56px; height: 56px; }
+    .ow-cr-alert-time { margin-left: 0; }
+    .ow-cr-alerts { max-height: 60vh; }
+    .ow-cr-alert-ops { gap: 18px; }
+}
