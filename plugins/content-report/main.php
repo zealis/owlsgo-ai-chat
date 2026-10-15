@@ -72,6 +72,11 @@ DB::ensureColumn('plugin_content_report', 'images', 'text', "''");    // 举报�
 DB::ensureColumn('plugin_content_report', 'loss', 'int', '0');        // 前台勾选「遭受财产损失」
 DB::ensureColumn('plugin_content_report', 'alerted', 'int', '0');     // 已进入超管待办（违规 / 财产损失）
 DB::ensureColumn('plugin_content_report', 'alert_at', 'int', '0');    // 进入待办的时间
+// v1.2.0：给**举报人**的审核结论。空串 = 还没有结果（不通知本人）。
+// violate=违规 / clear=未违规 / skipped=内容非文字转人工 / manual=按人举报或财产损失，直接人工
+DB::ensureColumn('plugin_content_report', 'result', 'varchar(16)', "''");
+DB::ensureColumn('plugin_content_report', 'result_at', 'int', '0');
+DB::ensureColumn('plugin_content_report', 'result_hit', 'varchar(64)', "''");
 
 /* AI 审核队列：**唯一键是 msg_id** —— 「相同消息只问 AI 一次」靠它落库，
    不去比字符串理由（同一消息被两个人用不同理由举报，仍然只审一次）。 */
@@ -98,6 +103,16 @@ DB::run("CREATE TABLE IF NOT EXISTS plugin_content_report_ai (
 )");
 DB::createIndex('idx_content_report_ai_msg', 'plugin_content_report_ai', 'msg_id', true);
 DB::createIndex('idx_content_report_ai_st', 'plugin_content_report_ai', 'status, id', false);
+
+/* 每个查看者的「已读到哪条」水位（v1.2.0）。
+   为什么用高水位而不是逐条已读表：通知是按人一份的摘要，已读语义天然是
+   「我看到第 N 条为止」；一行一个用户，upsert 就够，不用维护一张可能无限增长的关系表。
+   ⚠️ 这是「不要一刷新又是未读」的根子 —— 未读只按服务端水位算。 */
+DB::run("CREATE TABLE IF NOT EXISTS plugin_content_report_seen (
+    user_id INTEGER PRIMARY KEY,
+    last_id INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL DEFAULT 0
+)");
 
 DB::run("CREATE TABLE IF NOT EXISTS plugin_content_report_config (
     k VARCHAR(32) PRIMARY KEY,
@@ -648,6 +663,77 @@ function owCRAlertText(array $rep, int $total, int $imgs): string
     return $text;
 }
 
+/* ============================ 已读水位（v1.2.0） ============================ */
+
+/** 该用户已读到第几条（没记录过就是 0） */
+function owCRSeenId(int $uid): int
+{
+    if ($uid <= 0) return 0;
+    return (int)DB::val('SELECT last_id FROM plugin_content_report_seen WHERE user_id=?', [$uid]);
+}
+
+/** 上报已读水位（只前进不后退） */
+function owCRMarkSeen(int $uid, int $id): void
+{
+    if ($uid <= 0 || $id <= 0) return;
+    if ($id <= owCRSeenId($uid)) return;
+    DB::upsert('plugin_content_report_seen',
+        ['user_id' => $uid, 'last_id' => $id, 'updated_at' => time()], ['user_id']);
+}
+
+/** 举报表当前最大 id（上报已读时用） */
+function owCRMaxReportId(): int
+{
+    return (int)DB::val('SELECT MAX(id) FROM plugin_content_report');
+}
+
+/**
+ * 该用户视角下的未读条数（按身份分流）：
+ *   超管     = 待超管处理的举报（alerted=1 且 status=0），id 大于已读水位
+ *   举报人   = 自己的举报里已经有审核结论的，id 大于已读水位
+ * 其他人恒 0（他们看不到这一行，见 notice.contacts 的登记条件）。
+ */
+function owCRUnreadFor(array $user): int
+{
+    $uid = (int)($user['id'] ?? 0);
+    if ($uid <= 0) return 0;
+    $seen = owCRSeenId($uid);
+    if ((string)($user['role'] ?? '') === 'admin') {
+        return (int)DB::val('SELECT COUNT(*) FROM plugin_content_report WHERE alerted=1 AND status=0 AND id>?', [$seen]);
+    }
+    return (int)DB::val(
+        "SELECT COUNT(*) FROM plugin_content_report WHERE reporter_id=? AND result<>'' AND id>?", [$uid, $seen]);
+}
+
+/* ============================ 审核结果（v1.2.0，给举报人） ============================ */
+
+/**
+ * 给某条消息下「还没有结果」的举报补上审核结论。
+ * 同一消息被多人举报时，一次判定、人人有份（与「只问 AI 一次」同一口径）。
+ */
+function owCRSetResult(int $msgId, string $result, string $hit = '', int $at = 0): int
+{
+    if ($msgId <= 0 || $result === '') return 0;
+    $at = $at > 0 ? $at : time();
+    return DB::run("UPDATE plugin_content_report SET result=?, result_at=?, result_hit=? WHERE msg_id=? AND result=''",
+        [$result, $at, mb_substr($hit, 0, 64), $msgId]);
+}
+
+/** 给举报人看的一句话结论 */
+function owCRResultText(array $rep): string
+{
+    $r = (string)($rep['result'] ?? '');
+    if ($r === '') return '';
+    if ($r === 'violate') {
+        $hit = (string)($rep['result_hit'] ?? '');
+        return '你的举报已审核：判定违规' . ($hit !== '' ? '（命中：' . $hit . '）' : '') . '，已交由管理员处理。';
+    }
+    if ($r === 'clear') return '你的举报已审核：未发现违反举报理由的内容，感谢你的反馈。';
+    if ($r === 'skipped') return '你的举报已审核：被举报内容为图片/文件，已转交管理员人工核实。';
+    if ($r === 'manual') return '你的举报已受理，已交由超级管理员处理。';
+    return '你的举报已审核完成。';
+}
+
 /**
  * 把一次 AI 判定写回队列（单独成函数是为了能**离线逐条测**：
  * 真跑 owCRAiAsk 要联网，而自检机上没有密钥，那条路径就永远没被验证过）。
@@ -672,6 +758,8 @@ function owCRAiApply(array $q, array $r, int $items): bool
         Sec::log('content_report_ai_hit', (string)$q['target_nick'],
             ['msg' => $msgId, 'reason' => (string)$r['reason'], 'alerts' => $n]);
     }
+    // v1.2.0：判定出来后把结论回写给**举报人**（同消息下所有还没结果的举报一次补齐）
+    owCRSetResult($msgId, $violate ? 'violate' : 'clear', (string)$r['reason'], $now);
     return $violate;
 }
 
@@ -714,6 +802,7 @@ function owCRAiTick(): string
                 ['被举报的是图片/文件消息，AI 看不到内容，已转交超级管理员',
                  count($ctx), $now, $now, $qid]);
             $n = owCRAlertMsg($msgId);
+            owCRSetResult($msgId, 'skipped', '', $now);
             Sec::log('content_report_ai_skip', (string)$q['target_nick'],
                 ['msg' => $msgId, 'type' => (string)$msg['type'], 'alerts' => $n]);
             $skipN++;
@@ -747,66 +836,48 @@ function owCRAiTick(): string
 /**
  * 侧栏通知区里的一行（v1.3.160 notice.contacts 扩展点）。
  *
- * 只给**超级管理员**登记 —— 举报的处置是管理员的事，普通用户看到这一行只会困惑。
- * 钩子参数只有登记函数、没有 actor，所以这里自己取当前登录用户（Auth::user()）。
- * 昵称/头像不填就交给核心兜底：插件名 + 按插件 id 派生的 open-peeps 生成头像。
+ * v1.2.0 起**两类人都登记**（钩子参数只有登记函数、没有 actor，所以自己取 Auth::user()）：
+ *   超管     —— 未读 = 待超管处理的举报；副标题 = 最新一条待办的摘要
+ *   举报人   —— 未读 = 自己的举报里有审核结论的；副标题 = 最新一条结论
+ * 没举报过的普通用户不登记（这一行与他无关）；昵称/头像不填由核心兜底
+ * （插件名 + 按插件 id 派生的 open-peeps 生成头像）。
  *
- * 侧栏这一行是**入口**：点它进「通知流」（与点系统通知同一片消息区，插件的消息混排在里面）；
- * 流里那条消息的「查看」才开待处理举报面板（见下面的 notice.items）。
+ * 点这一行 = 打开**插件自己的消息箱**（见 chat.js 的 CR.openBox），
+ * 不占用系统通知那一页（站方 v1.2.0 口径：独立一个消息框）。
  */
 Plugin::on('notice.contacts', function (callable $add) {
     if (!class_exists('Auth')) return;
     $u = Auth::user();
-    if (!$u || (string)($u['role'] ?? '') !== 'admin') return;
+    if (!$u) return;                                        // 游客不触发（核心本就不给游客通知区）
+    $uid = (int)($u['id'] ?? 0);
+    $isAdmin = (string)($u['role'] ?? '') === 'admin';
+
+    if (!$isAdmin) {
+        // 没举报过的人不出现这一行
+        $mine = (int)DB::val('SELECT COUNT(*) FROM plugin_content_report WHERE reporter_id=?', [$uid]);
+        if ($mine <= 0) return;
+    }
 
     $cfg = owCRGetConfig();
-    $last = owCRLatestAlert();
-    $text = $last
-        ? owCRAlertText($last, owCRAlertCount(), count(owCRRepImages($last)))
-        : '暂无待处理举报';
+    $unread = owCRUnreadFor($u);
+    if ($isAdmin) {
+        $last = owCRLatestAlert();
+        $text = $last
+            ? owCRAlertText($last, owCRAlertCount(), count(owCRRepImages($last)))
+            : '暂无待处理举报';
+        $at = $last ? (int)($last['alert_at'] ?: $last['created_at']) : 0;
+    } else {
+        $last = DB::one("SELECT * FROM plugin_content_report WHERE reporter_id=? AND result<>'' ORDER BY id DESC LIMIT 1", [$uid]);
+        $text = $last ? owCRResultText($last) : '暂无新消息';
+        $at = $last ? (int)($last['result_at'] ?: $last['created_at']) : 0;
+    }
     $add([
         'key'       => OWCR_NOTICE_KEY,
         'name'      => (string)$cfg['notify_name'],
         'avatar'    => (string)$cfg['notify_avatar'],
-        'unread'    => owCRAlertCount(),
+        'unread'    => $unread,
         'last_text' => $text,
-        'at'        => $last ? (int)($last['alert_at'] ?: $last['created_at']) : 0,
-    ]);
-});
-
-/**
- * 通知流里的一条消息（v1.3.162 notice.items 扩展点）。
- *
- * 契约（PLUGIN.md「通知流条目」）：**一个 key 只认第一行** —— 插件在通知流里是一条
- * 「最新动态」，不是历史列表。所以这里只投**最新一条待处理举报**的摘要；
- * 完整清单放在点「查看」打开的面板里（弹窗代码已存在）。
- *
- * key 刻意与侧栏行不同（`content-report-alert` vs `content-report`）：
- * 侧栏行点击 = 进通知流；流里消息的「查看」 = 开待处理面板。两件事共用
- * `OwChat.onNoticeContact(key)` 派发器，但要做不同的动作，key 就必须分开。
- *
- * ⚠️ `images` 目前会被核心的 pluginRows() 白名单丢掉（输出只有 key/name/avatar/unread/last_text/at）。
- * 站方要把缩略图接进通知流，需要 core/notice.php 的 pluginItems() 透传 images
- * （校验口径：只认本站 uploads/ 产物或 https，最多 3 张）+ renderNoticeStream 正文后渲染
- * `.ow-msg-img`（z-index 200 的灯箱 + OwChat.viewImg 都是现成的）。补上之前，
- * 正文里用「· 附 N 张截图」让超管知道有证据，点「查看」看原图。
- */
-Plugin::on('notice.items', function (callable $add) {
-    if (!class_exists('Auth')) return;
-    $u = Auth::user();
-    if (!$u || (string)($u['role'] ?? '') !== 'admin') return;   // 与侧栏行同一口径：只给超管
-
-    $last = owCRLatestAlert();
-    if (!$last) return;                        // 没有待处理就不投：通知流里不出现空条目
-
-    $cfg = owCRGetConfig();
-    $add([
-        'key'       => OWCR_NOTICE_KEY . '-alert',
-        'name'      => (string)$cfg['notify_name'],
-        'avatar'    => (string)$cfg['notify_avatar'],
-        'last_text' => owCRAlertText($last, owCRAlertCount(), count(owCRRepImages($last))),
-        'at'        => (int)($last['alert_at'] ?: $last['created_at']),
-        'images'    => array_slice(owCRRepImages($last), 0, 3),   // 见上方说明：等核心透传
+        'at'        => $at,
     ]);
 });
 
@@ -1308,12 +1379,18 @@ Plugin::route('plugin_content_report_submit', function (array $ctx) {
     ]);
 
     // ---- 分流：财产损失 / 按人举报 = 立刻提醒超管（不问 AI）；其余入 AI 队列（同一消息只审一次） ----
+    // v1.2.0：凡是**不走 AI** 的，当场就给举报人一个「已受理」结论（manual），
+    // 否则这些人永远等不到任何反馈（AI 只审有消息的那些）。
     $route = 'queue';
     if ($isLoss === 1) {
+        DB::run('UPDATE plugin_content_report SET result=?, result_at=?, result_hit=? WHERE id=?',
+            ['manual', $now, '', $repId]);
         $route = 'loss';
         Sec::log('content_report_loss', (string)($actor['nickname'] ?? ''),
             ['target' => $targetUid, 'msg' => $msgId, 'report' => $repId]);
     } elseif ($msgId <= 0) {
+        DB::run('UPDATE plugin_content_report SET result=?, result_at=?, result_hit=? WHERE id=?',
+            ['manual', $now, '', $repId]);
         $route = 'admin';
         Sec::log('content_report_manual', (string)($actor['nickname'] ?? ''),
             ['target' => $targetUid, 'report' => $repId, 'why' => 'not_a_message']);
@@ -1324,11 +1401,15 @@ Plugin::route('plugin_content_report_submit', function (array $ctx) {
             'reporter_nick' => (string)($actor['nickname'] ?? ''), 'reason' => $reason,
             'report_id' => $repId,
         ], $cfg);
-        // 这条消息此前已被判违规 → 本次举报一并标成待超管处理，不必再等一次调用
+        // 这条消息此前已被判违规 → 本次举报一并标成待超管处理，并把已有结论直接回给举报人，
+        // 不必再等一次调用（v1.2.0：结果与待办在同一刻落齐）
         if ($queueRow && (string)($queueRow['verdict'] ?? '') === 'violate') {
-            DB::run('UPDATE plugin_content_report SET alerted=1, alert_at=? WHERE id=?', [$now, $repId]);
+            DB::run('UPDATE plugin_content_report SET alerted=1, alert_at=?, result=?, result_at=?, result_hit=? WHERE id=?',
+                [$now, 'violate', $now, (string)($queueRow['hit'] ?? ''), $repId]);
             $route = 'violate';
         } elseif ($queueRow && (string)($queueRow['verdict'] ?? '') === 'clear') {
+            DB::run('UPDATE plugin_content_report SET result=?, result_at=? WHERE id=?',
+                ['clear', $now, $repId]);
             $route = 'clear';
         }
     }
@@ -1349,6 +1430,116 @@ Plugin::route('plugin_content_report_alerts', function (array $ctx) use ($crGuar
         . ' WHERE r.alerted=1 AND r.status=0 ORDER BY r.id DESC LIMIT ' . $limit
     );
     Api::json(['ok' => true, 'data' => ['list' => $rows, 'total' => owCRAlertCount()]]);
+});
+
+/**
+ * 前台：**消息箱**（v1.2.0 站方口径「独立一个消息框，不要和系统通知一个页面」）。
+ *
+ * 侧栏「内容举报」那一行点开的就是它：里面是一条条消息（头像 + 昵称 + 时间 + 正文 +
+ * 截图缩略图 + 「查看」按钮），而不是系统通知那一页。按身份给不同内容：
+ *   超管   = 待超管处理的举报（查看 → 待处理面板）
+ *   举报人 = 自己举报的审核结论（查看 → 结论详情）
+ */
+Plugin::route('plugin_content_report_box', function (array $ctx) {
+    $actor = $ctx['actor'];
+    if (($actor['kind'] ?? '') !== 'user') Api::json(['ok' => false, 'msg' => '需要登录后操作'], 403);
+    $uid = (int)$actor['id'];
+    $isAdmin = ($actor['role'] ?? '') === 'admin';
+    $seen = owCRSeenId($uid);
+    $out = [
+        'admin'  => $isAdmin ? 1 : 0,
+        'total'  => owCRUnreadFor(['id' => $uid, 'role' => $actor['role'] ?? '']),
+        'max_id' => owCRMaxReportId(),
+        'list'   => [],
+    ];
+
+    if ($isAdmin) {
+        $rows = DB::all('SELECT * FROM plugin_content_report WHERE alerted=1 AND status=0 ORDER BY id DESC LIMIT 20');
+        foreach ($rows as $r) {
+            $out['list'][] = [
+                'id'            => (int)$r['id'],
+                'kind'          => (int)$r['loss'] === 1 ? 'loss' : 'violate',
+                'at'            => (int)($r['alert_at'] ?: $r['created_at']),
+                'text'          => owCRAlertText($r, owCRAlertCount(), count(owCRRepImages($r))),
+                'images'        => array_slice(owCRRepImages($r), 0, 3),
+                'unread'        => (int)$r['id'] > $seen ? 1 : 0,
+                'reporter_id'   => (int)$r['reporter_id'],
+                'reporter_nick' => (string)$r['reporter_nick'],
+                'target_uid'    => (int)$r['target_uid'],
+                'target_nick'   => (string)$r['target_nick'],
+                'reason'        => (string)$r['reason'],
+                'desc'          => (string)$r['description'],
+            ];
+        }
+    } else {
+        $rows = DB::all(
+            "SELECT * FROM plugin_content_report WHERE reporter_id=? AND result<>'' ORDER BY id DESC LIMIT 20",
+            [$uid]
+        );
+        foreach ($rows as $r) {
+            $out['list'][] = [
+                'id'            => (int)$r['id'],
+                'kind'          => 'result',
+                'at'            => (int)($r['result_at'] ?: $r['created_at']),
+                'text'          => owCRResultText($r),
+                'images'        => [],
+                'unread'        => (int)$r['id'] > $seen ? 1 : 0,
+                'reporter_id'   => 0,
+                'reporter_nick' => '',
+                'target_uid'    => (int)$r['target_uid'],
+                'target_nick'   => (string)$r['target_nick'],
+                'reason'        => (string)$r['reason'],
+                'desc'          => (string)$r['description'],
+                'result'        => (string)$r['result'],
+                'hit'           => (string)$r['result_hit'],
+            ];
+        }
+    }
+    Api::json(['ok' => true, 'data' => $out]);
+});
+
+/**
+ * 前台：上报已读水位（敏感操作）。「不要一刷新又是未读」就靠它 ——
+ * 未读只按服务端的 `plugin_content_report_seen` 算，客户端刷新拿不回来。
+ */
+Plugin::route('plugin_content_report_seen', function (array $ctx) {
+    $actor = $ctx['actor'];
+    if (($actor['kind'] ?? '') !== 'user') Api::json(['ok' => false, 'msg' => '需要登录后操作'], 403);
+    $id = (int)($ctx['post']['id'] ?? 0);
+    if ($id <= 0) $id = owCRMaxReportId();
+    owCRMarkSeen((int)$actor['id'], $id);
+    Api::json(['ok' => true, 'unread' => owCRUnreadFor(
+        ['id' => (int)$actor['id'], 'role' => $actor['role'] ?? '']
+    )]);
+}, ['sensitive' => true]);
+
+/** 前台：我的某条举报的审核结论详情（只认自己的，防 IDOR） */
+Plugin::route('plugin_content_report_result', function (array $ctx) {
+    $actor = $ctx['actor'];
+    if (($actor['kind'] ?? '') !== 'user') Api::json(['ok' => false, 'msg' => '需要登录后操作'], 403);
+    $id = (int)($ctx['post']['id'] ?? 0);
+    $r = DB::one('SELECT * FROM plugin_content_report WHERE id=?', [$id]);
+    if (!$r || (int)$r['reporter_id'] !== (int)$actor['id']) {
+        Api::json(['ok' => false, 'msg' => '只能查看自己的举报'], 403);
+    }
+    // 被举报的那条消息（还在的话）取一段原文，供举报人核对自己举报的是哪一句
+    $msgText = '';
+    if ((int)$r['msg_id'] > 0) {
+        $m = DB::one('SELECT * FROM messages WHERE id=?', [(int)$r['msg_id']]);
+        if ($m) $msgText = mb_substr(owCRMsgText($m), 0, 120);
+    }
+    Api::json(['ok' => true, 'data' => [
+        'id'         => (int)$r['id'],
+        'reason'     => (string)$r['reason'],
+        'desc'       => (string)$r['description'],
+        'result'     => (string)$r['result'],
+        'hit'        => (string)$r['result_hit'],
+        'result_at'  => (int)$r['result_at'],
+        'target_uid' => (int)$r['target_uid'],
+        'target_nick' => (string)$r['target_nick'],
+        'msg_text'   => $msgText,
+        'text'       => owCRResultText($r),
+    ]]);
 });
 
 /* ============================ 资源注册 ============================ */

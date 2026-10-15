@@ -345,24 +345,178 @@
         load();
     };
 
-    /* ---------- 注册为「通知联系人」的点击处理（v1.3.160 扩展点） ----------
-       两个 key 分工（服务端分别登记，见 main.php）：
-         content-report        = 侧栏那一行：点它进「通知流」（与点系统通知同一片消息区，
-                                  插件的消息与系统通知混排在里面；打开即把该行未读清零）
-         content-report-alert  = 通知流里那条消息的「查看」：打开待处理举报面板 */
-    if (typeof OwChat.onNoticeContact === 'function') {
-        OwChat.onNoticeContact(NOTICE_KEY, function () {
+    /* ---------- 消息箱（独立一个消息框，站方 v1.2.0 口径） ----------
+       侧栏「内容举报」那一行点开的就是它：一条条消息（头像 + 昵称 + 时间 + 正文 +
+       截图缩略图 + 「查看」按钮），**不占用系统通知那一页**。
+       按身份给不同内容：超管看待处理举报，举报人看自己的审核结论。 */
+
+    /** 通知行的头像 / 昵称（后台可配，没配由核心兜底成插件名 + 生成头像） */
+    function noticeRow() {
+        var cs = (OwChat.cfg && OwChat.cfg.notice_contacts) || [];
+        for (var i = 0; i < cs.length; i++) if (cs[i].key === NOTICE_KEY) return cs[i];
+        return null;
+    }
+
+    /** 我的未读条数（服务端按身份算，boot 时随 notice_contacts 下发） */
+    CR.myUnread = function () {
+        var row = noticeRow();
+        return row ? (parseInt(row.unread, 10) || 0) : 0;
+    };
+
+    /**
+     * rail「通知」按钮的小红点：有未读就亮。
+     * 复用核心那颗 `#owNoticeDot`（与系统通知同一个轮子）—— 它本来就表示
+     * 「通知区有东西没看」，插件消息也在通知区里。系统通知的未读一起算，
+     * 避免我把系统的那颗也灭掉（coreUnread 从 cfg.notice_unread 取）。
+     */
+    CR.paintDot = function (n) {
+        try {
+            var dot = d.getElementById('owNoticeDot');
+            if (!dot) return;
+            var coreUnread = (OwChat.cfg && OwChat.cfg.notice_unread) || 0;
+            dot.style.display = ((n | 0) > 0 || coreUnread > 0) ? '' : 'none';
+        } catch (e) { /* 红点是装饰，失败不影响举报本身 */ }
+    };
+
+    /** 上报已读水位（敏感操作）——「不要一刷新又是未读」就靠服务端这个水位 */
+    CR.markSeen = function (id) {
+        OwApi.secure('plugin_content_report_seen', { id: id || 0 }, function (r) {
             try {
                 var cs = (OwChat.cfg && OwChat.cfg.notice_contacts) || [];
-                for (var i = 0; i < cs.length; i++) {
-                    if (cs[i].key === NOTICE_KEY) cs[i].unread = 0;   // 打开过就清零（与系统通知同一语义）
-                }
-                OwChat.openNotices();                                 // 视图切换全部交给核心
+                for (var i = 0; i < cs.length; i++) if (cs[i].key === NOTICE_KEY) cs[i].unread = 0;
                 if (typeof OwChat.renderNoticeRow === 'function') OwChat.renderNoticeRow();
-            } catch (e) { /* 通知流是核心的视图，失败不影响举报本身 */ }
+            } catch (e) {}
+            CR.paintDot(0);
         });
-        OwChat.onNoticeContact(NOTICE_KEY + '-alert', function () { CR.openAlerts(); });
+    };
+
+    /** 昵称可点击 → 弹用户资料卡（站方 v1.2.0：点昵称就弹窗用户资料） */
+    function nickLink(uid, nick) {
+        uid = parseInt(uid, 10) || 0;
+        if (!uid) return esc(nick || '未知用户');
+        return '<a href="javascript:;" class="ow-msg-link" onclick="OwChat.userCard(' + uid + ')">'
+            + esc(nick || ('#' + uid)) + '</a>';
     }
+
+    /** 一条消息的正文（客户端拼，才能把昵称变成可点的链接） */
+    function boxBody(m, isAdmin) {
+        var imgs = m.images || [];
+        if (isAdmin) {
+            var head = m.kind === 'loss' ? '财产损失举报：' : 'AI 判定违规：';
+            return head + nickLink(m.reporter_id, m.reporter_nick) + ' 举报 '
+                + nickLink(m.target_uid, m.target_nick)
+                + '（' + esc(m.reason || '') + '）'
+                + (imgs.length ? '·附 ' + imgs.length + ' 张截图' : '');
+        }
+        return esc(m.text || '') + '　被举报人：' + nickLink(m.target_uid, m.target_nick);
+    }
+
+    /** 一条消息的 HTML（复用核心那套通知气泡样式，不另起一套） */
+    function boxMsgHtml(m, isAdmin, av, nick) {
+        var imgs = m.images || [], ih = '', k;
+        for (k = 0; k < imgs.length; k++) {
+            ih += '<img class="ow-msg-img" src="' + esc(imgs[k]) + '" alt="举报截图" onclick="OwChat.viewImg(this.src)">';
+        }
+        if (ih) ih = '<div class="ow-notice-imgs">' + ih + '</div>';
+        return '<div class="ow-msg ow-msg-notice ow-cr-boxmsg' + (parseInt(m.unread, 10) ? ' is-unread' : '') + '">'
+            + (av ? '<span class="ow-msg-av"><span class="ow-avatar"><img src="' + esc(av)
+                  + '" alt="' + esc(nick) + '"></span></span>' : '')
+            + '<div class="ow-msg-body">'
+            + '<div class="ow-msg-meta"><span class="ow-msg-nick">' + esc(nick) + '</span>'
+            + '<span class="ow-msg-time">' + esc(new Date((m.at || 0) * 1000).toLocaleString()) + '</span></div>'
+            + '<span class="ow-msg-content">' + boxBody(m, isAdmin) + '</span>'
+            + ih
+            + '<div class="ow-cr-boxmsg-ops">'
+            + '<button type="button" class="ow-btn ow-btn-ghost ow-cr-view" data-id="' + esc(m.id) + '">查看</button>'
+            + '</div></div></div>';
+    }
+
+    /** 打开消息箱 */
+    CR.openBox = function () {
+        OwChat.openModal(
+            '<h3 id="owCRBoxTitle">内容举报</h3>'
+            + '<p class="ow-modal-desc">这里是内容举报的消息，点「查看」看详情。</p>'
+            + '<div class="ow-cr-box" id="owCRBox"><div class="ow-cr-empty">加载中…</div></div>',
+            560
+        );
+        OwApi.post('plugin_content_report_box', {}, function (r) {
+            var box = $('owCRBox');
+            if (!box) return;
+            if (!r || !r.ok) { box.innerHTML = '<div class="ow-cr-empty">加载失败</div>'; return; }
+            var d = r.data || {}, list = d.list || [];
+            var isAdmin = parseInt(d.admin, 10) === 1;
+            var title = $('owCRBoxTitle');
+            if (title) title.textContent = isAdmin ? '待处理举报' : '我的举报结果';
+            if (!list.length) {
+                box.innerHTML = '<div class="ow-cr-empty">'
+                    + (isAdmin ? '暂无待处理的举报' : '暂无举报结果') + '</div>';
+                return;
+            }
+            var row = noticeRow();
+            var av = row ? (row.avatar || '') : '';
+            var nick = row ? (row.name || '内容举报') : '内容举报';
+            var h = '';
+            for (var i = 0; i < list.length; i++) h += boxMsgHtml(list[i], isAdmin, av, nick);
+            box.innerHTML = h;
+
+            var btns = box.getElementsByClassName('ow-cr-view');
+            for (var j = 0; j < btns.length; j++) {
+                (function (btn) {
+                    btn.onclick = function () {
+                        var id = parseInt(btn.getAttribute('data-id'), 10) || 0;
+                        if (isAdmin) CR.openAlerts();          // 超管：待处理面板（可直接处理）
+                        else CR.openResult(id);                // 举报人：结论详情
+                    };
+                })(btns[j]);
+            }
+            // 打开过就算已读：水位上报后，刷新也不会再变回未读
+            if (parseInt(d.max_id, 10) > 0) CR.markSeen(d.max_id);
+        });
+    };
+
+    /** 举报人：我的某条举报的结论详情 */
+    CR.openResult = function (id) {
+        OwChat.openModal(
+            '<h3>举报结果</h3><div class="ow-cr-box" id="owCRResult"><div class="ow-cr-empty">加载中…</div></div>',
+            480
+        );
+        OwApi.post('plugin_content_report_result', { id: id }, function (r) {
+            var box = $('owCRResult');
+            if (!box) return;
+            if (!r || !r.ok) {
+                box.innerHTML = '<div class="ow-cr-empty">' + esc((r && r.msg) || '加载失败') + '</div>';
+                return;
+            }
+            var dd = r.data || {};
+            var tag = dd.result === 'violate' ? '<span class="ow-tag ow-tag-red">判定违规</span>'
+                : (dd.result === 'clear' ? '<span class="ow-tag ow-tag-green">未违规</span>'
+                : (dd.result === 'skipped' ? '<span class="ow-tag ow-tag-owner">转人工核实</span>'
+                : '<span class="ow-tag ow-tag-guest">已受理</span>'));
+            var h = '<div class="ow-cr-result"><p class="ow-cr-result-hd">' + tag
+                + ' ' + esc(dd.text || '') + '</p>'
+                + '<p class="ow-cr-sub">举报理由：' + esc(dd.reason || '—')
+                + (dd.hit ? '；命中：' + esc(dd.hit) : '') + '</p>';
+            if (dd.desc) h += '<p class="ow-cr-sub">你的补充说明：' + esc(dd.desc) + '</p>';
+            if (dd.msg_text) h += '<p class="ow-cr-sub">被举报的内容：' + esc(dd.msg_text) + '</p>';
+            h += '<p class="ow-cr-sub">被举报人：'
+                + ((parseInt(dd.target_uid, 10) > 0)
+                    ? nickLink(dd.target_uid, dd.target_nick)
+                    : esc(dd.target_nick || '—'))
+                + '</p>'
+                + '<p class="ow-cr-sub">结论时间：' + esc(new Date((dd.result_at || 0) * 1000).toLocaleString()) + '</p>'
+                + '</div>';
+            box.innerHTML = h;
+        });
+    };
+
+    /* ---------- 注册为「通知联系人」的点击处理（v1.3.160 扩展点） ----------
+       侧栏那一行 = 入口：点它打开插件自己的消息箱（不再进系统通知那一页）。 */
+    if (typeof OwChat.onNoticeContact === 'function') {
+        OwChat.onNoticeContact(NOTICE_KEY, function () { CR.openBox(); });
+    }
+
+    /* 首屏就把 rail 红点对上（服务端已按身份算好未读，随 notice_contacts 下发） */
+    CR.paintDot(CR.myUnread());
 
     /* ---------- 注册到头像右键菜单（针对「人」的操作） ---------- */
     if (typeof OwChat.onMsgCtx === 'function') {

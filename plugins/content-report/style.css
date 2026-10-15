@@ -64,6 +64,25 @@
 }
 .ow-cr-shot-add { margin-top: 2px; }
 
+/* ===================== 前台：消息箱（独立一个消息框，v1.2.0） ===================== */
+
+.ow-cr-box {
+    max-height: 56vh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+/* 一条消息 = 核心那套通知气泡（.ow-msg .ow-msg-notice），这里只补分隔与未读底色 */
+.ow-cr-boxmsg { padding: 10px 12px; }
+.ow-cr-boxmsg + .ow-cr-boxmsg { border-top: 1px solid var(--ow-border); }
+.ow-cr-boxmsg.is-unread { background: var(--ow-blue-light); }   /* 未读高亮：与后台「待处理」同一视觉语言 */
+
+/* 「查看」按钮：比正文链接更重的入口（站方：查看修改为按钮） */
+.ow-cr-boxmsg-ops { margin-top: 8px; }
+.ow-cr-view { height: 30px; padding: 0 14px; font-size: 13px; }
+
+.ow-cr-result-hd { margin: 0 0 8px; font-size: 14px; color: var(--ow-text); line-height: 1.8; }
+.ow-cr-result .ow-cr-sub { margin: 4px 0; }
+
 /* ===================== 前台：待处理举报面板 ===================== */
 
 .ow-cr-alerts {
