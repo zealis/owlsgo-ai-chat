@@ -131,6 +131,17 @@ class Chat
         return $uid > 0 ? (int)DB::val('SELECT COUNT(*) FROM friend_req WHERE to_id=? AND status=0', [$uid]) : 0;
     }
 
+    /**
+     * 插件注册的「联系人行」（v1.3.161）—— 联系人区里除「新朋友」与真人联系人之外的行。
+     * 与通知联系人（Notice::contacts）**同一套形状与默认值规则**，实现共用 Notice::pluginRows()：
+     * 校验、去重、昵称兜底（插件名）、头像兜底（open-peeps + 按插件 id 派生的种子）、截断都只有那一份。
+     * 插件写法见 PLUGIN.md「侧栏插件行」一节。
+     */
+    public static function contactRows(): array
+    {
+        return Notice::pluginRows('contact.rows');
+    }
+
     /** 我今天发出的请求数 —— captcha-verify「每天前 N 个好友请求免人机验证」按这个判 */
     public static function friendReqToday(int $uid): int
     {

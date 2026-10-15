@@ -80,36 +80,42 @@ class Notice
     }
 
     /**
-     * 插件注册的「通知联系人」（v1.3.160）。
+     * 插件注册的「通知联系人」（v1.3.160）。实现见下面共用的 pluginRows()。
      *
-     * 侧栏通知区里除了「系统通知」那一行，插件还可以加自己的行 —— 与系统通知共用同一套列表渲染，
-     * 头像/昵称/副标题/未读都可自定；点击行为由插件自己的 JS 决定（见下）。
+     * @return array<int,array<string,mixed>> 已补好默认值、且形状合法的行（键：key/name/avatar/unread/last_text）
+     */
+    public static function contacts(): array
+    {
+        return self::pluginRows('notice.contacts');
+    }
+
+    /**
+     * 「侧栏插件行」的通用收集器（v1.3.161）—— 通知联系人（notice.contacts）与联系人行
+     * （contact.rows，Chat::contactRows）共用。两个区的行形状完全一样
+     * （key / name / avatar / unread / last_text），默认值规则也一样，**校验与兜底只留这一份**：
+     * 抄成两处的话，改了一边忘了另一边，两个区的行为就开始漂。
      *
-     * 插件写法（main.php 顶层，插件拿到的第一个参数是**登记函数** $add）：
+     * 插件写法（main.php 顶层，唯一参数是**登记函数** $add）：
      *
      *     Plugin::on('notice.contacts', function (callable $add) {
      *         $add(['key' => 'mykey', 'name' => '我的通知', 'unread' => 3, 'last_text' => '有新内容']);
      *         // 只给 key 也能跑：昵称默认取插件名、头像默认取按插件 id 派生的 open-peeps 生成头像
      *     });
      *
-     * 点击（前端）：
-     *
-     *     OwChat.onNoticeContact('mykey', function (row) { /* 自己开弹窗 / 画页面 *\/ });
-     *
      * 为什么参数是「登记函数」而不是按引用传数组：登记动作发生在**插件自己的回调里**，
      * 此刻 Plugin::current() 正是它 —— 归属、默认昵称、默认头像都从这一处拿到，
      * 插件不用自报家门（写 ['plugin' => '自己'] 那种重复信息迟早会有人写错）。
      *
-     * @return array<int,array<string,mixed>> 已补好默认值、且形状合法的行（键：key/name/avatar/unread/last_text）
+     * @param string $hook 钩子名（notice.contacts / contact.rows）
      */
-    public static function contacts(): array
+    public static function pluginRows(string $hook): array
     {
         $rows = [];
         $add = function (array $c) use (&$rows): void {
             if (class_exists('Plugin')) $c['__owner'] = Plugin::current();
             $rows[] = $c;
         };
-        if (class_exists('Plugin')) Plugin::fire('notice.contacts', [$add]);
+        if (class_exists('Plugin')) Plugin::fire($hook, [$add]);
         if (!$rows) return [];
 
         // 插件名表：只给「没填昵称」的那些兜底用（名字以 plugin.json 的 name 为准）

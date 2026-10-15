@@ -1821,6 +1821,10 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
         // v1.3.71：待处理好友请求数 —— 联系人栏红点首屏就要正确，与通知红点同一套路。
         // 语义是「未处理」而不是「未读」：只有通过/拒绝才消，光看不处理会一直挂着。
         'friend_pending' => ($actor['kind'] ?? '') === 'user' ? Chat::friendReqPending((int)($actor['id'] ?? 0)) : 0,
+        // v1.3.161：插件注册的「联系人行」—— 联系人区里除「新朋友」与真人联系人之外的行。
+        // 与 notice_contacts 同一套收集器（Notice::pluginRows：校验/去重/昵称兜底/头像兜底都是一份），
+        // 点击交给插件自己的 JS（OwChat.onContactOpen）。同为登录用户专属：游客没有联系人区。
+        'contact_rows' => ($actor['kind'] ?? '') === 'user' ? Chat::contactRows() : [],
         // 加好友此刻要不要出人机组件（「每天前 N 个免验证」的额度判定在 captcha-verify 里）
         'captcha_friend' => (($actor['kind'] ?? '') === 'user' && ow_captcha_needed('friend_add', $actor)) ? '1' : '0',
         // v1.3.1：游客未点选任何群时下发 0，前端据此禁用输入区（进入后才解锁）

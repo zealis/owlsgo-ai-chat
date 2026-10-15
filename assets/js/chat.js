@@ -2643,6 +2643,17 @@
                     last_at: 0
                 });
             }
+            // v1.3.161：插件注册的「联系人行」（与通知联系人同一套；服务端 Notice::pluginRows
+            // 已补好默认昵称/头像）。位置：紧跟「新朋友」之后、真人联系人之前 ——
+            // 系统性质的行集中在上方，别插在人堆中间。
+            var pcs = (this.cfg && this.cfg.contact_rows) || [], pi;
+            for (pi = 0; pi < pcs.length; pi++) {
+                rows.push({
+                    conv: 'dm', peer: 'plugin:' + pcs[pi].key, id: 0, name: pcs[pi].name,
+                    avatar: pcs[pi].avatar || '', role: '',
+                    last_text: pcs[pi].last_text || '', last_at: 0
+                });
+            }
             for (i = 0; i < (list || []).length; i++) {
                 var f = list[i];
                 rows.push({
@@ -2664,11 +2675,35 @@
                 onClick: function (el) {
                     var peer = el.getAttribute('data-dm');
                     if (peer === 'req:new') return self.openFriendReqs();
+                    // v1.3.161：插件的联系人行 —— 交给它自己的处理器，别当私聊开
+                    if (peer && peer.indexOf('plugin:') === 0) return self.openContactRow(peer.substr(7));
                     // 从好友通知页点回某个联系人：先把本页借走的顶栏还回去，openDm 才会写自己的标题
                     self.exitFriendReqs();
                     if (peer) self.openDm(peer, el.getAttribute('data-name'));
                 }
             });
+        },
+
+        /**
+         * 注册「联系人行」的点击处理器（v1.3.161，插件扩展点）—— 与通知联系人那一对完全同构。
+         *
+         * 服务端先用 `Plugin::on('contact.rows', function (callable $add) { $add(['key' => '…']); })`
+         * 登记一行，前端再用本方法按同一个 key 接住点击 —— 两边只靠 key 约定，核心不认识插件的内容。
+         *
+         * @param {string}   key 与服务端登记时一致的 key
+         * @param {function} fn  点击时调用，收到行对象 {key, name, avatar, unread, last_text}
+         */
+        onContactOpen: function (key, fn) {
+            if (key && typeof fn === 'function') this._contactHooks[key] = fn;
+        },
+        _contactHooks: {},
+        /** 点了插件的联系人行：交给插件；没注册处理器就提示一句（与通知联系人同一条路标） */
+        openContactRow: function (key) {
+            var fn = this._contactHooks[key];
+            if (typeof fn !== 'function') { toast('插件「' + key + '」没有注册点击处理'); return; }
+            var rs = this.cfg.contact_rows || [], row = null, i;
+            for (i = 0; i < rs.length; i++) if (rs[i].key === key) row = rs[i];
+            fn(row || { key: key });
         },
 
         /* =====================================================================
