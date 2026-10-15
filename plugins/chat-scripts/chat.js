@@ -43,6 +43,18 @@
     var A = 'plugin_chat_scripts_';
     var esc = w.esc, toast = w.toast;
 
+    /**
+     * 类名精确匹配（ES5 空格定界法，老内核没有 classList 也能用）。
+     * ⚠️ 条目点击委托**必须**用它而不是 `indexOf('ow-cs-item') === 0`：
+     *    前缀匹配会把子元素全部算进来（.ow-cs-item-t / .ow-cs-item-c / .ow-cs-item-main
+     *    都以 'ow-cs-item' 开头），而点击位置几乎总是落在标题/正文这些子元素上
+     *    —— 命中的是它们，取 data-content 取不到，于是静默 return。
+     *    表现就是「列表点击没有反应」（只有点条目自身那条极窄的 padding 边才生效）。
+     */
+    function hasCls(el, cls) {
+        return !!(el && el.className && (' ' + String(el.className) + ' ').indexOf(' ' + cls + ' ') >= 0);
+    }
+
     var CS = {
         data: null,      // { public:[], room:[], room_admin:0|1, mine:[], guest:0|1 }
         tab: 'public',   // 当前分组：public 公共 / room 群聊 / mine 我的
@@ -126,14 +138,16 @@
                 render();
             };
         }
-        // 事件委托：条目点击 = 插入；「发送」按钮 = 直接发
+        // 事件委托：条目点击 = 插入；「发送」按钮 = 直接发。
+        // ⚠️ 类名一律精确匹配（hasCls）—— 原来用 indexOf 前缀匹配时，点在标题/正文
+        //    这类子元素上会命中「不是条目本体」的节点，取不到 data-content 而静默无反应。
         $('owCsBody').onclick = function (e) {
             e = e || w.event;
             var t = e.target || e.srcElement;
             var sendBtn = null, item = null, n = t;
             while (n && n !== this) {
-                if (!sendBtn && n.className && String(n.className).indexOf('ow-cs-send') === 0) sendBtn = n;
-                if (!item && n.className && String(n.className).indexOf('ow-cs-item') === 0) item = n;
+                if (!sendBtn && hasCls(n, 'ow-cs-send')) sendBtn = n;
+                if (!item && hasCls(n, 'ow-cs-item')) item = n;
                 n = n.parentNode;
             }
             if (!item) return;
@@ -186,6 +200,10 @@
             // 当前 tab 变得不可见时退回公共档
             if (CS.tab === 'room' && !(CS.data.room.length || CS.data.room_admin)) CS.tab = 'public';
             render();
+            // ⚠️ 管理弹窗开着时也要跟着重绘：删除/保存后 mgRender() 是**立刻**用旧 CS.data
+            //    画的，而 load() 是异步回来才更新数据 —— 不在这里补一刀，弹窗里那条被删的话术
+            //    会一直挂在列表上直到重开弹窗，用户看到的就是「点了删除没反应」。
+            if ($('owCsMgList')) mgRender();
         });
     }
 

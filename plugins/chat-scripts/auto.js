@@ -344,7 +344,9 @@
     function delRule(id) {
         OwChat.confirm('删除后本群不再按这条自动回复，确定删除吗？', function () {
             var rid = CA.roomId;
-            OwApi.secure(A + 'room_rule_del', { id: id }, function (r) {
+            // ⚠️ room_id 必须带上：服务端 csRoomScope() 强制要求（没有就回「缺少群聊 ID」），
+            //    这是防 IDOR 的设计——只传 id 的话服务端连「哪个群」都不知道。
+            OwApi.secure(A + 'room_rule_del', { id: id, room_id: rid }, function (r) {
                 toast((r && r.msg) || (r && r.ok ? '已删除' : '删除失败'));
                 if (r && r.ok) {
                     if (CA.editId === id) CA.editId = 0;
@@ -466,7 +468,9 @@
     function delCast(id) {
         OwChat.confirm('删除后这个任务不再发送，已经发出去的消息不会撤回。确定删除吗？', function () {
             var rid = CA.roomId;
-            OwApi.secure(A + 'room_cast_del', { id: id }, function (r) {
+            // ⚠️ room_id 必须带上：服务端 csRoomScope() 强制要求（没有就回「缺少群聊 ID」），
+            //    与 delRule 同一原因（防 IDOR，服务端仍需「哪个群」做归属校验）。
+            OwApi.secure(A + 'room_cast_del', { id: id, room_id: rid }, function (r) {
                 toast((r && r.msg) || (r && r.ok ? '已删除' : '删除失败'));
                 if (r && r.ok) {
                     if (CA.editId === id) CA.editId = 0;
