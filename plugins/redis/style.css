@@ -134,14 +134,29 @@
     box-sizing: border-box;
 }
 
-/* ---------- 杂项 ---------- */
-.ow-rds-check {
+/* ---------- 勾选框（与 chat-scripts 的 .ow-cs-check 同款）----------
+   核心 `.ow-form-item label` 是 display:block（特异性 0,1,1），只写 `.ow-rds-check`
+   （0,1,0）会被它按 block 覆盖掉 flex —— 表现为勾选框与文字错行、整格与其它表单项对不齐。
+   所以选择器必须把 `.ow-form-item label` 那一档一起写上（权重 0,2,0 才压得住）。
+   核心的 .ow-switch-row 踩过同一个坑，注释留在 owlsgo.css 的 .ow-switch 段。 */
+.ow-rds-check,
+.ow-form-item label.ow-rds-check {
     display: flex; display: -webkit-flex;
     align-items: center; -webkit-align-items: center;
-    gap: 6px; -webkit-gap: 6px;
-    font-size: 12.5px;
+    gap: 8px; -webkit-gap: 8px;
+    min-height: 24px;
+    margin-bottom: 0;              /* 覆盖 .ow-form-item label 的 6px，行距交给父级 */
+    font-size: 13px;
+    line-height: 1.4;
     color: var(--ow-text);
-    padding-top: 6px;
+    cursor: pointer;
+    user-select: none; -webkit-user-select: none;
+}
+/* 复选框定死 16×16：flex 里不给 flex-shrink:0 会被压扁或拉宽 */
+.ow-rds-check input[type="checkbox"] {
+    width: 16px; height: 16px;
+    margin: 0;
+    flex: 0 0 auto; -webkit-flex: 0 0 auto;
 }
 .ow-rds-mini { padding: 3px 10px; font-size: 12px; }
 

@@ -809,15 +809,16 @@ Plugin::adminPage('redis', 'Redis 缓存', function () {
         . $f('db', '库序号', '0~15；只用其中一个库，别与别的程序撞号', '0')
         . $f('prefix', '键前缀', '本插件的键都以此开头；「清空」也只删这个前缀', 'owlsgo:')
         . $f('timeout', '超时（秒）', '连接与读写超时，1~5；Redis 慢时调小，避免拖慢发消息', '2')
-        . '</div>'
-        . '<div class="ow-form-row"><div class="ow-form-item" style="flex:1">'
-        . '<label>密码</label>'
+        . '<div class="ow-form-item" style="flex:1"><label>密码</label>'
         . '<input class="ow-input" id="owRdsCfg_pass" type="password" value="" placeholder="留空 = 不修改">'
         . '<p style="font-size:12px">当前状态：' . (owRdsCfg('pass') !== '' ? '已设置密码' : '未设置密码')
         . '。为安全起见后台不回显已保存的密码，留空保存不会清掉它。</p></div>'
-        . '<div class="ow-form-item" style="min-width:150px"><label>清除密码</label>'
-        . '<label class="ow-rds-check"><input type="checkbox" id="owRdsCfg_pass_clear" value="1"> 显式清空已保存的密码</label>'
-        . '</div></div></div>';
+        . '</div>'
+        // 勾选框单独占一行、紧跟在密码之后（与 chat-scripts 的「启用 AI 应答」同款结构）。
+        // 为什么不能塞进上面那个 .ow-form-row：核心 .ow-form-row 是 align-items: flex-end，
+        // 而密码格下方还有一行 ⓘ 提示，勾选框会被顶到底对齐位置，看起来比输入框低一截。
+        . '<div class="ow-form-item"><label class="ow-rds-check"><input type="checkbox" id="owRdsCfg_pass_clear" value="1">'
+        . '<span>显式清空已保存的密码</span></label></div></div>';
 
     $h .= '<div class="ow-card"><h3 style="margin:0 0 10px">镜像与计数</h3><div class="ow-form-row">'
         . $sel('mirror', '消息镜像', ['1' => '开启', '0' => '关闭'], '发消息时写一条摘要进 Redis（每群一个列表）')
