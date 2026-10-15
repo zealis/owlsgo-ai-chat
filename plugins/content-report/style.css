@@ -16,6 +16,12 @@
     line-height: 1.6;
 }
 
+/* 「遭受财产损失」勾选框所在的行。
+   ⚠️ 刻意**不**套 .ow-form-item：核心 `.ow-form-item label { display:block }`（0,1,1）
+   会盖掉 .ow-check-row 的 flex，勾选框与文字就上下错位（站方反馈的问题）。
+   间距在这里补（与 .ow-form-item 的 14px 对齐）。 */
+.ow-cr-loss { margin-bottom: 14px; }
+
 /* 截图缩略图：正方形裁切、等距排列；空的时候整块收起（不占一行高度） */
 .ow-cr-shots {
     display: flex;

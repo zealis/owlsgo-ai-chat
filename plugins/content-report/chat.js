@@ -120,9 +120,12 @@
 
         var descLabel = '补充说明（' + (requireDesc ? '必填' : '可选') + '，最多 ' + descLimit + ' 字）';
 
-        // 「遭受财产损失」：勾上就不走 AI，直接提醒超级管理员（服务端同样按这个开关处理）
+        // 「遭受财产损失」：勾上就不走 AI，直接提醒超级管理员（服务端同样按这个开关处理）。
+        // ⚠️ 外层**不能**用 .ow-form-item —— 核心 `.ow-form-item label { display:block }`（0,1,1）
+        //    会盖掉 .ow-check-row 的 flex，勾选框与文字就上下错位了（站方反馈的正是这个）。
+        //    放在 .ow-cr-loss 里，.ow-check-row 自己的 flex 才生效。
         var lossHtml = cfgCache.show_loss
-            ? '<div class="ow-form-item"><label class="ow-check-row">'
+            ? '<div class="ow-cr-loss"><label class="ow-check-row">'
               + '<input type="checkbox" id="owCRLoss"> 遭受财产损失</label>'
               + '<p class="ow-cr-tip">勾选后该举报不经过自动审核，直接提醒超级管理员处理。</p></div>'
             : '';
@@ -139,12 +142,13 @@
         OwChat.openModal(
             '<h3>举报用户</h3>'
             + '<p class="ow-modal-desc">举报对象：' + esc(targetNick) + '（用户 ID：' + esc(pad(targetUid)) + '）</p>'
-            + lossHtml
             + '<div class="ow-form-item"><label>举报理由</label>'
             + '<select class="ow-input" id="owCRReason">' + opts + '</select></div>'
             + shotHtml
             + '<div class="ow-form-item"><label>' + descLabel + '</label>'
             + '<textarea class="ow-input" id="owCRDesc" rows="4" maxlength="' + descLimit + '" style="resize:vertical"></textarea></div>'
+            // 勾选框排在**补充说明之后**（站方：应该放在补充说明下面）
+            + lossHtml
             + '<div class="ow-modal-actions">'
             + '<button class="ow-btn ow-btn-ghost" onclick="OwChat.closeModal()">取消</button>'
             + '<button class="ow-btn ow-btn-danger" id="owCRSubmit">提交举报</button></div>'

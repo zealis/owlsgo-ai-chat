@@ -311,10 +311,15 @@
 
         /** AI 审核结论单元格 */
         aiCell: function (row) {
-            if (!parseInt(row.msg_id, 10)) return '<span class="ow-cr-muted" title="没有具体消息，无法送审">—</span>';
+            if (!parseInt(row.msg_id, 10)) {
+                return '<span class="ow-cr-muted" title="举报的不是某条具体消息（从成员搜索里按人举报），已直接交超级管理员">已交超管</span>';
+            }
             var s = row.ai_status || '';
             if (s === '') return '<span class="ow-cr-muted" title="未进入审核队列（未配置 AI、或提交时 AI 没开）">未送审</span>';
             if (s === 'pending') return '<span class="ow-tag ow-tag-guest">待审核</span>';
+            if (s === 'skipped') {
+                return '<span class="ow-tag ow-tag-owner" title="' + esc(row.ai_note || '') + '">已转人工</span>';
+            }
             if (s === 'failed') return '<span class="ow-cr-bad" title="' + esc(row.ai_note || '') + '">审核失败</span>';
             if (row.ai_verdict === 'violate') {
                 return '<span class="ow-tag ow-tag-red">违规</span>'

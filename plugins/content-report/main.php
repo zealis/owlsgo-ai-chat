@@ -271,7 +271,17 @@ function owCRAiBuild(string $tpl, string $records): string
 
 /* ============================ AI 上下文 ============================ */
 
-/** 消息的展示文本（图片/文件/图文只给类型，不把 JSON 甩给模型） */
+/** 是不是「文字消息」。只有 type=text 算 —— image / file / rich / system 都不给模型看。 */
+function owCRMsgIsText(array $m): bool
+{
+    return (string)($m['type'] ?? 'text') === 'text';
+}
+
+/**
+ * 消息的展示文本。**只用于给管理员看的场合**；送 AI 的记录块不走这里 ——
+ * 图片 / 文件 / 图文一律「跳过」（见 owCRAiRecords），模型看不到内容，
+ * 与其塞一个 [图片] 占位让它以为是文字，不如明说这些条目被跳过了。
+ */
 function owCRMsgText(array $m): string
 {
     $type = (string)($m['type'] ?? 'text');
@@ -349,19 +359,36 @@ function owCRAiContext(array $msg, int $n): array
             'time' => (int)($m['created_at'] ?? 0),
             'nick' => (string)($m['nickname'] ?? ''),
             'text' => $text,
+            'skip' => !owCRMsgIsText($m),   // 图片 / 文件 / 图文：跳过内容，但**仍占这一条的位置**
         ];
     }
     return $out;
 }
 
-/** 上下文 → 提示词里的记录块 */
+/**
+ * 上下文 → 提示词里的记录块。
+ *
+ * 非文字条目（图片 / GIF / 文件 / 图文）**跳过**：模型看不到它们的内容，
+ * 塞一行 [图片] 只会让它把「这里什么都没有」当成正常证据，反而误导判定。
+ * 但取数时它们**照样占位**（上下文窗口仍是配置的 N 条，不往前补位）——
+ * 跳过的是「送给模型的内容」，不是「取了几条」。
+ */
 function owCRAiRecords(array $ctx): string
 {
     $out = '';
-    foreach ($ctx as $i => $c) {
+    $n = 0;
+    $skipped = 0;
+    foreach ($ctx as $c) {
+        if (!empty($c['skip'])) { $skipped++; continue; }
+        $n++;
         $mark = !empty($c['self']) ? '【被举报】' : '';
-        $out .= '[' . ($i + 1) . '] ' . date('m-d H:i', (int)$c['time']) . ' '
+        $out .= '[' . $n . '] ' . date('m-d H:i', (int)$c['time']) . ' '
             . ($c['nick'] !== '' ? $c['nick'] : '（无昵称）') . '：' . $mark . $c['text'] . "\n";
+    }
+    if ($out === '') $out = "（这一段里没有任何文字消息）\n";
+    if ($skipped > 0) {
+        $out = '（这段聊天里另有 ' . $skipped . ' 条图片 / 文件消息，你无法看到它们的内容，'
+            . "下面的记录已跳过；请只根据能看到的文字判断）\n" . $out;
     }
     return $out;
 }
@@ -636,7 +663,7 @@ function owCRAiTick(): string
     $rows = DB::all("SELECT * FROM plugin_content_report_ai WHERE status='pending' ORDER BY id ASC LIMIT $limit");
     if (!$rows) return '';
 
-    $okN = 0; $hitN = 0; $failN = 0;
+    $okN = 0; $hitN = 0; $failN = 0; $skipN = 0;
     foreach ($rows as $q) {
         $now = time();
         $qid = (int)$q['id'];
@@ -652,6 +679,22 @@ function owCRAiTick(): string
         }
 
         $ctx = owCRAiContext($msg, (int)$cfg['ai_context']);
+
+        // 被举报的那条**不是文字消息**（图片 / GIF / 文件 / 图文）：模型看不到内容，
+        // 让它判就等于逼它猜 —— 直接转人工（标待超管处理），不消耗一次 AI 调用。
+        // 与「举报的不是具体消息」同一处置口径：AI 处理不了的都交超级管理员。
+        if (!owCRMsgIsText($msg)) {
+            DB::run("UPDATE plugin_content_report_ai SET status='skipped', attempts=attempts+1,"
+                . " note=?, item_count=?, reviewed_at=?, updated_at=? WHERE id=?",
+                ['被举报的是图片/文件消息，AI 看不到内容，已转交超级管理员',
+                 count($ctx), $now, $now, $qid]);
+            $n = owCRAlertMsg($msgId);
+            Sec::log('content_report_ai_skip', (string)$q['target_nick'],
+                ['msg' => $msgId, 'type' => (string)$msg['type'], 'alerts' => $n]);
+            $skipN++;
+            continue;
+        }
+
         $prompt = owCRAiBuild(owCRAiPromptOf($cfg), owCRAiRecords($ctx));
         $r = owCRAiAsk($prompt);
 
@@ -670,7 +713,8 @@ function owCRAiTick(): string
         if (owCRAiApply($q, $r, count($ctx))) $hitN++;
         $okN++;
     }
-    return '审核 ' . $okN . ' 条（违规 ' . $hitN . '、正常 ' . ($okN - $hitN) . '），失败 ' . $failN . ' 条';
+    return '审核 ' . $okN . ' 条（违规 ' . $hitN . '、正常 ' . ($okN - $hitN) . '），'
+        . '转人工 ' . $skipN . ' 条，失败 ' . $failN . ' 条';
 }
 
 /* ============================ 通知联系人 ============================ */
@@ -1177,7 +1221,12 @@ Plugin::route('plugin_content_report_submit', function (array $ctx) {
 
     $now = time();
     $isLoss = ($loss === 1 && !empty($cfg['show_loss'])) ? 1 : 0;
-    // 截图与「财产损失」直接写进这一行（不另开 UPDATE：少一次写库，也不会出现
+    // 「交给超级管理员」的两个入口在写库时就定下来：
+    //   ① 勾了财产损失（不走 AI，人工处置）；
+    //   ② 举报的**不是具体某条消息**（从「所有成员」搜索里按人举报，msg_id=0）——
+    //      没有可审内容，同样直接进超管待办（v1.1.3 站方口径）。
+    $alertNow = ($isLoss === 1 || $msgId <= 0) ? 1 : 0;
+    // 截图 / 财产损失 / 待办标记直接写进这一行（不另开 UPDATE：少一次写库，也不会出现
     // 「先插入再补字段」中间态被别的请求读到）
     $repId = DB::insert('plugin_content_report', [
         'reporter_id'   => (int)$actor['id'],
@@ -1189,8 +1238,8 @@ Plugin::route('plugin_content_report_submit', function (array $ctx) {
         'images'        => $images
             ? json_encode($images, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : '',
         'loss'          => $isLoss,
-        'alerted'       => $isLoss,              // 财产损失 = 立刻进超管待办，不经过 AI
-        'alert_at'      => $isLoss ? $now : 0,
+        'alerted'       => $alertNow,
+        'alert_at'      => $alertNow ? $now : 0,
         'room_id'       => $roomId,
         'msg_id'        => $msgId,
         'msg_time'      => $msgTime,
@@ -1198,12 +1247,16 @@ Plugin::route('plugin_content_report_submit', function (array $ctx) {
         'created_at'    => $now,
     ]);
 
-    // ---- 分流：财产损失 = 立刻提醒超管（不问 AI）；其余入 AI 队列（同一消息只审一次） ----
+    // ---- 分流：财产损失 / 按人举报 = 立刻提醒超管（不问 AI）；其余入 AI 队列（同一消息只审一次） ----
     $route = 'queue';
     if ($isLoss === 1) {
         $route = 'loss';
         Sec::log('content_report_loss', (string)($actor['nickname'] ?? ''),
             ['target' => $targetUid, 'msg' => $msgId, 'report' => $repId]);
+    } elseif ($msgId <= 0) {
+        $route = 'admin';
+        Sec::log('content_report_manual', (string)($actor['nickname'] ?? ''),
+            ['target' => $targetUid, 'report' => $repId, 'why' => 'not_a_message']);
     } else {
         $queueRow = owCRAiEnqueue([
             'msg_id' => $msgId, 'room_id' => $roomId, 'target_uid' => $targetUid,
