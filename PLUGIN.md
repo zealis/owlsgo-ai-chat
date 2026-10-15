@@ -295,6 +295,8 @@ OwChat.registerAvatarUploader(function (file, filename, onOk) {
 
 | `contact.rows` | 渲染侧栏联系人区时（`index.php` 组装 boot，**仅登录用户**） | 与 `notice.contacts` **同一个注册函数、同一套校验与默认值**（共用 `Notice::pluginRows()`），只是挂在联系人区（默认排在「新朋友」之后、真人联系人之前）。前端用 `OwChat.onContactOpen(key, fn)` 接点击。两个区整节的说明见「侧栏插件行」 |
 
+| `notice.items` | 取通知流时（`?action=notices`，**仅登录用户**） | 与 `notice.contacts` **同一个注册函数、同一套校验与默认值**（共用 `Notice::pluginRows()`）：把插件的条目并进**通知流**（与系统通知按时间混排），正文 = `last_text`，另可给 `at` 指定时间。点「查看」走 `OwChat.onNoticeContact(key)`。整节说明见「通知流条目」 |
+
 ### `Plugin::current()` —— 「这个回调是谁的」
 
 在 `fire` / `collect` 调起**插件注册的回调**期间返回该插件的目录名（核心代码里调用一律空串）。
@@ -356,7 +358,7 @@ OwChat.registerAvatarUploader(function (file, filename, onOk) {
 - `OwChat.onMsgContent(fn)`：右键**消息内容**（针对「消息」）时追加菜单项——内置复制 / 引用 / 删除，插件可追加翻译、举报等。
 - `OwChat.onQuote(fn)`：构造引用内容时改写（`[quote, msg]`，可改 `quote.nick` / `quote.text`）；服务端另有 `message.quote` 做最终校验。
 - `OwChat.onUserAction(fn)`：**按人**发起时的操作菜单（v1.3.24）——「所有成员」区搜索出某个用户后点他，弹出的就是它。与 `onMsgCtx` 的区别是没有消息上下文，参数是 `u = {uid, gid, nickname, kind, role}`。禁言 / 举报都挂在这里。
-- `OwChat.onNoticeContact(key, fn)`：侧栏**通知联系人**的点击（v1.3.160）—— 服务端用 `notice.contacts` 登记的那一行被点时调它。见下面「侧栏插件行」一节。
+- `OwChat.onNoticeContact(key, fn)`：侧栏**通知联系人**的点击（v1.3.160）—— 服务端用 `notice.contacts` 登记的那一行被点时调它；v1.3.162 起，**通知流里插件条目（`notice.items`）的「查看」也走这条**。见下面「侧栏插件行」「通知流条目」两节。
 - `OwChat.onContactOpen(key, fn)`：侧栏**联系人行**的点击（v1.3.161）—— 服务端用 `contact.rows` 登记的那一行被点时调它。同上一节。
 
 ## 前台页面输出
@@ -476,6 +478,30 @@ OwChat.onContactOpen('checkin', function (row) { OwChat.openModal('<!-- 签到�
 - 前端没注册处理器时点它会弹一句「插件「xxx」没有注册点击处理」—— 给插件作者留的路标，免得对着一个没反应的入口查半天。
 - 一个 `key` 只认第一行（重复登记会被忽略），`name` 截到 20 字、`last_text` 截到 60 字、
   未读徽标超过 99 显示 99（与系统通知同一个徽标组件）。
+
+### 通知流条目（`notice.items`，v1.3.162）
+
+上面两个区解决的是「插件在侧栏有个**入口**」；这一节解决的是「插件的**消息**出现在通知**流**里」——
+通知流（点 rail「通知」进入的那片消息区）原本只读 `notices` 表，插件消息没有进来的口子。
+`notice.items` 与 `notice.contacts` 是**同一套注册函数、同一套校验与默认值**（共用 `Notice::pluginRows()`），
+登记的条目经 `?action=notices` 并进同一条流，**与系统通知按时间混排**（新→旧），渲染成一样的消息气泡：
+
+```php
+Plugin::on('notice.items', function (callable $add) {
+    // 正文写 last_text（侧栏叫「副标题」，进消息流就是正文）；at 写这条消息的时间
+    $add(['key' => 'content-report', 'last_text' => '财产损失举报：甲 举报 乙（广告）', 'at' => time()]);
+});
+```
+
+- **正文 = `last_text`**（服务端转成 `body` 下发，前端不走语言包、原样展示），`at` 缺省按 0 处理；
+- 条目行显示**自己的昵称/头像**（默认值规则与侧栏行一模一样：没给昵称用插件名、没给头像用按插件 id 派生的 open-peeps），
+  没给 `at` 的侧栏行时间列仍是空的 —— 两个区的行**行为不变**，`at` 只是顺带的增量字段；
+- **「查看」按钮**：`key` 非空的条目，正文后附一个「查看」，点击等价于点侧栏那一行 ——
+  走 `OwChat.onNoticeContact(key)`（与 `notice.contacts` 共用同一个处理器，插件不用写第二份）；
+- **一个 `key` 只认第一行**（与两个区共用同一份去重）：一个插件在通知流里是**一条「最新动态」**。
+  要展示多条历史，请把列表放在插件自己的界面里（点「查看」打开的那个），流里只放最新一条的摘要；
+- **游客不触发**（游客既没有通知区也没有通知流）；系统通知的已读语义（打开即整批已读）不适用于插件条目 ——
+  未读计数由插件自己维护（侧栏行的 `unread` 字段，见上一节）。
 
 ### 侧栏一级导航扩展（sidebar.rail / OwChat.onRail）
 

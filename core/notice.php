@@ -90,6 +90,31 @@ class Notice
     }
 
     /**
+     * 插件注册的「通知消息」（v1.3.162）—— 进通知流的条目，与侧栏那一行同源。
+     *
+     * 通知流（?action=notices）此前只读 notices 表，插件消息没有进来的口子；
+     * 侧栏行的 last_text 只够行内展示 —— 这一份收集器把插件登记的数据以「消息」的形状
+     * 交给端点并进流里（正文 = last_text，另带 at 供排序）。
+     *
+     * 插件写法与 notice.contacts 完全一致（同一个登记函数、同一套校验与默认值），
+     * 只是钩子名不同；正文写 last_text（侧栏叫「副标题」，进消息流就是正文），
+     * at 写这条消息的时间（不写按 0 处理）：
+     *
+     *     Plugin::on('notice.items', function (callable $add) {
+     *         $add(['key' => 'mykey', 'last_text' => '你的举报已处理', 'at' => time()]);
+     *     });
+     */
+    public static function pluginItems(): array
+    {
+        $out = [];
+        foreach (self::pluginRows('notice.items') as $r) {
+            $r['body'] = $r['last_text'];   // 侧栏叫「副标题」，进消息流就是正文
+            $out[] = $r;
+        }
+        return $out;
+    }
+
+    /**
      * 「侧栏插件行」的通用收集器（v1.3.161）—— 通知联系人（notice.contacts）与联系人行
      * （contact.rows，Chat::contactRows）共用。两个区的行形状完全一样
      * （key / name / avatar / unread / last_text），默认值规则也一样，**校验与兜底只留这一份**：
@@ -106,7 +131,7 @@ class Notice
      * 此刻 Plugin::current() 正是它 —— 归属、默认昵称、默认头像都从这一处拿到，
      * 插件不用自报家门（写 ['plugin' => '自己'] 那种重复信息迟早会有人写错）。
      *
-     * @param string $hook 钩子名（notice.contacts / contact.rows）
+     * @param string $hook 钩子名（notice.contacts / contact.rows / notice.items）
      */
     public static function pluginRows(string $hook): array
     {
@@ -148,6 +173,9 @@ class Notice
                 'avatar' => $avatar,
                 'unread' => max(0, (int)($c['unread'] ?? 0)),
                 'last_text' => mb_substr(trim((string)($c['last_text'] ?? '')), 0, 60),
+                // v1.3.162：条目时间。通知流（notice.items）按它排序；侧栏行不传就是 0
+                // （行内时间列渲染空串，行为与旧版一致），传了行内会显示最新一条的时间。
+                'at' => max(0, (int)($c['at'] ?? 0)),
             ];
         }
         return $out;

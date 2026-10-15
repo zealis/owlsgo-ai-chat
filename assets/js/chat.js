@@ -2651,7 +2651,9 @@
                 rows.push({
                     conv: 'dm', peer: 'plugin:' + pcs[pi].key, id: 0, name: pcs[pi].name,
                     avatar: pcs[pi].avatar || '', role: '',
-                    last_text: pcs[pi].last_text || '', last_at: 0
+                    // v1.3.162：与服务端 pluginRows 的字段保持完整对接（at → last_at，与通知区同一口径）。
+                    // 本列表 hideTime，时间不参与渲染 —— 这里的意义是两个区的行数据形状始终一致。
+                    last_text: pcs[pi].last_text || '', last_at: pcs[pi].at || 0
                 });
             }
             for (i = 0; i < (list || []).length; i++) {
@@ -4553,7 +4555,13 @@
         renderNoticeRow: function () {
             var box = $('owNoticeList');
             if (!box) return;
-            var last = (this.notices && this.notices.length) ? this.notices[0] : null;
+            /* v1.3.162：服务端返回的流里现在混着插件条目（notice.items），而这一行说的是
+               「系统通知」自己 —— 取 [0] 不再等于「最新一条系统通知」，副标题会露出别的插件的事。
+               所以只认没有 key 的行（系统通知不带 key，插件条目必带，见 Notice::pluginItems）。 */
+            var last = null, li2;
+            for (li2 = 0; li2 < (this.notices || []).length; li2++) {
+                if (!this.notices[li2].key) { last = this.notices[li2]; break; }
+            }
             var unread = this.noticeMode ? 0 : ((this.cfg.notice_unread | 0) || 0);
             var rows = [{
                 conv: 'dm', peer: 'notice', name: '系统通知',
@@ -4571,7 +4579,9 @@
                 rows.push({
                     conv: 'dm', peer: cs[i].key, name: cs[i].name,
                     avatar: cs[i].avatar || '',
-                    last_at: 0,                      // 没有时间概念：ChatList.time(0) 渲染成空串
+                    // v1.3.162：插件给了 at 就显示「最新一条」的时间（与系统通知行同口径）；
+                    // 没给仍是 0 → ChatList.time(0) 渲染空串，行为与 v1.3.160 一致。
+                    last_at: cs[i].at | 0,
                     last_text: cs[i].last_text || '',
                     unread: cs[i].unread | 0
                 });
@@ -4664,6 +4674,20 @@
         renderNoticeStream: function () {
             var box = $('owMessages');
             if (!box) return;
+            /* v1.3.162：插件消息（notice.items，服务端 Notice::pluginItems）与系统通知同流混排。
+               「查看」的点击用**一次委托**接住：#owMessages 是服务端静态输出的唯一节点，
+               innerHTML 重建不会丢监听（这与好友通知页那类每次重绑的做法不同口径，
+               因为这里不止一条流会重建 —— 委托一次，之后任何一次重渲染都在覆盖范围内）。 */
+            if (!box._noticeActBound) {
+                box._noticeActBound = true;
+                box.addEventListener('click', function (e) {
+                    var t = e.target || e.srcElement;
+                    while (t && t !== box && !(t.className && (' ' + t.className + ' ').indexOf(' ow-notice-act ') >= 0)) t = t.parentNode;
+                    if (!t || t === box) return;
+                    var key = t.getAttribute('data-key') || '';
+                    if (key) OwChat.openNoticeContact(key);   // 与点侧栏那一行同一条路：交给插件自己的处理器
+                });
+            }
             var rows = (this.notices || []).slice().reverse(), h = '', i, r;
             var av = this.cfg.notice_avatar || '';
             if (!rows.length) {
@@ -4672,14 +4696,20 @@
             }
             for (i = 0; i < rows.length; i++) {
                 r = rows[i];
+                // 系统通知没有 name/avatar/at，分别回落「系统通知」/ 核心通知头像 / created_at；
+                // 插件条目则各用自己那份（默认值服务端已补好），正文走 body（无 kind，由 owNoticeText 兜回）。
                 // 头像用 .ow-msg-av（它负责排版），但通知没有资料卡可看，
                 // 可点暗示与悬停反馈由 CSS 的 .ow-msg-notice 规则关掉。
+                var nick = r.name || '系统通知', rav = r.avatar || av;
                 h += '<div class="ow-msg ow-msg-notice">'
-                   + (av ? '<span class="ow-msg-av">' + avatarHtml(av, '系统通知') + '</span>' : '')
+                   + (rav ? '<span class="ow-msg-av">' + avatarHtml(rav, nick) + '</span>' : '')
                    + '<div class="ow-msg-body">'
-                   + '<div class="ow-msg-meta"><span class="ow-msg-nick ow-notice-nick">系统通知</span>'
-                   + '<span class="ow-msg-time">' + esc(ChatList.time(r.created_at | 0)) + '</span></div>'
+                   + '<div class="ow-msg-meta"><span class="ow-msg-nick ow-notice-nick">' + esc(nick) + '</span>'
+                   + '<span class="ow-msg-time">' + esc(ChatList.time((r.at || r.created_at || 0) | 0)) + '</span></div>'
                    + '<span class="ow-msg-content">' + esc(owNoticeText(r, this.noticeTexts)) + '</span>'
+                   // v1.3.162：可点元素只由数据决定（key 非空才有），链接样式复用正文链接的
+                   // .ow-msg-link（v1.3.101：对比度按正文 4.5:1 调过，不为它新写 CSS）。
+                   + (r.key ? ' <a href="javascript:;" class="ow-msg-link ow-notice-act" data-key="' + esc(r.key) + '">查看</a>' : '')
                    + '</div></div>';
             }
             box.innerHTML = h;

@@ -651,7 +651,17 @@ if ($action !== '') {
             // v1.3.56：连同模板表一起下发（texts）—— 通知正文改存 kind+参数后，
             // 前端要拿模板走语言包翻译，再填参数；只回 body 会让英文界面冒出一句中文。
             if (($actor['kind'] ?? '') !== 'user') Api::json(['ok' => true, 'data' => [], 'texts' => Notice::texts()]);
-            Api::json(['ok' => true, 'data' => Notice::forUser((int)$actor['id']), 'texts' => Notice::texts()]);
+            $data = Notice::forUser((int)$actor['id']);
+            // v1.3.162：插件消息（notice.items）并进同一条流。两者形状不同 ——
+            // 系统通知按 created_at、插件条目按 at（Notice::pluginItems 里由 last_text 转成 body）。
+            // ⚠️ 方向必须是**新→旧**（与 Notice::forUser 的 ORDER BY id DESC 同一口径）：
+            // 前端侧栏拿 [0] 当「最新一条」、消息区 reverse() 后从旧到新渲染，
+            // 这里换成升序会把这两处一起弄反。usort 在 PHP 8 是稳定排序，同刻条目保持原相对顺序。
+            foreach (Notice::pluginItems() as $it) $data[] = $it;
+            usort($data, static function (array $a, array $b): int {
+                return (int)($b['at'] ?? $b['created_at'] ?? 0) <=> (int)($a['at'] ?? $a['created_at'] ?? 0);
+            });
+            Api::json(['ok' => true, 'data' => $data, 'texts' => Notice::texts()]);
 
         /* ---------- 私聊会话操作（v1.2.28，右侧栏四个入口的后端） ---------- */
         case 'dm_pin':          // 设为置顶 / 取消置顶（按当前状态取反）
