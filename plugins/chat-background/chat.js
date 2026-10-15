@@ -70,7 +70,11 @@
         // 「默认」模式（无图）也允许只叠一层色：叠加色是独立于背景图的选择，
         // 只在图上才有意义的话，用户在默认模式里点颜色就等于白点。
         if (!hasImg && ovr === 'none') return '';
-        var op = (Math.max(0, Math.min(100, st.opacity || 50)) / 100).toFixed(2);
+        // ⚠️ 不能写 `st.opacity || 50` —— 滑块拖到 0 时 0 是 falsy，会被顶回 50，
+        //    于是「0%」这一档永远不生效。这里显式判空。
+        var opN = parseInt(st.opacity, 10);
+        if (isNaN(opN)) opN = 50;
+        var op = (Math.max(0, Math.min(100, opN)) / 100).toFixed(2);
         var bgCss = hasImg
             ? (tile
                 ? "background-image:url('" + url + "');background-repeat:repeat;background-size:auto;"
@@ -99,7 +103,15 @@
             // 选择器不能带 .ow-main；透出来的是 .ow-layout 的 --ow-bg，
             // 即「没有背景图在下面」，效果是朝页面底色略提亮。
             + 'body.ow-chat-body .ow-rail,'
-            + 'body.ow-chat-body .ow-sidebar{background-color:color-mix(in srgb, var(--ow-bg-chat) 78%, transparent);}';
+            + 'body.ow-chat-body .ow-sidebar{background-color:color-mix(in srgb, var(--ow-bg-chat) 78%, transparent);}'
+            // 昵称字色：默认是核心写死的灰 #8E8EA0（核心自己也是固定色），压在任意
+            // 背景图 / 渐变遮罩上对比度不稳（浅色遮罩下尤其糊）。按用户要求改成
+            // 纯黑（深色模式纯白）—— 这是「用户指定的可读性例外」，
+            // 属项目「样式零硬编码」规范里就地注明的例外项。
+            // 只作用在 .ow-main 内：侧栏「系统通知」那一行在 .ow-sidebar 里，不受影响。
+            // [data-theme="dark"] 挂在 <html> 上，故这条能正确后置覆盖上一条（特异性也更高）。
+            + 'body.ow-chat-body .ow-main .ow-msg-meta .ow-msg-nick{color:#000;}'
+            + '[data-theme="dark"] body.ow-chat-body .ow-main .ow-msg-meta .ow-msg-nick{color:#FFF;}';
     }
 
     /* ---------- 写入 <style id="ow-cb-style">（存在则复用，不存在才建） ---------- */
@@ -176,7 +188,13 @@
                 op.value = state.setting.opacity;
                 var ov = $('owCBOpacityVal');
                 if (ov) ov.textContent = op.value + '%';
-                op.oninput = function () { if (state.setting) state.setting.opacity = parseInt(op.value, 10); if (ov) ov.textContent = op.value + '%'; };
+                // 拖动即时生效：只改 state 与文字而不重算 CSS 的话，用户拖完看不到任何变化，
+                // 会认为「遮罩透明度没效果」（原实现要等点保存、由 refreshBg 才刷）。
+                op.oninput = function () {
+                    if (state.setting) state.setting.opacity = parseInt(op.value, 10);
+                    if (ov) ov.textContent = op.value + '%';
+                    refreshBg();
+                };
             }
         });
     };
@@ -362,6 +380,7 @@
             // 切到非 custom 时清掉自定义参数？保留以便切回；不影响展示
             renderTabs(mode);
             renderBody();
+            refreshBg();   // 立即预览（切换前只改 state，页面不会有任何反应）
         },
 
         /* 选中某个内置背景 */
@@ -371,6 +390,7 @@
             state.setting.item_id = id;
             renderTabs('item');
             renderItemsGrid();
+            refreshBg();
         },
 
         /* 选中叠加色 */
@@ -378,6 +398,7 @@
             if (!state.setting) return;
             state.setting.overlay = k;
             renderOverlays();
+            refreshBg();
         },
 
         /* 上传自定义背景 */

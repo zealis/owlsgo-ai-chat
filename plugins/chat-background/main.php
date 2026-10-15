@@ -769,6 +769,15 @@ Plugin::on('page.head', function () {
        // 即「没有背景图在下面」—— 效果是朝页面底色略提亮，而不是透出背景图。
        . 'body.ow-chat-body .ow-rail,'
        . 'body.ow-chat-body .ow-sidebar{background-color:color-mix(in srgb, var(--ow-bg-chat) 78%, transparent);}'
+       // 昵称字色：默认是核心写死的灰 #8E8EA0（核心自己也是固定色），压在任意
+       // 背景图 / 渐变遮罩上对比度不稳（浅色遮罩下尤其糊）。按用户要求改成
+       // 纯黑（深色模式纯白）—— 这是「用户指定的可读性例外」，
+       // 属项目「样式零硬编码」规范里就地注明的例外项。
+       // 只作用在 .ow-main 内：侧栏「系统通知」那一行在 .ow-sidebar 里，不受影响。
+       // [data-theme="dark"] 挂在 <html> 上，故这条能正确后置覆盖上一条（特异性也更高）。
+       // ⚠️ 与前端 chat.js 的 buildCss() 必须逐字一致，否则「保存后」与「刷新后」长相不同。
+       . 'body.ow-chat-body .ow-main .ow-msg-meta .ow-msg-nick{color:#000;}'
+       . '[data-theme="dark"] body.ow-chat-body .ow-main .ow-msg-meta .ow-msg-nick{color:#FFF;}'
        . '</style>';
 });
 
