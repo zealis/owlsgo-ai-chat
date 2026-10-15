@@ -1299,6 +1299,10 @@ function ow_icon(string $name, int $size = 18): string
         'paperclip' => '<g transform="scale(0.82) translate(2.6 2.6)"><path d="M16.5 7.5l-7 7a3.5 3.5 0 0 0 5 5l7-7a5.5 5.5 0 0 0-8-8L6 12a7.5 7.5 0 0 0 11 11"/></g>',
         'file'   => '<path d="M13 3.5H7a1.5 1.5 0 0 0-1.5 1.5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V9z"/><path d="M13 3.5V9h5.5"/>',
         'download' => '<path d="M12 4v11"/><path d="M7.5 11L12 15.5 16.5 11"/><path d="M4.5 19.5h15"/>',
+        // v1.3.163：upload = download 的严格镜像（箭头反向、基线不变，两枚并排时方向感一致）。
+        // content-report v1.1.1 的「上传头像」按钮在用它 —— 此前注册表里没有，
+        // ow_icon() 会静默画成 chat 气泡（icon-audit 抓到的就是这个）。JS 侧 OW_ICONS.upload 同一份 path。
+        'upload' => '<path d="M12 16V4"/><path d="M7.5 8.5L12 4l4.5 4.5"/><path d="M4.5 19.5h15"/>',
         // 拖拽手柄：两条斜线
         'resize'  => '<path d="M5 13l7-7"/><path d="M10 15l7-7"/>',
         'plus'    => '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
