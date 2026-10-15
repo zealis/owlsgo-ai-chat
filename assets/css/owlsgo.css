@@ -1941,7 +1941,15 @@ input[type=range] {
     padding: 4px 0;
     min-width: 136px;
 }
-.ow-ctx-menu a { display: block; padding: 6px 14px; font-size: 13px; color: var(--ow-text); white-space: nowrap; }
+/* v1.3.146：补上 line-height —— 这是全站唯一没钉行高的单行控件
+   （.ow-btn 1.4 / .ow-tab 1 / .ow-icon-btn 固定 36px），于是一直在继承正文段落的 1.6：
+   13px 的字撑出 20.8px 行盒，加上下各 6px padding = 每行 32.8px，两行汉字墨迹之间空 19.8px
+   （比字本身还大），站方原话「登录注册隔这么远」。
+   取 14px 而不是 1：1 会让**带图标**的行由 14px 图标撑到 26px、**没图标**的行只有 25px
+   （插件注入的条目、或文字不在 OW_CTX_ICONS 里的条目就没图标），同一张菜单差 1px 一眼看得出来。
+   padding 一个字没动。有 white-space:nowrap 兜着，行盒压到字高以下也不会折行重叠。
+   首行「头像 + 昵称」(a.ow-ctx-head) 不受影响：那行由 28px 头像撑，比 14px 高得多。 */
+.ow-ctx-menu a { display: block; padding: 6px 14px; font-size: 13px; line-height: 14px; color: var(--ow-text); white-space: nowrap; }
 /* v1.3.85：菜单条目左侧图标。四处菜单（消息右键 / 点头像昵称 / 右键头像 / 成员搜索）
    现在共用 ctxItemsHtml()，图标由这一条排版。
    flex 而不是给 svg 加 vertical-align：文字与图标基线对齐在 13px 中文上怎么调都会差 1–2px，
