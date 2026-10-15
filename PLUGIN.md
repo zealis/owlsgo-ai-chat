@@ -406,35 +406,6 @@ OwChat.onUserAction(function (items, u, env) {
 实现可参照 `plugins/ban-manager/chat.js`：它同时挂在两个钩子上，
 `canBan` 只依赖 `{uid, gid, nickname, role}`，所以两个钩子共用同一份实现。
 
-### 成员搜索的用户操作菜单（OwChat.onUserAction）
-
-右侧「所有成员」区标题右侧有个搜索按钮（v1.3.24），点开可按昵称或用户 ID
-搜本群成员；点某个搜索结果的人，弹出的操作菜单由本钩子汇总：
-
-```js
-OwChat.onUserAction(function (items, u, env) {
-    // items.push({ t: '菜单文案', run: function () { ... } });
-    // u：  { uid, gid, nickname, kind: 'user'|'guest', role }
-    // env：{ roomId, actor }（与 onMsgCtx 同构）
-});
-```
-
-核心已经给了「查看个人资料」与「发私信」，插件只需追加自己的动作。
-
-**与 `onMsgCtx` 的区别（选哪个）**：
-
-| 场景 | 用哪个 |
-|---|---|
-| 右键某条消息的头像（有消息上下文，能拿到 msg_id / ts） | `onMsgCtx` |
-| 从成员搜索、成员列表等**按人**发起（没有消息上下文） | `onUserAction` |
-
-**⚠️ `u.role` 必须用上**：禁言判定「房主不能禁言管理员」靠的就是它
-（`plugins/ban-manager/chat.js` 的 `BM.canBan`）。若你在自己的场景里把它丢了，
-前端会显示禁言项而服务端再拒 —— 用户白点一次。
-
-实现可参照 `plugins/ban-manager/chat.js`：它同时挂在两个钩子上，
-`canBan` 只依赖 `{uid, gid, nickname, role}`，所以两个钩子共用同一份实现。
-
 ### 侧栏一级导航扩展（sidebar.rail / OwChat.onRail）
 
 聊天页最左侧的一级导航条（`.ow-rail`，竖排图标条）向插件开放入口。

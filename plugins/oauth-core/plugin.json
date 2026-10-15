@@ -1,7 +1,6 @@
 {
     "name": "第三方应用授权",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "description": "第三方应用授权框架：用户把资料/聊天等权限授予插件应用，可随时撤销。核心只存授权关系，令牌与授权码由插件自己实现。",
-    "author": "Owlsgo",
-    "hooks": ["oauth.apps"]
+    "author": "Owlsgo"
 }
