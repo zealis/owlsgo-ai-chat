@@ -198,6 +198,37 @@ function owCRReasonsMigrate(): bool
 }
 owCRReasonsMigrate();
 
+/* ============================ 通知头像 ============================ */
+
+/**
+ * 通知头像取值是否合法。三种都收：
+ *   - 空串：用核心的默认生成式头像（插件名 + 按插件 id 派生的 open-peeps）
+ *   - 本站上传产物：`uploads/avatar/…`（`Upload::mediaRel()` 会验真实存在 + 防穿越）
+ *   - https 图片地址
+ * 与前台的「换头像」同一口径：上传走 `Upload::handle(kind=avatar)`，裁成正方形 + 内容哈希去重。
+ */
+function owCRNotifyAvatarOk(string $v): bool
+{
+    if ($v === '') return true;
+    if (stripos($v, 'https://') === 0) return true;
+    return Upload::mediaRel($v) !== null;
+}
+
+/**
+ * 当前**实际生效**的通知头像（后台预览用）。
+ * 走核心的 `Notice::contacts()` —— 它会替「没填」补上插件名与按插件 id 派生的生成头像，
+ * 所以后台预览到的就是用户在侧栏通知区里真正看到的那一张；
+ * 插件自己再算一遍种子，早晚会和核心的派生规则漂开（预览与实物不一致比没有预览更糟）。
+ */
+function owCRNotifyAvatarPreview(): string
+{
+    if (!class_exists('Notice')) return '';
+    foreach (Notice::contacts() as $r) {
+        if ((string)($r['key'] ?? '') === OWCR_NOTICE_KEY) return (string)($r['avatar'] ?? '');
+    }
+    return '';
+}
+
 /* ============================ AI 提示词 ============================ */
 
 /** 按「当前的举报理由」生成默认提示词（后台留空时每次都用这一份） */
@@ -705,6 +736,7 @@ Plugin::adminPage('content-report', '内容举报', function () {
             . '</div>';
     };
     $aiOn = !empty($cfg['ai_on']);
+    $avPrev = owCRNotifyAvatarPreview();   // 后台预览 = 核心实际会用的那一张（见函数注释）
     // 整页套一个 ow-cr-page：插件样式表只作用于自己的页面，不改核心的通用类（v1.0.x 的
     // admin.css 直接覆盖 .ow-table-wrap / .ow-form-row，等于把全站后台页一起改了）
     $h = '<div class="ow-cr-page"><h2>内容举报</h2><p class="ow-admin-desc">前台用户可通过消息右键菜单或成员搜索举报他人，'
@@ -781,11 +813,26 @@ Plugin::adminPage('content-report', '内容举报', function () {
         . '<div class="ow-form-item" style="min-width:180px"><label>通知昵称</label>'
         . '<input class="ow-input" id="owCRNotifyName" maxlength="20" placeholder="留空 = 用插件名「内容举报」" value="'
         . Sec::e($cfg['notify_name']) . '"></div>'
-        . '<div class="ow-form-item" style="min-width:260px;flex:1"><label>通知头像地址</label>'
-        . '<input class="ow-input" id="owCRNotifyAvatar" maxlength="300" placeholder="留空 = 按插件生成固定头像" value="'
-        . Sec::e($cfg['notify_avatar']) . '">'
-        . '<p style="font-size:12px">填 https 图片地址；留空则用生成式头像（固定不变，便于长期辨认）。</p></div>'
         . '</div>'
+        // 通知头像：与前台的「换头像」同一套轮子（上传裁方 / 浏览生成式插图），挑一张即刻生效
+        . '<div class="ow-form-item"><label>通知头像</label>'
+        . '<div class="ow-cr-av">'
+        . '<span class="ow-cr-av-prev" id="owCRNotifyAvatarPrev">'
+        . ($avPrev !== '' ? '<img src="' . Sec::e($avPrev) . '" alt="通知头像">' : '')
+        . '</span>'
+        . '<div class="ow-cr-av-main">'
+        . '<div class="ow-cr-av-ops">'
+        . '<button type="button" class="ow-btn ow-btn-ghost ow-av-btn" id="owCRNotifyAvatarUp">' . ow_icon('upload', 14) . '上传头像</button>'
+        . '<button type="button" class="ow-btn ow-btn-ghost ow-av-btn" id="owCRNotifyAvatarGal">' . ow_icon('image', 14) . '浏览插图</button>'
+        . '<button type="button" class="ow-btn ow-btn-ghost ow-av-btn" id="owCRNotifyAvatarDef">恢复默认</button>'
+        . '</div>'
+        . '<p style="font-size:12px">与前台「换头像」同一套：上传会自动裁成正方形，或从生成式插图里挑一张；挑完即刻生效。留空 = 用默认的插件头像。</p>'
+        . '</div>'
+        . '<input type="file" id="owCRNotifyAvatarFile" accept="image/*" style="display:none">'
+        . '</div>'
+        . '<input class="ow-input" id="owCRNotifyAvatar" maxlength="300" placeholder="留空 = 用默认生成头像" value="'
+        . Sec::e($cfg['notify_avatar']) . '">'
+        . '<div class="ow-av-styles" id="owCRNotifyAvatarBox" style="display:none"></div></div>'
         . '<button class="ow-btn ow-btn-primary" onclick="OwCRAdmin.saveConfig()">保存配置</button></div>'
 
         // ---- 举报记录（通用列表轮子） ----
@@ -821,6 +868,7 @@ Plugin::route('plugin_content_report_config_get', function (array $ctx) use ($cr
     $cfg['ai_ready'] = owCRAiReady(owCRGetConfig()) ? 1 : 0;
     $cfg['pending_ai'] = (int)DB::val("SELECT COUNT(*) FROM plugin_content_report_ai WHERE status='pending'");
     $cfg['alert_count'] = owCRAlertCount();
+    $cfg['notify_avatar_preview'] = owCRNotifyAvatarPreview();   // 生效中的头像（含核心兜底后的那一张）
     Api::json(['ok' => true, 'data' => $cfg]);
 });
 
@@ -864,8 +912,8 @@ Plugin::route('plugin_content_report_config_save', function (array $ctx) use ($c
 
     owCRSetConfig('notify_name', mb_substr(trim((string)($post['notify_name'] ?? '')), 0, 20));
     $nav = trim((string)($post['notify_avatar'] ?? ''));
-    if ($nav !== '' && stripos($nav, 'https://') !== 0) {
-        Api::json(['ok' => false, 'msg' => '通知头像地址必须是 https 图片地址']);
+    if (!owCRNotifyAvatarOk($nav)) {
+        Api::json(['ok' => false, 'msg' => '通知头像只能是本站上传的图片或 https 地址']);
     }
     owCRSetConfig('notify_avatar', mb_substr($nav, 0, 300));
 
@@ -904,6 +952,36 @@ Plugin::route('plugin_content_report_ai_test', function (array $ctx) use ($crGua
         'prompt_len' => mb_strlen($tpl),
     ]);
 });
+
+/** 后台：通知头像上传（走核心 avatar 通道：裁成正方形 + 按内容哈希去重） */
+Plugin::route('plugin_content_report_upload_avatar', function (array $ctx) use ($crGuard) {
+    $crGuard($ctx);
+    if (empty($_FILES['file'])) Api::json(['ok' => false, 'msg' => '未接收到文件']);
+    [$ok, $urlOrMsg] = Upload::handle($_FILES['file'], 'avatar');
+    Api::json($ok ? ['ok' => true, 'url' => $urlOrMsg] : ['ok' => false, 'msg' => $urlOrMsg]);
+});
+
+/**
+ * 后台：单独保存通知头像（敏感操作）。
+ * 为什么不让它走整页「保存配置」：换头像在前台是**点一下即刻生效**的动作，
+ * 这里也不该要求用户先点一遍「保存配置」；而且整页保存会把当前表单里所有字段一起写库，
+ * 只想换张图的人不该顺带把半改的提示词也提交上去。
+ */
+Plugin::route('plugin_content_report_notify_avatar', function (array $ctx) use ($crGuard) {
+    $crGuard($ctx);
+    $v = trim((string)($ctx['post']['avatar'] ?? ''));
+    if (!owCRNotifyAvatarOk($v)) {
+        Api::json(['ok' => false, 'msg' => '头像地址不合法：请用「上传头像」或「浏览插图」，或填 https 图片地址']);
+    }
+    owCRSetConfig('notify_avatar', mb_substr($v, 0, 300));
+    Sec::log('content_report_notify_avatar', $ctx['actor']['nickname'], ['custom' => $v === '' ? 0 : 1]);
+    Api::json([
+        'ok' => true,
+        'msg' => $v === '' ? '已恢复默认头像' : '通知头像已更新',
+        'avatar' => $v,
+        'preview' => owCRNotifyAvatarPreview(),
+    ]);
+}, ['sensitive' => true]);
 
 /** 后台：举报列表（分页 + 搜索 + 状态筛选；带出 AI 审核结论） */
 Plugin::route('plugin_content_report_list', function (array $ctx) use ($crGuard) {

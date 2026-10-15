@@ -177,6 +177,43 @@
     border: 1px solid var(--ow-border);
 }
 
+/* ---------- 通知头像（与前台上传/插图选择同一套轮子） ---------- */
+
+.ow-cr-av {
+    display: flex;
+    display: -webkit-flex;
+    align-items: center;
+    -webkit-align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    -webkit-flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+.ow-cr-av-prev {
+    flex: none;
+    -webkit-flex: none;
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    overflow: hidden;
+    background: var(--ow-bg-sub);
+    border: 1px solid var(--ow-border);
+}
+.ow-cr-av-prev img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+.ow-cr-av-main { flex: 1; -webkit-flex: 1; min-width: 240px; }
+.ow-cr-av-ops {
+    display: flex;
+    display: -webkit-flex;
+    flex-wrap: wrap;
+    -webkit-flex-wrap: wrap;
+    gap: 8px;
+}
+
 /* ===================== 移动端 ===================== */
 
 @media (max-width: 640px) {
@@ -187,6 +224,11 @@
     .ow-cr-page .ow-cr-btns .ow-btn { flex: 1 1 100%; }
     .ow-cr-page .ow-table { font-size: 13px; white-space: nowrap; }
     .ow-cr-desc { max-width: 120px; }
+
+    /* 头像选择：窄屏改成竖排，三个按钮各占一行 */
+    .ow-cr-av { align-items: flex-start; }
+    .ow-cr-av-main { min-width: 0; }
+    .ow-cr-av-ops .ow-btn { flex: 1 1 100%; }
 
     /* 前台：缩略图收小，时间不再右对齐独占一行（窄屏会把它挤出屏幕） */
     .ow-cr-shot { width: 60px; height: 60px; }

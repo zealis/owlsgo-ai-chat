@@ -55,6 +55,8 @@
                 if ($('owCRAIPrompt')) $('owCRAIPrompt').value = c.ai_prompt || '';
                 if ($('owCRNotifyName')) $('owCRNotifyName').value = c.notify_name || '';
                 if ($('owCRNotifyAvatar')) $('owCRNotifyAvatar').value = c.notify_avatar || '';
+                OwCRAdmin.paintAvatar(c.notify_avatar_preview || c.notify_avatar || '');
+                OwCRAdmin.bindAvatar();
 
                 defPrompt = c.default_prompt || '';
 
@@ -151,6 +153,121 @@
                     + (r.reason ? '，命中：' + esc(r.reason) : '')
                     + (r.note ? '（' + esc(r.note) + '）' : '') + '</span>';
             });
+        },
+
+        /* ---------- 通知头像：与前台「换头像」同一套轮子 ----------
+           上传走插件自己的路由（核心 Upload::handle(kind=avatar)，裁正方形 + 内容哈希去重）；
+           「浏览插图」复用核心的 avatar_styles / avatar_variants 与 .ow-av-grid 那套样式。
+           挑完立刻保存（单独一个接口），不必再点「保存配置」—— 与前台换头像的体感一致。 */
+
+        paintAvatar: function (url) {
+            var box = $('owCRNotifyAvatarPrev');
+            if (!box) return;
+            box.innerHTML = url ? '<img src="' + esc(url) + '" alt="通知头像">' : '';
+        },
+
+        setAvatar: function (url) {
+            OwApi.secure('plugin_content_report_notify_avatar', { avatar: url || '' }, function (r) {
+                if (!r || !r.ok) { toast((r && r.msg) || '保存失败'); return; }
+                if ($('owCRNotifyAvatar')) $('owCRNotifyAvatar').value = r.avatar || '';
+                OwCRAdmin.paintAvatar(r.preview || '');
+                OwCRAdmin.gallery(false);
+                toast(r.msg || '已更新');
+            });
+        },
+
+        /** 绑定三个入口（可重复调用：每次都只是重新赋 onclick） */
+        bindAvatar: function () {
+            var up = $('owCRNotifyAvatarUp'), file = $('owCRNotifyAvatarFile');
+            var gal = $('owCRNotifyAvatarGal'), def = $('owCRNotifyAvatarDef');
+            if (!up || !file) return;
+            up.onclick = function () { file.click(); };
+            file.onchange = function () {
+                var f = file.files && file.files[0];
+                file.value = '';                       // 同一张图连选两次也要能触发 change
+                if (!f) return;
+                toast('上传中…');
+                OwApi.upload('plugin_content_report_upload_avatar', f, {}, function (r) {
+                    if (r && r.ok && r.url) OwCRAdmin.setAvatar(r.url);
+                    else toast((r && r.msg) || '上传失败');
+                });
+            };
+            if (def) def.onclick = function () { OwCRAdmin.setAvatar(''); };
+            if (gal) gal.onclick = function () {
+                var box = $('owCRNotifyAvatarBox');
+                OwCRAdmin.gallery(!(box && box.style.display !== 'none'));   // 再点一次收起
+            };
+        },
+
+        /**
+         * 「浏览插图」两级：先选风格，再挑该风格里的一个变体（点哪张存哪张）。
+         * 一级/二级的取数都走核心接口，与前台换头像完全同源。
+         */
+        gallery: function (show) {
+            var box = $('owCRNotifyAvatarBox');
+            if (!box) return;
+            if (!show) { box.style.display = 'none'; box.innerHTML = ''; return; }
+            box.style.display = '';
+            box.innerHTML = '<div class="ow-av-loading">加载中…</div>';
+
+            function renderStyles() {
+                OwApi.post('avatar_styles', {}, function (r) {
+                    if (!box) return;
+                    if (!r || !r.ok || !r.data || !r.data.length) {
+                        box.innerHTML = '<div class="ow-av-loading">风格加载失败，请稍后再试</div>';
+                        return;
+                    }
+                    var h = '<div class="ow-av-grid">';
+                    for (var i = 0; i < r.data.length; i++) {
+                        var o = r.data[i];
+                        h += '<button class="ow-av-cell" type="button" data-slug="' + esc(o.slug) + '" title="' + esc(o.label) + '">'
+                           + '<img src="' + esc(o.url) + '" alt="" loading="lazy">'
+                           + '<span>' + esc(o.label) + '</span></button>';
+                    }
+                    box.innerHTML = h + '</div><div class="ow-av-hint">先选一种插图风格，再挑其中一张。</div>';
+                    var cells = box.getElementsByTagName('button');
+                    for (var j = 0; j < cells.length; j++) {
+                        (function (btn) {
+                            btn.onclick = function () {
+                                var slug = btn.getAttribute('data-slug');
+                                if (slug) renderVariants(slug);
+                            };
+                        })(cells[j]);
+                    }
+                });
+            }
+
+            function renderVariants(slug) {
+                box.innerHTML = '<div class="ow-av-loading">变体加载中…</div>';
+                OwApi.post('avatar_variants', { avatar_style: slug }, function (r) {
+                    if (!box) return;
+                    if (!r || !r.ok || !r.data || !r.data.length) {
+                        box.innerHTML = '<div class="ow-av-loading">变体加载失败</div>';
+                        return;
+                    }
+                    var h = '<button class="ow-btn ow-btn-ghost ow-av-btn ow-av-back" type="button" id="owCRAvBack">全部风格</button>'
+                          + '<div class="ow-av-subtitle">' + esc(slug) + '</div><div class="ow-av-grid">';
+                    for (var i = 0; i < r.data.length; i++) {
+                        var v = r.data[i];
+                        h += '<button class="ow-av-cell" type="button" data-url="' + esc(v.url) + '" title="第 ' + esc(v.seed) + ' 号">'
+                           + '<img src="' + esc(v.url) + '" alt="" loading="lazy"></button>';
+                    }
+                    box.innerHTML = h + '</div><div class="ow-av-hint">共 ' + r.data.length + ' 张，点一下即刻保存。</div>';
+                    // ⚠️ 顺序有讲究：先只给「带 data-url 的变体」绑事件，再单独绑返回按钮 ——
+                    //    反过来的话下面的循环会把返回按钮的 onclick 覆盖成一个空函数（前台同款坑）。
+                    var cells = box.getElementsByTagName('button');
+                    for (var j = 0; j < cells.length; j++) {
+                        if (!cells[j].getAttribute('data-url')) continue;
+                        (function (btn) {
+                            btn.onclick = function () { OwCRAdmin.setAvatar(btn.getAttribute('data-url')); };
+                        })(cells[j]);
+                    }
+                    var back = $('owCRAvBack');
+                    if (back) back.onclick = renderStyles;
+                });
+            }
+
+            renderStyles();
         },
 
         /* ---------- 举报列表（通用列表轮子） ---------- */
