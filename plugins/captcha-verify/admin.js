@@ -20,9 +20,11 @@
         },
 
         save: function () {
-            var en = $('owCvEnabled'), sel = $('owCvProvider');
+            var en = $('owCvEnabled'), sel = $('owCvProvider'), fm = $('owCvFormMode');
             if (!en || !sel) return;
             var data = { enabled: en.value, provider: sel.value };
+            // v1.1.0 呈现方式：随基础项一起提交（后端有白名单收敛）
+            if (fm) data.form_mode = fm.value;
             var fields = d.querySelectorAll('[data-owcv-field]'), i;
             for (i = 0; i < fields.length; i++) {
                 data[fields[i].getAttribute('data-owcv-field')] = fields[i].value;

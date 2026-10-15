@@ -5,6 +5,14 @@
  * 集成四家服务商：Cloudflare Turnstile、Cap、VAPTCHA、极验 Geetest v4。
  * 开启「服务端二次验证」后**取代**核心自带的 SVG 数字图形验证码（`Sec::captcha()` 那条链路）。
  *
+ * v1.1.0 呈现方式：登录 / 注册 / 找回密码三个页面**不再把组件摆在表单里**，
+ * 改为点击「登录 / 注册 / 发验证码」时弹出弹窗验证，通过后自动继续原操作
+ * （前端实现在 verify.js，服务端这里只加 `data-owcv-modal` 标记 + 后台可切回内嵌）。
+ * 加好友弹窗（friend_add）**始终内嵌**：它本身已经是弹窗，再叠一层等于弹窗套弹窗；
+ * 且那个场景的组件是「先摆着、提交时才校验」，体验已经等价。
+ * ⚠️ 呈现方式只影响 UI，判定链路完全不变：token 仍由各家 SDK 注入所在表单的隐藏字段，
+ *    服务端 captcha.enforce 仍是唯一裁判（见下面第 1 条原则）。
+ *
  * ⚠️ 三条不可退让的原则：
  *  1. **服务端二次校验是唯一的判定依据**。前端组件只是取得 token 的UI，
  *     攻击者绕过页面直接 POST 时，只有 siteverify 能拦住他。
@@ -59,6 +67,8 @@ function owCVConf(): array
     if ($cache !== null) return $cache;
     $cache = [
         'enabled' => '0', 'provider' => 'turnstile',
+        // v1.1.0：表单场景的呈现方式 —— modal=点按钮弹出弹窗（默认）/ inline=组件直接摆在表单里
+        'form_mode' => 'modal',
         'turnstile_site_key' => '', 'turnstile_secret_key' => '',
         'cap_instance_url' => '', 'cap_site_key' => '', 'cap_secret_key' => '',
         'cap_script_url' => 'https://cdn.jsdelivr.net/npm/cap-widget',
@@ -313,6 +323,9 @@ Plugin::on('captcha.form', function (array $ctx = []): string {
     $provider = (string)$c['provider'];
     $scene = preg_replace('/[^a-z_-]/', '', (string)($ctx['scene'] ?? 'login'));
     $dom = 'owCvBox-' . $scene;
+    // v1.1.0 弹窗模式标记：verify.js 认这个属性决定「首屏藏起来、点按钮再弹」。
+    // 加好友（friend_add）永远内嵌：它本身已经在弹窗里（见文件头注释）。
+    $modal = ((string)($c['form_mode'] ?? 'modal') === 'modal' && $scene !== 'friend_add') ? '1' : '0';
     if ($provider === 'turnstile') {
         $inner = '<div class="cf-turnstile" data-sitekey="' . htmlspecialchars((string)$c['turnstile_site_key'], ENT_QUOTES) . '" data-theme="auto" data-size="flexible"></div>';
     } elseif ($provider === 'cap') {
@@ -326,6 +339,12 @@ Plugin::on('captcha.form', function (array $ctx = []): string {
     }
     return '<div class="ow-cv" data-owcv-provider="' . htmlspecialchars($provider, ENT_QUOTES) . '"'
         . ' data-owcv-scene="' . htmlspecialchars($scene, ENT_QUOTES) . '"'
+        . ' data-owcv-modal="' . $modal . '"'
+        // 弹窗模式：首屏整块隐藏（verify.js 打开弹窗时会把盒子搬进去再显示）。
+        // ⚠️ 不用 CSS 而是内联 style：前端脚本一旦没有加载（老内核/资源被拦），
+        //    内联 none 至少保证「看不见但结构完整、表单提交时组件仍会被渲染」，
+        //    比露一个孤零零的验证框在表单里体面。
+        . ($modal === '1' ? ' style="display:none"' : '')
         . ' data-owcv-vid="' . htmlspecialchars((string)$c['vaptcha_vid'], ENT_QUOTES) . '"'
         . ' data-owcv-gid="' . htmlspecialchars((string)$c['geetest_captcha_id'], ENT_QUOTES) . '"'
         . ' data-owcv-cap-script="' . htmlspecialchars((string)$c['cap_script_url'], ENT_QUOTES) . '">'
@@ -378,7 +397,13 @@ Plugin::adminPage('captcha-verify', '人机验证', function () {
         $h .= '<option value="' . $k . '"' . ((string)($c['provider'] ?? 'turnstile') === $k ? ' selected' : '') . '>' . $p['name'] . '</option>';
     }
     $h .= '</select><p style="font-size:12px;color:var(--ow-text-sub)">只填所选服务商的那一组；'
-        . '其余组的值留在本地不会下发到页面。</p></div></div>';
+        . '其余组的值留在本地不会下发到页面。</p></div>'
+        . '<div class="ow-form-item" style="min-width:170px"><label>呈现方式（登录/注册/找回页）</label>'
+        . '<select class="ow-input" id="owCvFormMode">'
+        . '<option value="modal"' . ((string)($c['form_mode'] ?? 'modal') !== 'inline' ? ' selected' : '') . '>弹窗（点按钮时弹出验证）</option>'
+        . '<option value="inline"' . ((string)($c['form_mode'] ?? 'modal') === 'inline' ? ' selected' : '') . '>表单内嵌（直接摆在表单里）</option></select>'
+        . '<p style="font-size:12px;color:var(--ow-text-sub)">弹窗：页面上不占位，点「登录 / 注册 / 发验证码」时'
+        . '弹窗验证、通过后自动继续。加好友弹窗不受此设置影响（它本身已是弹窗，始终内嵌）。</p></div></div>';
 
     $cur = (string)($c['provider'] ?? 'turnstile');
     foreach ($defs as $key => $p) {
@@ -419,6 +444,8 @@ Plugin::route('plugin_captcha_verify_save', function (array $ctx) {
     $provider = (string)($post['provider'] ?? 'turnstile');
     if (!isset(owCVProviders()[$provider])) Api::json(['ok' => false, 'msg' => '未知的验证服务商']);
     $kv = ['enabled' => ($post['enabled'] ?? '0') === '1' ? '1' : '0', 'provider' => $provider];
+    // 呈现方式：白名单收敛，只认 modal / inline 两个值（前端传别的落不了库）
+    $kv['form_mode'] = (string)($post['form_mode'] ?? 'modal') === 'inline' ? 'inline' : 'modal';
     // 免验证额度是全局项，钳到 0..100：负数会变成「所有人永远要验证」的意外，
     // 过大的数则等于关掉这道防线，都不该由一个输入框随口决定
     $kv['friend_free'] = (string)max(0, min(100, (int)($post['friend_free'] ?? 0)));
@@ -464,4 +491,6 @@ Plugin::on('page.head', function (): void {
 
 Plugin::asset('js', 'captcha-verify/admin.js');
 Plugin::asset('js', 'captcha-verify/widget.js');
+// verify.js 必须排在 widget.js 之后：它依赖 OwCv.getScene / OwCv.onToken
+Plugin::asset('js', 'captcha-verify/verify.js');
 Plugin::asset('css', 'captcha-verify/style.css');

@@ -22,3 +22,20 @@
     width: 100%;
     --cap-widget-width: 100%;
 }
+
+/* ---------- 弹窗形态（v1.1.0，verify.js）----------
+   遮挡层与弹窗本体直接用核心的 .ow-modal-mask / .ow-modal（视觉与全站弹窗完全一致），
+   这里只补三件它管不到的事：槽位居中、说明行、等待态。
+   ⚠️ .ow-cv-slot 里的组件盒子是被**搬**进来的（父节点仍是登录表单，见 verify.js 顶部注释），
+      token 隐藏字段跟着表单走 —— 所以这里只做视觉，不碰布局逻辑。 */
+.ow-cv-slot { text-align: center; min-height: 65px; }
+.ow-cv-slot .ow-cv { margin: 4px 0 0; }
+.ow-cv-slot .ow-cv-box { justify-content: center; }
+.ow-cv-mtip {
+    margin: 10px 0 0;
+    font-size: 12.5px;
+    color: var(--ow-text-sub);
+    text-align: center;
+}
+/* 验证进行中：组件轻微降透明，提示「这一层正在等它出结果」 */
+.ow-cv-wait { opacity: .72; }

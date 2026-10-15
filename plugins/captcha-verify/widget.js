@@ -42,6 +42,67 @@
         }
     };
 
+    /**
+     * v1.1.0：弹窗模式（verify.js）要拿到「某个场景的组件盒子」才能把它搬进弹窗。
+     * 盒子在初始化时按 data-owcv-scene 登记；同场景只应有一个（页面上的场景互斥）。
+     * get 返回 null 表示该场景此刻没有组件（未接管 / friend_free 免验证额度内）。
+     */
+    var owCvRefs = {};
+    w.OwCv.getScene = function (scene) {
+        return owCvRefs[scene] || null;
+    };
+    /** v1.1.0：各家「用户完成验证」的通知位，由 verify.js 覆盖（同一时刻只会有一个弹窗在等）。
+     *  拿不到回调也没关系 —— 弹窗侧的 token 观察器（verify.js watchToken）会兜底；
+     *  这里的回调只是让「自动继续」更快出现。 */
+    w.OwCv.onToken = function () {};
+
+    /**
+     * v1.1.0：确保 Turnstile 组件在**可见容器**里完成渲染。
+     *
+     * 为什么必须显式调用：Turnstile 的 implicit 渲染（api.js 自动扫 .cf-turnstile）会
+     * **跳过不可见容器** —— 弹窗模式首屏把组件藏在 display:none 里，注册/找回页的
+     * 组件就这样被跳过：容器里只有隐藏字段、没有 iframe，也不会有任何 token 写入。
+     * 表现是「弹窗开着、永远等不到验证通过」。登录页侥幸能用的原因是它上面有别的
+     * 组件（发码/找回共用页签）先被渲染过，一旦页面结构不同就翻车。
+     * 解法：弹窗打开、容器可见之后，对还没渲染过的 .cf-turnstile 调一次显式 render。
+     * 幂等：容器里已有 iframe 就跳过（重复 render 会被 Turnstile 拒绝）。
+     */
+    function ensureTurnstile(box) {
+        if (!box || box.getAttribute('data-owcv-provider') !== 'turnstile') return;
+        var holder = box.querySelector('.ow-cv-box');
+        if (!holder) return;
+        // ⚠️ 容器不可见时不渲染（渲染了也会被 Turnstile 当成 skipped，白忙还留错标记）——
+        //    弹窗打开后容器可见，这里才真正动手。offsetParent 为 null = 自身或祖先被隐藏。
+        if (holder.offsetParent === null) return;
+        var els = holder.querySelectorAll('.cf-turnstile'), pending = [];
+        for (var i = 0; i < els.length; i++) {
+            if (!els[i].querySelector('iframe') && !els[i].getAttribute('data-owcv-rendered')) pending.push(els[i]);
+        }
+        if (!pending.length) return;
+        var doRender = function () {
+            for (var k = 0; k < pending.length; k++) {
+                var opts = {
+                    callback: function () { w.OwCv.onToken(box); },
+                    'error-callback': function () { tip(box, '验证组件出错，请刷新页面重试'); }
+                };
+                var sk = pending[k].getAttribute('data-sitekey');
+                if (sk) opts.sitekey = sk;
+                try {
+                    w.turnstile.render(pending[k], opts);
+                    pending[k].setAttribute('data-owcv-rendered', '1');
+                } catch (e) { /* 已渲染过：忽略 */ }
+            }
+        };
+        if (w.turnstile && typeof w.turnstile.render === 'function') { doRender(); return; }
+        // 库还没加载好：轮询等它出现（最多 10 秒），出现即渲染
+        var n = 0;
+        var t = setInterval(function () {
+            if (w.turnstile && typeof w.turnstile.render === 'function') { clearInterval(t); doRender(); return; }
+            if (++n > 20) clearInterval(t);
+        }, 500);
+    }
+    w.OwCv.ensureTurnstile = ensureTurnstile;
+
     /** 组件盒子初始化序号（给 VAPTCHA 的临时 id 用，跨 mount 也要唯一） */
     var owCvSeq = 0;
 
@@ -95,13 +156,19 @@
         box._owcvDone = 1;
         var n = ++owCvSeq;
         var provider = box.getAttribute('data-owcv-provider') || '';
+        // v1.1.0：登记场景 → 盒子，供弹窗模式取用（同场景重复出现时后一个覆盖前一个）
+        var scene = box.getAttribute('data-owcv-scene') || '';
+        if (scene) owCvRefs[scene] = box;
         var holder = box.querySelector('.ow-cv-box');
         if (!holder) return;
 
         if (provider === 'turnstile') {
-            // 带 data-sitekey 的占位 div 由 api.js 自动渲染，并在其后插入隐藏字段
+            // 弹窗模式下这一步基本是空转（容器还藏着，ensureTurnstile 会直接返回）；
+            // 真正的渲染发生在弹窗打开、容器可见之后（verify.js 调 OwCv.ensureTurnstile）。
+            // 非弹窗（内嵌）场景则在这里就地渲染。
             loadScript('https://challenges.cloudflare.com/turnstile/v0/api.js', function (ok) {
                 if (!ok) tip(box, '人机验证组件加载失败，请刷新页面');
+                else ensureTurnstile(box);
             });
             return;
         }
@@ -110,6 +177,12 @@
             loadScript(box.getAttribute('data-owcv-cap-script'), function (ok) {
                 if (!ok) tip(box, '人机验证组件加载失败，请检查后台「组件脚本地址」');
             });
+            // v1.1.0：Cap 在元素上派发 solve 事件（token 同时会写进表单字段）；
+            // 挂不上也只是慢半拍 —— 弹窗侧的 token 观察器兜底
+            var cw = box.querySelector('cap-widget');
+            if (cw && cw.addEventListener) {
+                cw.addEventListener('solve', function () { w.OwCv.onToken(box); });
+            }
             return;
         }
 
@@ -126,7 +199,10 @@
                     obj.render();
                     // 注入 vaptcha_token / vaptcha_server 两个隐藏字段到本表单
                     if (sel) obj.renderTokenInput(sel);
-                    obj.listen('pass', function () { tip(box, ''); });
+                    obj.listen('pass', function () {
+                        tip(box, '');
+                        w.OwCv.onToken(box);          // v1.1.0：弹窗模式据此自动继续
+                    });
                     obj.listen('error', function () { tip(box, '验证失败，请重试'); });
                 }, function () { tip(box, 'VAPTCHA 初始化失败，请检查 VID 与网络'); });
             });
@@ -156,6 +232,7 @@
                             input.value = String(r[k] || '');
                         });
                         tip(box, '');
+                        w.OwCv.onToken(box);          // v1.1.0：弹窗模式据此自动继续
                     });
                     captcha.onError(function () { tip(box, '验证失败，请重试'); });
                 });
