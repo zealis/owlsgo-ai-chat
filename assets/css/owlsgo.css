@@ -671,10 +671,16 @@ input[type=range] {
 .ow-alert-error { background: #fff1f0; color: var(--ow-red); border: 1px solid #ffa39e; }
 
 /* ---------- 标签 ---------- */
+/* v1.3.149：全站标签文字统一加粗 600（站方点名「会员、群主、启用、未启用」）。
+   为什么一次改全部而不是只点这四档：启用/可发言 同为 .ow-tag-green，
+   未启用/停用/游客 同为 .ow-tag-guest —— 类是共用的，只挑两档加粗会把同一张
+   标签体系劈成两种字重。取 600 而不是 700：全站强调一律 600（20 处 vs 700 的 2 处），
+   且 10px 汉字上 700 会糊成一坨。 */
 .ow-tag {
     display: inline-block;
     padding: 1px 8px;
     font-size: 10px;
+    font-weight: 600;
     line-height: 16px;
     border-radius: 3px;
     vertical-align: middle;
