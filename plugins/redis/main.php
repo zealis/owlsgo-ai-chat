@@ -10,11 +10,10 @@
  *   ③ 实时计数：消息数、登录数、活跃用户（按自然日累加，活跃用户用 Set 去重）。
  *   ④ 落库留痕：计划任务每 5 分钟把当日计数写进 plugin_redis_daily ——
  *      于是后台的 14 天趋势图不会因为 Redis 键到期而丢历史。
- *   ⑤ 核心钩子待办：后台页列出「要让 Redis 真正接管消息读路径」所缺的 5 个读路径钩子
- *      （文件:行 + 建议签名）。⚠️ **这条路现在只备好了核心那半边**：本插件目前只挂了
- *      4 个写入侧钩子（message.after_send / msg.after_recall / user.active / login.after_verify）
- *      与统计、体检，**那 5 个读路径钩子一个处理器都没有**。核心补 fire 点、插件补处理器，
- *      两边必须成对落地：只补核心是空转（没人接），只补插件是死代码（钩子不 fire）。
+ *   ⑤ 读路径接手：核心 v1.3.155 为「让 Redis 接管读消息」开了 6 处 fire 点，本插件接其中 5 个
+ *      （history.rows 校准水位、poll.hint 探活短路、online.track/.list 在场镜像、rate.limit 计数），
+ *      **login.attempt 刻意不接**——核心只开了读没开写，自己计数就得复制三条安全规则，理由写在
+ *      「读路径接手」小节顶部。能不能接取决于核心有没有同时开写入侧，后台页逐条列了状态与原因。
  *
  * ── 为什么本插件不加速聊天（关键结论，勿误解）────────────────────
  *   Redis 要生效必须插在「读消息」的路上，而核心只在「写消息」的路上留了钩子：
@@ -104,6 +103,9 @@ function owRdsDefaults(): array
         'mirror_dm'   => '0',          // 是否镜像私聊（默认否：私聊内容不进 Redis）
         'stat'        => '1',          // 实时计数（消息 / 镜像 / 登录 / 活跃）
         'stat_days'   => '40',         // 计数键保留天数（须 ≥ 落库周期，留足 cron 窗口）
+        // ---- 读路径接手（核心 v1.3.155 起的 6 处 fire 点）----
+        'readpath'    => '1',          // history.rows / poll.hint / online.track+list
+        'ratelimit'   => '1',          // rate.limit（INCR + EXPIRE；mail* 桶一律不接，见注释）
     ];
 }
 
@@ -598,6 +600,247 @@ function owRdsFlushPrefix(): int
     return $deleted;
 }
 
+/* ============================ 读路径接手 ============================ */
+/*
+ * 核心 v1.3.155 为「让 Redis 接管读路径」开了 6 处 fire 点。这里的能力分三档，
+ * 不是「开了就都接」——**能不能接，取决于核心有没有同时开写入侧**：
+ *
+ *   ✅ 已接手（下面实现）
+ *      · history.rows          → 只用来校准「本群最新消息 id」水位，**不回填**（理由见函数注释）
+ *      · poll.hint             → 长轮询探活短路（一轮最多 40 次 SELECT，省得最多的一处）
+ *      · online.track / .list  → 在场状态镜像进 Redis，名单整段接手（回填空数组则核心照查库）
+ *      · rate.limit            → INCR + EXPIRE 计数；**mail* 桶刻意不接**（理由见函数注释）
+ *
+ *   ❌ 刻意不接：login.attempt
+ *      核心只开了**读**（loginFails / loginLocked / lockSeconds 三处），没开**写**：
+ *      失败自增、以及 v1.3.131 那条「上一轮锁定已到期就重新起算」的规则仍在 Sec::loginFail() 里，
+ *      成功清零在 Sec::loginOk() 里。于是插件只有两条路：
+ *        ① 返回 $fails = -1（未接手）→ 等于没接；
+ *        ② 自己按 login.failed / login.after_verify 计数 → 就得把「阈值 login_fail_lock、
+ *           锁定分钟 login_lock_minutes、到期重算」这三条**安全规则**复制一份。
+ *      而这份副本一旦与核心不一致，错的方向是「锁定失效 = 暴力破解可绕过」，代价不对等。
+ *      要真接，请核心先给一个写入侧钩子（如 login.fail_add / login.fail_clear），插件只当计数器。
+ */
+
+/** 在场窗口：与核心 online 表的 `last_seen > now-45` 一致（core/chat.php:2059） */
+const OW_RDS_ONLINE_SEC = 45;
+
+function owRdsLastKey(int $roomId): string { return owRdsPrefix() . 'last:r' . $roomId; }
+function owRdsOnKey(int $roomId): string { return owRdsPrefix() . 'on:r' . $roomId; }
+function owRdsOnzKey(int $roomId): string { return owRdsPrefix() . 'onz:r' . $roomId; }
+
+/** 本群最新消息 id 的「水位」（天）
+ *  读路径的键与镜像同寿命：镜像过期了，水位跟着过期才不会指到一个已经不在缓存里的位置 */
+function owRdsReadTtl(): int
+{
+    $d = owRdsInt('mirror_days');
+    if ($d <= 0) $d = 7;
+    if ($d > 365) $d = 365;
+    return $d * 86400;
+}
+
+/**
+ * 校准水位：把「本群最新消息 id」原子地抬到 $id（只增不减）。
+ *
+ * ⚠️ 必须原子取 max，不能直接 SET：同一群里两个用户几乎同时发言时，两条 after_send 的
+ *    SET 可能乱序执行，后写的反而是小 id → 水位被压低到比库里的真实最大 id 还小。
+ *    而 poll.hint 的跳过条件正是「水位 == 客户端 sinceId」，水位偏低就可能命中一次
+ *    本该跳过的判断，把一条已入库但没下发过的消息永远丢掉。用 Lua 把 GET+比较+SET 做成一步。
+ *    脚本不可用时退回两步走：那只是把水位抬得不够高（poll.hint 于是不再短路），方向安全。
+ */
+function owRdsMarkLast(int $roomId, int $id, int $ttl = 0): void
+{
+    if ($roomId <= 0 || $id <= 0) return;
+    if (owRdsCfg('readpath') !== '1') return;   // 读路径总开关关掉时，水位也就没有维护的必要
+    $k = owRdsLastKey($roomId);
+    $ex = $ttl > 0 ? $ttl : owRdsReadTtl();
+    // ⚠️ TTL 必须与 SET 写在**同一条命令**里：Redis 的 SET 会清掉键原有的 TTL，
+    //    而「同一个请求里连发多条消息」时 EXPIRE 被 owRdsEnsureTtl 的「每请求一次」守卫挡住，
+    //    于是第 2 条之后的 SET 把过期时间抹掉且没人补 → 水位键永不过期（本机实测 TTL=-1）。
+    //    Lua 里 GET + 比较 + SET EX 一次完成，既取到 max 也带上过期时间，没有中间态。
+    $r = owRdsCmd(['EVAL',
+        "local c = redis.call('GET', KEYS[1]) if (not c) or tonumber(ARGV[1]) > tonumber(c) then redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2]) end return 1",
+        '1', $k, (string)$id, (string)$ex]);
+    if ($r === null) {
+        // 脚本不可用（服务端禁了 EVAL）：退回两步。并发下可能把水位压得不够高 ——
+        // 那只会让 poll.hint 不再短路，方向安全；顺序仍是「先 SET（带 EX）再比较」做不到，
+        // 所以这里宁可多写一次也不留无 TTL 的键。
+        $cur = (int)owRdsCmd(['GET', $k]);
+        if ($id > $cur) owRdsCmd(['SET', $k, (string)$id, 'EX', (string)$ex]);
+    }
+}
+
+/**
+ * history.rows —— 核心查完库把**原始行**交过来。
+ *
+ * 本插件只做一件事：用这批行校准水位。**刻意不回填、也不缓存行**：
+ *   · 回填的危险在于这张钩子的触发条件是「核心这次查库没查到」——而「库里没有、缓存里有」
+ *     恰恰是**消息已被撤回或被服务器保留期清理**的形态，回填等于把已经消失的内容复活
+ *     （撤回是全局生效的，purgeExpired 是每小时真删）。省一次查询不值得换这个。
+ *   · 行不落地：面板预览读的是摘要镜像，本来就够用；再存一份原始行只是多一份要同步的副本。
+ * 水位校准这一步本身很有用：站点刚启用插件时并没有历史水位，靠「进房间时的那次 history」
+ * 就能立刻把水位补上，poll.hint 不必等到下一条新消息才开始生效。
+ */
+function owRdsCalibrate(array $rows, int $roomId): void
+{
+    if (!$rows || $roomId <= 0) return;
+    $maxId = 0;
+    foreach ($rows as $r) {
+        $id = (int)($r['id'] ?? 0);
+        if ($id > $maxId) $maxId = $id;
+    }
+    if ($maxId > 0) owRdsMarkLast($roomId, $maxId);
+}
+
+/**
+ * poll.hint 的判定：返回 true = 可以跳过这次探活查询。
+ *
+ * 只在**水位恰好等于客户端 sinceId** 时才跳过：
+ *   · 水位 < sinceId：说明客户端已经看到过水位之后的（没被镜像的）消息 → 不敢跳过；
+ *   · 水位 > sinceId：Redis 里有客户端还没拿到的消息 → 必须查库；
+ *   · 水位 == sinceId：本群最新一条就是客户端最后看到的那条 → 这段时间确实没有新消息。
+ * 键不存在（Redis 重启过 / 从没写过）一律返回 false —— 宁可照查库，也不猜。
+ * 这个判据是**自愈**的：镜像漏写过几条时，客户端 sinceId 会由查库推进到真实最大 id，
+ * 于是不再相等 → 不再短路；等下一条消息把水位抬到同一个值时，短路自动恢复。
+ */
+function owRdsPollSkip(int $roomId, int $sinceId): bool
+{
+    if ($roomId <= 0 || $sinceId <= 0) return false;
+    if (owRdsCfg('readpath') !== '1') return false;
+    if (owRdsConn() === null) return false;
+    $last = owRdsCmd(['GET', owRdsLastKey($roomId)]);
+    if ($last === null) return false;                  // 键不存在或读失败：照查库
+    return (int)$last === $sinceId;
+}
+
+/** online.track —— 把在场状态镜像进 Redis（核心照旧写库，这里只是镜像） */
+function owRdsPresenceTrack(array $actor, int $roomId): void
+{
+    if (owRdsCfg('readpath') !== '1') return;
+    if (owRdsConn() === null) return;
+    $kind = (string)($actor['kind'] ?? 'none');
+    if ($kind !== 'user' && $kind !== 'guest') return;    // 与核心 heartbeat 的 early-return 同口径
+    $id = (int)($actor['id'] ?? 0);
+    if ($id <= 0) return;
+    $token = ($kind === 'user' ? 'u' : 'g') . $id;
+    $now = time();
+    $hz = owRdsOnKey($roomId);      // Hash：token → 在场行 JSON
+    $zz = owRdsOnzKey($roomId);     // ZSET：token → last_seen（排序与过期都用它）
+    if (owRdsCmd(['ZADD', $zz, (string)$now, $token]) === null) return;
+    owRdsEnsureTtl($zz, OW_RDS_ONLINE_SEC * 2);
+    // 字段名与核心 online 表的列名一致，读取时原样交回；游客的 user_id 存空串，
+    // 核心那侧写的是 `$r['user_id'] ? (int)$r['user_id'] : null`，空串同样落成 null —— 语义一致。
+    $payload = (string)json_encode([
+        'user_id' => $kind === 'user' ? $id : 0,
+        'guest_id' => $kind === 'guest' ? $id : 0,
+        'nickname' => (string)($actor['nickname'] ?? ''),
+        'role' => (string)($actor['role'] ?? 'guest'),
+        'title' => (string)($actor['title'] ?? ''),
+        'avatar' => (string)($actor['avatar'] ?? ''),
+    ], JSON_UNESCAPED_UNICODE);
+    owRdsCmd(['HSET', $hz, $token, $payload]);
+    owRdsEnsureTtl($hz, OW_RDS_ONLINE_SEC * 2);
+}
+
+/**
+ * online.list —— 整段接手在场名单。
+ * 契约（core/chat.php:2052）：回填了行（哪怕一条）核心就不再查库；仍是空数组则照查库。
+ * 所以「Redis 里确实一个人都没有」这种情况核心会退回去查库 —— 不会给错答案，只是那次查询省不掉。
+ */
+function owRdsPresenceList(int $roomId): array
+{
+    if (owRdsCfg('readpath') !== '1') return [];
+    if (owRdsConn() === null) return [];
+    $hz = owRdsOnKey($roomId);
+    $zz = owRdsOnzKey($roomId);
+    // 1) 先清过期成员（ZSET 与 Hash 一起删），否则 Hash 会只增不减
+    $cut = time() - OW_RDS_ONLINE_SEC;
+    $stale = owRdsCmd(['ZRANGEBYSCORE', $zz, '-inf', '(' . $cut]);
+    if (is_array($stale) && $stale) {
+        owRdsCmd(array_merge(['ZREM', $zz], array_map('strval', $stale)));
+        owRdsCmd(array_merge(['HDEL', $hz], array_map('strval', $stale)));
+    }
+    // 2) 在场 token 与时间戳（时间戳就是排序依据，别从 Hash 里猜）
+    $cut = time() - OW_RDS_ONLINE_SEC;
+    $raw = owRdsCmd(['ZRANGEBYSCORE', $zz, '(' . $cut, '+inf', 'WITHSCORES']);
+    if (!is_array($raw) || count($raw) < 2) return [];
+    $ts = [];
+    for ($i = 0; $i + 1 < count($raw); $i += 2) $ts[(string)$raw[$i]] = (int)$raw[$i + 1];
+    if (!$ts) return [];
+    // 3) 一把取回全部资料（HGETALL 一次拿完，成员再多也不增加往返）
+    $all = owRdsCmd(['HGETALL', $hz]);
+    if (!is_array($all) || !$all) return [];
+    $rows = [];
+    for ($i = 0; $i + 1 < count($all); $i += 2) {
+        $token = (string)$all[$i];
+        if (!isset($ts[$token])) continue;              // 资料还在、索引已过期：跳过
+        $d = json_decode((string)$all[$i + 1], true);
+        if (!is_array($d)) continue;
+        $rows[] = [
+            'user_id' => (int)($d['user_id'] ?? 0), 'guest_id' => (int)($d['guest_id'] ?? 0),
+            'nickname' => (string)($d['nickname'] ?? ''), 'role' => (string)($d['role'] ?? 'guest'),
+            'title' => (string)($d['title'] ?? ''), 'avatar' => (string)($d['avatar'] ?? ''),
+            '__ts' => $ts[$token],
+        ];
+    }
+    if (!$rows) return [];
+    // 4) 排序口径与核心的 `ORDER BY role='admin' DESC, last_seen DESC` 一致
+    usort($rows, function (array $a, array $b) {
+        $ax = ($a['role'] === 'admin') ? 0 : 1;
+        $bx = ($b['role'] === 'admin') ? 0 : 1;
+        if ($ax !== $bx) return $ax <=> $bx;
+        return $b['__ts'] <=> $a['__ts'];
+    });
+    foreach ($rows as $i => $r) unset($rows[$i]['__ts']);
+    return array_slice($rows, 0, 300);   // 与核心的 LIMIT 300 对齐
+}
+
+/**
+ * rate.limit —— 计数搬进 Redis：开窗用 SET NX，窗口内用 INCR。
+ *
+ * 语义逐条对齐核心（core/security.php:138-145）：
+ *   · 新窗口：核心 `DB::upsert(count=1)` 后**直接放行**；这里 SET NX 成功即放行（max=0 时也放行第一条）。
+ *   · 窗口内：核心先判 `count >= max` 再自增；这里先 INCR 再判 `n <= max` —— 从 1 起算等价。
+ *   · 「速率窗口只读不续期」：这里**绝不**给窗口键续期（INCR 不碰窗口键），
+ *     否则被拒之后窗口被顺延，用户永远等不到放行。
+ *
+ * ⚠️ mail* 桶一律不接：核心的 rateRemaining() 只读库、且只被邮件流程调用
+ *    （core/mail.php:176-191 的 mail / mail_mail / mail_ip / mail_browser）。
+ *    接手这些桶会让「闸门拒绝你、剩余时间却显示 0 秒」—— 正是核心注释里警告的那种分裂。
+ */
+function owRdsRateLimit(string &$handled, string $bucket, string $ident, int $window, int $max): void
+{
+    if (owRdsCfg('ratelimit') !== '1') return;
+    if ($bucket === '' || $ident === '' || $window <= 0) return;
+    if (strpos($bucket, 'mail') === 0) return;
+    if (owRdsConn() === null) return;
+    $key = owRdsPrefix() . 'rl:' . $bucket . ':' . md5($ident);
+    /*
+     * ⚠️ 为什么用 Lua 而不是「SET NX 开窗 + INCR 计数」：
+     *   ① SET ... NX 在**键已存在**时返回 nil，而 nil 与「命令失败」在客户端是同一个值 ——
+     *      两者混在一起，插件会把「窗口已存在」误判成「Redis 出问题了」，于是每次都退回库路径，
+     *      限流等于没接（本机实测：计数键一直停在 1、库里照样有 rate_limits 行）。
+     *   ② INCR 与 EXPIRE 分开写就有中间态：进程恰在两步之间挂掉会留下**没有 TTL 的键** ——
+     *      计数永不过期 = 这个 ident 被永久限死。放进 Lua 一次做完就没有这个窗口。
+     *   语义与核心逐条对齐（core/security.php:138-145）：只有本条把计数从 0 抬到 1 时才设过期，
+     *   即「窗口只读不续期」——被拒之后的调用绝不顺延窗口。
+     */
+    $n = owRdsCmd(['EVAL',
+        "local n = redis.call('INCR', KEYS[1]) if n == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end return n",
+        '1', $key, (string)$window]);
+    if ($n === null) {
+        // 脚本不可用：退回两步，并把「设不上过期时间」的键删掉，绝不留下永不重置的计数键
+        $n = owRdsCmd(['INCR', $key]);
+        if ($n === null) return;
+        if ((int)$n === 1) {
+            $e = owRdsCmd(['EXPIRE', $key, (string)$window]);
+            if ($e === null || (int)$e === 0) owRdsCmd(['DEL', $key]);
+        }
+    }
+    // 与核心一致：窗口内第一条（计数刚被抬到 1）无条件放行，即使 max=0
+    $handled = ((int)$n === 1 || (int)$n <= $max) ? '1' : '0';
+}
+
 /* ============================ 钩子（写入侧，只有一个方向） ============================ */
 
 /**
@@ -609,6 +852,12 @@ Plugin::on('message.after_send', function ($id, $actor, $roomId, $content = '', 
     try {
         $roomId = (int)$roomId;
         if (owRdsConn() === null) return;
+        // ⚠️ 顺序有意义：**先宣告水位，再写镜像**。
+        //    poll.hint 只在「水位 == 客户端 sinceId」时跳过探活查询，所以水位必须「宁可早说、不可晚说」：
+        //    先宣告 → 即使后面镜像写失败，水位也已经是新 id，客户端 sinceId 追不上它 → 不会误跳过；
+        //    反过来先镜像后宣告，中间失败就留下「镜像里有、水位没有」的窗口，
+        //    此时水位仍等于客户端的 sinceId，一次本该发生的查询会被跳过 —— 那条消息就卡住不显示了。
+        owRdsMarkLast($roomId, (int)$id);
         $ok = owRdsMirrorPush($roomId, [
             'id' => (int)$id, 'rid' => $roomId,
             'uid' => ($actor['kind'] ?? '') === 'user' ? (int)$actor['id'] : 0,
@@ -648,6 +897,50 @@ Plugin::on('user.active', function (array $actor) {
 /** 登录成功：计一次登录（失败不计数 —— 登录失败已有核心的 login_attempts 兜底） */
 Plugin::on('login.after_verify', function ($user, $method = 'password', $ctx = []) {
     try { owRdsBump('login'); } catch (Throwable $e) { /* 同上 */ }
+});
+
+/* ---------- 读路径钩子（核心 v1.3.155 的 6 处 fire 点，本插件接 5 个、刻意不接 login.attempt） ---------- */
+
+/**
+ * history.rows —— 核心查完库把原始行交过来。
+ * 本插件只用它校准水位；**不回填 $rows**（为什么，见 owRdsCalibrate 的注释）。
+ */
+Plugin::on('history.rows', function (&$rows, $roomId, $beforeId, $limit, $fromId, $actor) {
+    try {
+        owRdsCalibrate(is_array($rows) ? $rows : [], (int)$roomId);
+    } catch (Throwable $e) { /* 旁路失败绝不冒泡 */ }
+});
+
+/**
+ * poll.hint —— 确认「这段时间没有新消息」就把 $hit 置 '1'，核心于是跳过这次探活查询。
+ * ⚠️ 语义是「跳过查询」，不是「有新消息」——为空串时核心行为与从前完全一致。
+ */
+Plugin::on('poll.hint', function (&$hit, $roomId, $sinceId) {
+    try {
+        if (owRdsPollSkip((int)$roomId, (int)$sinceId)) $hit = '1';
+    } catch (Throwable $e) { /* 同上 */ }
+});
+
+/** online.track —— 在场状态镜像到 Redis（通知型：核心照旧写 online 表） */
+Plugin::on('online.track', function ($actor, $roomId) {
+    try {
+        owRdsPresenceTrack(is_array($actor) ? $actor : [], (int)$roomId);
+    } catch (Throwable $e) { /* 同上 */ }
+});
+
+/** online.list —— 回填在场名单；回填空数组时核心照旧查库（不会给错答案） */
+Plugin::on('online.list', function (&$rows, $roomId) {
+    try {
+        $got = owRdsPresenceList((int)$roomId);
+        if ($got) $rows = $got;
+    } catch (Throwable $e) { /* 同上 */ }
+});
+
+/** rate.limit —— 计数搬进 Redis（INCR + EXPIRE）；mail* 桶在里面被排除 */
+Plugin::on('rate.limit', function (&$handled, $bucket, $ident, $window, $max) {
+    try {
+        owRdsRateLimit($handled, (string)$bucket, (string)$ident, (int)$window, (int)$max);
+    } catch (Throwable $e) { /* 同上 */ }
 });
 
 /* ============================ 计划任务 ============================ */
@@ -785,9 +1078,11 @@ Plugin::adminPage('redis', 'Redis 缓存', function () {
     };
 
     $h = '<h2>Redis 缓存</h2>'
-        . '<p class="ow-admin-desc">把消息与活跃数据旁路镜像进 Redis，并做连接体检与每日计数落库。'
-        . '⚠️ <strong>本插件不接管聊天的读路径</strong>——历史与轮询仍走数据库，'
-        . '让 Redis 真正加速聊天需要核心补钩子（见页面底部「核心钩子待办」）。</p>';
+        . '<p class="ow-admin-desc">消息与活跃数据旁路镜像进 Redis，另有连接体检、每日计数落库，'
+        . '并从核心 v1.3.155 起接手部分读路径（长轮询探活短路、在场名单、限流计数 —— 逐条状态见页面底部）。'
+        . '⚠️ 读路径只接「核心同时开了写入侧」的那几处：<strong>消息历史本身仍走数据库</strong>'
+        . '（history.rows 只用来校准水位、不回填），<strong>login.attempt 刻意不接</strong>。'
+        . '一句话：这些改动是省查询、不是换存储 —— 数据库始终是唯一真源。</p>';
 
     // 状态条：一句话说清「现在 Redis 到底在不在干活」
     $h .= '<div class="ow-card"><div id="owRdsState" class="ow-rds-state">正在检测…</div>'
@@ -836,36 +1131,47 @@ Plugin::adminPage('redis', 'Redis 缓存', function () {
         . '<button class="ow-btn ow-btn-ghost" onclick="OwRdsAdmin.flush()">清空 Redis 中的本插件数据</button>'
         . '</div></div>';
 
-    // 核心钩子待办：把「两边各要做什么」写清楚（原来这里写成「插件侧不用再改一行」是不对的，
-    // 站方 2026-10-15 核出：这 5 个读路径钩子插件侧一个处理器都没有）
-    $todo = [
-        ['history.rows', 'core/chat.php:992（Chat::history 里的 DB::all 之后）',
-            "Plugin::fire('history.rows', [&\$rows, \$roomId, \$beforeId, \$limit, \$fromId, \$actor]);",
-            '插件侧要做：命中缓存就把行回填进 $rows（未命中则把刚查到的行写进缓存），核心照旧做 pack() / 可见性 / 隐藏过滤 —— 插件只当搬运工，不复制核心规则。'],
-        ['poll.hint', 'core/chat.php:1070（Chat::poll 的 while 循环内）',
-            "\$hit = ''; Plugin::fire('poll.hint', [&\$hit, \$roomId, \$sinceId]); if (\$hit !== '1') { /* 原有 SELECT */ }",
-            '插件侧要做：Redis 里有比 $sinceId 更新的消息时返回 \'1\'，把「每 0.5 秒查一次库」的探活换成一次 Redis 查询；拿不准就返回空串，交回核心原逻辑。'],
-        ['online.track / online.list', 'core/chat.php:2021（heartbeat 的 upsert）与 2034（onlineList 的 SELECT）',
-            "Plugin::fire('online.track', [\$actor, \$roomId]);   Plugin::fire('online.list', [&\$rows, \$roomId]);",
-            '插件侧要做：track 写 Redis Hash + TTL；list 读回同样的行结构。在线状态是本项目最像 Redis 的场景（现在是每请求一次 upsert + 一次全表 DELETE）。'],
-        ['rate.limit', 'core/security.php:126（Sec::rateLimit 计数处）',
-            "Plugin::fire('rate.limit', [&\$handled, \$bucket, \$ident, \$window, \$max]);",
-            '插件侧要做：INCR + EXPIRE 计数、$handled 置 true 表示已接管。⚠️ 必须保留核心「速率窗口只读不续期」的语义，否则被拒后窗口被顺延，用户永远等不到放行。'],
-        ['login.attempt', 'core/security.php:154（loginFails / loginLocked 读取处）',
-            "Plugin::fire('login.attempt', [&\$fails, \$identity]);",
-            '插件侧要做：从 Redis 读失败次数与锁定时间；login_attempts 表保留为落库真源，Redis 只是快路径。'],
+    // 读路径接手状态：核心 v1.3.155 的 6 处 fire 点逐条说清「接没接、为什么」
+    // （占位符：名称 / 状态徽标 / 位置 / 'on'|'off' / 说明）
+    $rp = [
+        ['history.rows', '已接', 'core/chat.php:998', 'on',
+            '只用核心这次查到的行校准「本群最新消息 id」水位；**不回填 $rows** —— 这条钩子的触发条件是「核心这次没查到行」，'
+            . '而「库里没有、缓存里有」恰恰是消息被撤回、或被服务器保留期清理的形态，回填等于把已经消失的内容复活。'],
+        ['poll.hint', '已接', 'core/chat.php:1081', 'on',
+            '长轮询探活短路：只有「水位恰好等于客户端 sinceId」时才跳过这次查询（一轮长轮询最多 40 次 SELECT，省得最多的一处）。'
+            . '水位读不到、偏大、偏小都照查库 —— 判据只会保守，不会猜。'],
+        ['online.track + online.list', '已接', 'core/chat.php:2038 / 2057', 'on',
+            '在场状态镜像进 Redis（窗口 45 秒，与核心 online 表一致）；online.list 回填成功则核心不再查库，'
+            . '回填空数组则核心照旧查库 —— 所以「Redis 里确实没人」不会给错答案，只是那次查询省不掉。'],
+        ['rate.limit', '已接（mail* 桶除外）', 'core/security.php:136', 'on',
+            'INCR + EXPIRE 计数，不再写 rate_limits 表，并保住核心「窗口只读不续期」的语义（被拒之后不顺延窗口）。'
+            . '⚠️ **mail* 桶刻意不接**：核心的 rateRemaining() 只读库、且只被邮件流程调用（core/mail.php:176-191），'
+            . '接手这些桶会变成「闸门拒绝你、剩余时间却显示 0 秒」。'],
+        ['login.attempt', '刻意不接', 'core/security.php:173 / 182 / 227', 'off',
+            '核心只开了**读**（loginFails / loginLocked / lockSeconds），没开**写**：失败自增与「上一轮锁定到期就重新起算」'
+            . '仍在 Sec::loginFail() 里、成功清零在 Sec::loginOk() 里。插件若自己计数，就得把阈值、锁定分钟数、到期重算'
+            . '这三条**安全规则**复制一份，而错的方向是「锁定失效 = 暴力破解可绕过」。要接，请核心先给一个写入侧钩子'
+            . '（如 login.fail_add / login.fail_clear），插件只当计数器。'],
     ];
-    $h .= '<div class="ow-card"><h3 style="margin:0 0 10px">核心钩子待办：两边都要改（核心补 fire 点 + 插件补处理器）</h3>'
-        . '<p style="font-size:12px">本插件已经把<strong>写入侧（4 个钩子）与统计、体检</strong>做完了；但要让 Redis 接管「读消息」这条路，'
-        . '下面 5 个<strong>读路径</strong>钩子插件侧<strong>目前一个处理器都没有</strong> —— 也就是说这条路现在只备好了核心那半边。'
-        . '核心补 fire 点、插件补处理器，<strong>两边必须成对落地</strong>：只补核心是空转（没人接），只补插件是死代码（钩子不 fire）。'
-        . '原则：<strong>插件只提供原始行，可见性过滤一律留在核心</strong>——'
-        . '否则隐藏消息、密码房、游客这些规则会被复制一份，核心一改口径插件就错。</p>';
-    foreach ($todo as $i => $t) {
-        $h .= '<div class="ow-rds-todo"><div class="ow-rds-todo-h"><b>' . ($i + 1) . '. '
-            . Sec::e($t[0]) . '</b><span>' . Sec::e($t[1]) . '</span></div>'
-            . '<div class="ow-rds-scroll"><code>' . Sec::e($t[2]) . '</code></div>'
-            . '<div class="ow-rds-todo-d">' . Sec::e($t[3]) . '</div></div>';
+    $h .= '<div class="ow-card"><h3 style="margin:0 0 10px">读路径接手（核心 v1.3.155 起的 6 处 fire 点）</h3>'
+        . '<p style="font-size:12px">下面每一处都标注了接手状态与理由。<strong>能不能接取决于核心有没有同时开写入侧</strong>：'
+        . '只开读不开写的地方，插件要么返回「未接手」（等于没接），要么就得把核心的规则复制一份 —— 后者一旦与核心不一致，'
+        . '代价往往是权限或安全出问题，所以宁可不接。</p>'
+        . '<div class="ow-form-row">'
+        . $sel('readpath', '读路径总开关', ['1' => '开启', '0' => '关闭'],
+            '关闭后 history.rows / poll.hint / online.* 一律不接手，完整恢复核心原行为')
+        . $sel('ratelimit', '限流计数', ['1' => '放进 Redis', '0' => '留给核心（写 rate_limits 表）'],
+            '只作用于非 mail 桶；出问题可一键关回去')
+        . '</div>';
+    // 说明里用 **…** 标重点：先 Sec::e() 转义再换成 <strong>（转义不会碰星号，顺序反了就是 XSS）
+    $em = function (string $s): string {
+        return (string)preg_replace('/\*\*(.+?)\*\*/s', '<strong>$1</strong>', Sec::e($s));
+    };
+    foreach ($rp as $t) {
+        $h .= '<div class="ow-rds-todo"><div class="ow-rds-todo-h"><b>' . Sec::e($t[0]) . '</b>'
+            . '<em class="ow-rds-st ' . ($t[3] === 'on' ? 'is-on' : 'is-off') . '">' . Sec::e($t[1]) . '</em>'
+            . '<span>' . Sec::e($t[2]) . '</span></div>'
+            . '<div class="ow-rds-todo-d">' . $em($t[4]) . '</div></div>';
     }
     $h .= '</div>';
 

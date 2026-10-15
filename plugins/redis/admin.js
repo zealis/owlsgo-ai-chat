@@ -53,7 +53,8 @@
             return;
         }
         var t = r.today || {};
-        setState('<span class="ow-rds-ok">已连接</span> —— 正在旁路镜像消息与统计活跃。'
+        setState('<span class="ow-rds-ok">已连接</span> —— 正在镜像消息、统计活跃，'
+            + '并按下方开关接手部分读路径（长轮询探活短路 / 在场名单 / 限流计数）。'
             + '今日（Redis）：消息 ' + num(t.msgs) + ' 条 · 镜像 ' + num(t.mirrors) + ' 条 · 登录 '
             + num(t.logins) + ' 次 · 活跃 ' + num(t.acts) + ' 人。');
     }
@@ -198,7 +199,8 @@
     /* ================= 配置 ================= */
 
     var KEYS = ['enable', 'host', 'port', 'pass', 'db', 'prefix', 'timeout',
-                'mirror', 'mirror_keep', 'mirror_days', 'mirror_dm', 'stat', 'stat_days'];
+                'mirror', 'mirror_keep', 'mirror_days', 'mirror_dm', 'stat', 'stat_days',
+                'readpath', 'ratelimit'];
 
     R.saveCfg = function () {
         var data = {}, i, el;
