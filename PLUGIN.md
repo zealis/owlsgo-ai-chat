@@ -242,15 +242,79 @@ OwChat.registerAvatarUploader(function (file, filename, onOk) {
 
 ## 钩子（Plugin::on / fire）
 
-当前核心提供的钩子（以源码 `Plugin::fire()` 调用点为准，不臆造）：
+当前核心提供的钩子，**以源码 `Plugin::fire()` / `Plugin::collect()` 的调用点为准，不臆造**。
+注册一律是 `Plugin::on(name, fn)`，写在 `main.php` **顶层**。
 
-| 钩子                    | 触发时机                             | 参数                                                                   |
-| --------------------- | -------------------------------- | -------------------------------------------------------------------- |
-| `message.before_send` | 消息入库前（`Chat::send` 内）            | `[&$content, $actor, $roomId]` —— `$content` 按引用传入，可改写（敏感词过滤之后、入库之前） |
-| `message.after_send`  | 消息入库后                            | `[$msgId, $actor, $roomId]`                                          |
+> **`plugin.json` 里不需要声明钩子**（v1.3.153 更正）：注册清单是核心扫描 `main.php` 时自动记下的 ——
+> `Plugin::on()` 把钩子名记进 `$pending['hooks']`，随后写进 `data/cache/plugins.json`；
+> `fire` / `collect` 决定「要不要 require 哪个插件」读的就是这份清单。
+> 手写一个插件不读的 `hooks` 字段只会误导后来人（现存仅 `oauth-core` 留了一个，是早期设计残留）。
+
+### fire —— 通知 / 闸门（无返回值）
+
+| 钩子 | 触发时机 | 参数 |
+|---|---|---|
+| `request.start` | 每个请求开始（`index.php`，DB 已就绪、`$actor` 已解析、**尚未输出任何字节**） | `[$actor]` —— 想在「任何路由与输出之前拦人」就挂它：处理器可直接 403 退出。插件是按需加载的，所以需要一个稳定入口 |
+| `user.active` | 用户活跃时（`index.php`，**每请求一次**，含长轮询；仅登录用户，游客不触发） | `[$actor]` —— 等级信任插件据此把「今日已登录」计入每日任务（内部按自然日去重）。⚠️ 只挂 `login.after_verify` 会漏掉绝大多数活跃日：登录态是**会话**，开着页面第二天继续用不再走登录 |
 | `page.head`           | 各页面 `<head>` 输出时（`pageHead()` 内） | 无参，可直接 echo                                                          |
 | `page.footer`         | 聊天页 / 后台页 body 输出末尾              | 无参，可直接 echo                                                          |
 | `cron.minute`         | 统一计划任务（每分钟至多一次）                  | 无参                                                                   |
+| `avatar.url` | 计算某用户的头像地址时（`Auth::avatarUrlFor`） | `[&$url, $ctx]` —— `$ctx` 含 `style` / `seed` / `source`；改写 `$url` 即可换掉头像源（含 DiceBear / 内置 identicon） |
+| `nickname.before_save` | 昵称校验（注册 / 改资料 / 安装向导，`Auth::checkNickname` 内） | `[&$nick, &$err, $ctx]` —— 可改写 `$nick`，或把 `$err` 设为非空字符串拦截（即用户看到的文案）；`$ctx['scene']` 为 `register` / `profile` / `install`。参考实现：`plugins/nickname-guard/` |
+| `login.after_verify` | 登录验证完成（`Auth::login` 内，密码校验通过且会话已建立） | `[$user, $method, $ctx]` —— 通知型，`$method` 为本通过验证的方式（核心仅 `password`；插件实现两步验证时可自行触发本钩子并传 `totp` / `recovery`）；`$ctx` 含 `ip`。**仅在成功登录时触发，验证失败不触发** |
+| `login.failed` | 登录失败（`Auth::login` 内，**每次失败都触发**，v1.1.12 起） | `[$info]` —— 键：`identity`（用户提交的登录标识，原样）、`reason`（`fail` 密码或账号错 / `locked` 临时锁定 / `disabled` 账号被禁用）、`msg`（用户看到的文案）、`left`（剩余尝试次数，`-1` 表示不适用）、`user`（命中的 `users` 行）、`ip`。⚠️ **密码错误时 `user` 为 `null`**（确认「账号存在」本身就是信息，核心不给出以防账号枚举侧信道），回调内**必须判空**。与 `login.after_verify` 严格成对：一个只在成功时触发、一个只在失败时触发，插件不必自己判断方向 |
+| `logout.before_destroy` | 用户主动登出（`Auth::logout` 内，**`session_destroy()` 之前**，v1.1.12 起） | `[$info]` —— 键：`uid`、`nickname`、`had_uid`（是否带登录态）、`ip`、`reason`（恒为 `manual`）。⚠️ 核心保证在销毁前 fire，所以 uid / 昵称一定拿得到；**游客会话 `had_uid` 为 false，判空后跳过可免得刷出一堆噪声** |
+| `session.destroyed` | 会话被服务端销毁（`Sec::fingerprintGuard` 内，指纹不符时，**`session_destroy()` 之前**，v1.1.12 起） | `[$info]` —— 键：`reason`（当前唯一值 `fingerprint_mismatch`）、`uid`、`had_uid`、`fp_saved`（会话内原指纹）、`fp_now`（本次算出的指纹）、`ip`。⚠️ **这不是用户主动登出**，插件应与 `logout.before_destroy` 区别对待（如记成「疑似会话被盗」而非「主动退出」） |
+| `captcha.enforce` | 人机验证闸门（`index.php`，登录 / 注册 / 发信等场景取票之时） | `[&$ok, &$msg, $ctx]` —— `$ctx` 含 `scene` / `post` / `actor`；`$ok` 置 true 即放行，`$msg` 为拒绝文案。实现见 `plugins/captcha-verify/` |
+| `embed.sess_user` | 解析「无 cookie 场景下的用户身份」时（`index.php` 身份解析块，请求带 `embed_sess` 且仍是访客时，v1.3.104） | `[&$user, $sess]` —— `$sess` 是 32 位小写 hex 的会话令牌明文；把对应的 `users` 行**整行**回填到 `$user` 即以该用户身份处理本次请求，核心负责 `status=1` 兜底复核。无人响应 / 校验不过就静默回落到访客身份（功能不坏，只是没登录态）。⚠️ 纯备用凭证通道，**权力等同该用户本人**（发消息、私信、收藏…），因此：① 只在「同请求已带合法 `embed_token`、且该令牌绑定了房间」的场景可用；② 必须校验令牌自己没过期/没吊销，且**签发它的那枚嵌入令牌仍有效**（父级吊销要能连坐）；③ 只存 sha256、可吊销、有效期别太长；④ 绝不回填 `password` 之外的敏感字段给前端——`$user` 只在服务端内部使用，但插件里别顺手塞进任何 echo 输出 |
+| `upload.guard` | 上传闸门（`index.php` 的 `?action=upload`，**落盘之前**） | `[&$allow, &$reason, $kind, $actor]` —— `$allow` 置 false 拦截，`$reason` 即用户看到的文案；`$kind` 为 `avatar` / `sticker` 等（等级信任插件按等级限制头像与贴纸） |
+| `upload.image` | 头像/贴纸/图片消息落盘前（`Upload::handle` 内，`checkImage` 之前） | `[&$f, $kind]` —— `$f` 是 `$_FILES['file']` 的拷贝，按引用改写即可替换落盘内容（附件上传插件在此做 WebP 压缩，按 `$kind` 细分开关）。⚠️ 替换 `tmp_name` 时产物是自建临时文件，核心落盘已按 `is_uploaded_file()` 分流 move/copy（v1.3.29） |
+| `sticker.allow` | 收藏贴纸的地址放行（`Upload::addSticker` 内） | `[&$allow, $url, $actor]` —— `$allow` 置字符串 `'1'` 才放行**外站**图片地址（核心默认只认本站 `uploads/`）；表情包插件用它在收藏自己图源的外链时作保。放行后核心仍会校验地址形状 |
+| `sticker.quota` | 收藏贴纸数量校验前（`Upload::addSticker` 内） | `[&$limit, $actor]` —— `$limit` 初始 100，改小即收紧；`<=0` 表示未解锁直接拒（等级信任插件按 sticker_tiers 分档） |
+| `file.downloaded` | 下载消息附件后（`index.php`） | `[$下载者id, $消息id, $发送者id]` —— 通知型，等级插件据此计任务进度 |
+| `room.create.gate` | 建群闸门（名额 / 权限，`index.php`） | `[&$gate, $actor]` —— `$gate` 置非空字符串即拒绝（即用户看到的文案） |
+| `room.created` | 建群成功后（`index.php`） | `[$id, $actor, $charged]` —— `$charged` 为消耗的积分（0 = 免费），等级插件据此统计建群次数 |
+| `room.after_update` | 群资料 / 群设置更新后（`Chat::updateRoom`，后台改名、清空群头像） | `[$roomId, $sets, $actor]` —— `$sets` 为本次改动的字段 |
+| `room.restored` | 群聊从审核回收站撤销「删除」后 | `[$roomId, $row, $actor]` —— `$row` 为恢复的整行数据 |
+| `friend.guard` | 加好友闸门（`Chat::addFriend` 内） | `[&$allow, &$reason, $actor, $toId]` —— `$allow` 置 false 拦截，`$reason` 为展示文案 |
+| `dm.read` | 私聊已读上报（`Chat::markDmRead` 内） | `[&$allow, &$reason, $actor, $targetId, $from, $to]` |
+| `ban.check` | 消息发送禁言判定（`Chat::isBanned` 内，核心 bans 表无命中时触发，每条消息一次） | `[&$reason, $actor, $roomId]` —— `$reason` 初始为 **null**，设为非空字符串即拦截（即用户看到的文案）；回调签名必须用 **`?string &$reason`**（nullable，初始 null 传非 nullable 引用会 TypeError 且被 fire 静默吞掉）。参考：`plugins/ban-manager/` 的运行时说明 |
+| `text.filter` | 任何要入库的文字（消息 / 公告 / 举报理由…）**改写**用 | `[&$text, $scene, $actor]` —— `$text` 按引用改写（敏感词插件在这里做替换），不拦截 |
+| `text.check` | 同一批文字（消息 / 昵称 / 公告…）的**拦截**判定 | `[&$reason, &$text, $scene, $actor]` —— `$reason` 置非空即拦截，即用户看到的文案 |
+| `message.quote` | 消息带引用发送时（`Chat::send` 内，引用已规范化为 JSON 后） | `[&$quote, $content, $actor, $roomId]` —— `$quote` 为 `{nick,text}` 的 JSON 字符串；可改写为脱敏后的内容，或置空禁用该条引用 |
+| `message.before_send` | 消息入库前（`Chat::send` 内）            | `[&$content, $actor, $roomId]` —— `$content` 按引用传入，可改写（敏感词过滤之后、入库之前） |
+| `message.after_send` | 消息入库后（含定时群发 / AI 应答等由插件发出的消息） | `[$msgId, $actor, $roomId, $content, $type, $toUserId]` —— 通知型；群聊自动化据此做关键词回复与 @ 应答（回调里要防循环：机器人自己发的消息也会进来） |
+| `msg.before_delete` | 删除消息前（`Chat::deleteMessage` 内，权限判定后、执行前） | `[&$allow, &$reason, $msg, $actor]` —— `$allow` 置 false 即拦截，`$reason` 为展示给用户的理由；可用于保护特定消息/房间 |
+| `msg.after_recall` | 撤回消息后（自己撤回或管理员撤回他人，`Chat::recall` 内） | `[$msgId, $msg, $actor]` —— 通知型，供审计 / 同步类插件扩展 |
+| `user.card` | 打开用户资料卡取数据时（`?action=user_card`） | `[&$u, $actor]` —— `$u` **按引用**传，插件补字段即可随卡片一起下发（等级信任插件挂 `Lv.N`），前端不必再打一次接口 |
+| `ip.location` | 管理员查 IP 归属地（`?action=ip_loc`，核心 v1.0.55 起不再内置实现） | `[&$loc, $ip, $actor]` —— `$loc` 初始 `''`，设为非空字符串即作为归属地结果返回；无人响应时接口返回「未安装归属地查询插件」。菜单入口由插件用 `OwChat.onMsgCtx` 自行注册 |
+| `mail.render` | `mail.send` **之前**，核心已生成码与默认文案（v1.3.55） | `[&$subject, &$body, &$format, $ctx]` —— 插件按 `$ctx['kind']` 套自己的模板改写主题与正文，并把 `$format` 置 `html`。⚠️ 只对验证码生效：`$ctx['code']` 为空的邮件（别的插件群发通知）不要改写，否则会把别人的正文换成验证码模板 |
+| `mail.send` | 发验证码等邮件要投递时（`Mailer::send`） | `[&$sent, $to, $subject, $body, &$error, $ctx]` —— 核心 v1.0.81 起不再内置 SMTP；插件完成投递后把 `$sent` 置 true，失败时把可展示的原因写进 `$error`（会拼进用户提示，**不要塞原始异常/凭据**）。无人响应时验证码仍入库，但接口返回「站点未启用邮件发送」。`$ctx` 含 `kind`（register/reset/chpwd…）、`code`、`ttl`、`name`、`email`、`site_name`、`format`（text/html） |
+| `mail.unsent` | 没有任何插件响应 `mail.send`（v1.3.55） | `[$info]` —— 键 `to` / `subject` / `kind`。用于记「待发送」统计：码已入库但没发出去，用户必然收不到 |
+
+### collect —— 要返回内容（返回值会被**拼接**）
+
+| 钩子 | 用途 | 返回 |
+|---|---|---|
+| `chat.toolbar` | 输入工具栏入口按钮（插在 `#owToolFirst`） | HTML |
+| `sidebar.rail` | 侧栏一级导航（rail）按钮 | HTML |
+| `sidebar.tabs` | 旧名，与 `sidebar.rail` 同一条路径（兼容保留） | HTML |
+| `captcha.form` | 人机验证组件（登录 / 注册 / 发信 / 加好友等场景） | HTML |
+| `captcha.takeover` | 「人机验证由插件接管了吗」——核心据此决定要不要走内置判定 | `'1'` = 已接管 |
+| `captcha.needed` | 这个场景此刻要不要出人机组件（必须与服务端闸门同源，否则会出现「界面摆组件、服务端不查」或反过来） | `'1'` = 要 |
+| `mail.available` | `Mailer::deliverable()` 判定「这台站点现在真能发信吗」（v1.3.64） | 返回 `'1'` 表示有可用通道。核心用它决定**要不要要求**邮箱验证码：只看后台开关会出现「要求一个根本发不出来的凭证」—— 没配 SMTP 时用户被永久卡在改不了密码上。⚠️ 降级只适用于还有别的凭证的流程（改密码有当前密码、注册是本人建号）；**找回密码绝不能降级**，那里验证码是唯一凭证，一降级就是「知道邮箱就能改别人密码」的接管漏洞 |
+| `sign.fallback` | 签名门禁验签失败后（`index.php` 签名门禁，v1.3.96） | `[['token'=>…, 'action'=>…]]` —— 返回字符串 `'1'` 表示放行该请求。供「无 cookie 场景的备用凭证」：room-embed 的跨站嵌入令牌即用本钩子（令牌绑定公开群，权力等价于该群访客）。⚠️ 只在验签失败时咨询；多插件同时注册时返回值会**拼接**，处理器必须只返回 `'1'` 或 `''`，拼接结果非 `'1'` 一律拒绝（fail-closed）。令牌类凭证务必：只存哈希、可吊销、绑定作用域 |
+
+### 插件之间的钩子（核心不 fire，由插件 fire，供其它插件扩展）
+
+| 钩子 | 谁 fire | 参数 / 约定 |
+|---|---|---|
+| `user.level.get` / `user.level.set` | user-manager、chat-background 等 | `[&$lv, $uid]` / `[$uid, $lv, &$ok, &$msg]` —— 等级信任插件实现：读等级 / 改等级 |
+| `file.uploaded` | attachment-manager | `[$uid, $kind, $size]` —— 附件落盘后触发，等级插件据此计任务进度 |
+| `attachment.guard` | attachment-manager | `[&$allow, &$reason, $actor]` —— 附件上传闸门（等级限制） |
+| `upload.maxsize` | attachment-manager | `[&$tmp, $actor]` —— 压缩后回写临时文件 |
+| `oauth.granted` / `oauth.revoked` | oauth-core | `[$userId, $plugin, $appId, …]` —— 授权建立 / 撤销 |
+| `ban.after_add` / `ban.after_del` | ban-manager | `[$banId, $type, $target, $actor]` / `[$banId, $actor]` —— 通知型，供审计、通知类插件扩展 |
 
 > **`cron.minute` 钩子 vs `Plugin::cron()` 声明式任务**（v1.1.13 起）
 >
@@ -271,17 +335,11 @@ OwChat.registerAvatarUploader(function (file, filename, onOk) {
 > - 处理器抛异常会被捕获，任务记为 `error` 并写日志，**不影响其它任务、不影响主流程**。
 > - 调度由长轮询驱动（每分钟至多一次，多进程有 `flock` 排他锁）；
 >   也可挂系统计划任务访问 `?action=cron&token=<后台生成的令牌>` 强制触发。
-| `upload.image` | 头像/贴纸/图片消息落盘前（`Upload::handle` 内，`checkImage` 之前） | `[&$f, $kind]` —— `$f` 是 `$_FILES['file']` 的拷贝，按引用改写即可替换落盘内容（附件上传插件在此做 WebP 压缩，按 `$kind` 细分开关）。⚠️ 替换 `tmp_name` 时产物是自建临时文件，核心落盘已按 `is_uploaded_file()` 分流 move/copy（v1.3.29） |
-| `sticker.quota` | 收藏贴纸数量校验前（`Upload::addSticker` 内） | `[&$limit, $actor]` —— `$limit` 初始 100，改小即收紧；`<=0` 表示未解锁直接拒（等级信任插件按 sticker_tiers 分档） |
-| `nickname.before_save` | 昵称校验（注册 / 改资料 / 安装向导，`Auth::checkNickname` 内） | `[&$nick, &$err, $ctx]` —— 可改写 `$nick`，或把 `$err` 设为非空字符串拦截（即用户看到的文案）；`$ctx['scene']` 为 `register` / `profile` / `install`。参考实现：`plugins/nickname-guard/` |
-| `ban.check` | 消息发送禁言判定（`Chat::isBanned` 内，核心 bans 表无命中时触发，每条消息一次） | `[&$reason, $actor, $roomId]` —— `$reason` 初始为 **null**，设为非空字符串即拦截（即用户看到的文案）；回调签名必须用 **`?string &$reason`**（nullable，初始 null 传非 nullable 引用会 TypeError 且被 fire 静默吞掉）。参考：`plugins/ban-manager/` 的运行时说明 |
-| `ban.after_add` / `ban.after_del` | 禁言添加 / 解除后（ban-manager 插件触发） | `[$banId, $type, $target, $actor]` / `[$banId, $actor]` —— 通知型，供审计、通知类插件扩展 |
-| `ip.location` | 管理员查 IP 归属地（`?action=ip_loc`，核心 v1.0.55 起不再内置实现） | `[&$loc, $ip, $actor]` —— `$loc` 初始 `''`，设为非空字符串即作为归属地结果返回；无人响应时接口返回「未安装归属地查询插件」。菜单入口由插件用 `OwChat.onMsgCtx` 自行注册 |
-| `message.quote` | 消息带引用发送时（`Chat::send` 内，引用已规范化为 JSON 后） | `[&$quote, $content, $actor, $roomId]` —— `$quote` 为 `{nick,text}` 的 JSON 字符串；可改写为脱敏后的内容，或置空禁用该条引用 |
-| `msg.before_delete` | 删除消息前（`Chat::deleteMessage` 内，权限判定后、执行前） | `[&$allow, &$reason, $msg, $actor]` —— `$allow` 置 false 即拦截，`$reason` 为展示给用户的理由；可用于保护特定消息/房间 |
-| `msg.after_delete` | 删除消息后 | `[$msgId, $msg, $actor]` —— 通知型，供审计、同步、通知类插件扩展 |
-| `sign.fallback` | 签名门禁验签失败后（`index.php` 签名门禁，v1.3.96） | `[['token'=>…, 'action'=>…]]` —— 返回字符串 `'1'` 表示放行该请求。供「无 cookie 场景的备用凭证」：room-embed 的跨站嵌入令牌即用本钩子（令牌绑定公开群，权力等价于该群访客）。⚠️ 只在验签失败时咨询；多插件同时注册时返回值会**拼接**，处理器必须只返回 `'1'` 或 `''`，拼接结果非 `'1'` 一律拒绝（fail-closed）。令牌类凭证务必：只存哈希、可吊销、绑定作用域 |
-| `embed.sess_user` | 解析「无 cookie 场景下的用户身份」时（`index.php` 身份解析块，请求带 `embed_sess` 且仍是访客时，v1.3.104） | `[&$user, $sess]` —— `$sess` 是 32 位小写 hex 的会话令牌明文；把对应的 `users` 行**整行**回填到 `$user` 即以该用户身份处理本次请求，核心负责 `status=1` 兜底复核。无人响应 / 校验不过就静默回落到访客身份（功能不坏，只是没登录态）。⚠️ 纯备用凭证通道，**权力等同该用户本人**（发消息、私信、收藏…），因此：① 只在「同请求已带合法 `embed_token`、且该令牌绑定了房间」的场景可用；② 必须校验令牌自己没过期/没吊销，且**签发它的那枚嵌入令牌仍有效**（父级吊销要能连坐）；③ 只存 sha256、可吊销、有效期别太长；④ 绝不回填 `password` 之外的敏感字段给前端——`$user` 只在服务端内部使用，但插件里别顺手塞进任何 echo 输出 |
+> **涉及会话的钩子必须在 `session_destroy()` 之前 fire**（上表后两个已由核心保证）。销毁之后 `$_SESSION` 已清空，回调拿不到 uid / 指纹，只能记一条匿名日志。
+>
+> 在 `core/auth.php` 里 fire 插件钩子必须写 `class_exists('Plugin')` 防御 —— `index.php` 的 require 顺序是 `auth.php` **先于** `plugin.php`，而 CLI 诊断脚本可能只 require 部分 core 文件。
+
+计划任务由长轮询驱动（`Plugin::cronTick()`），也可用系统计划任务调 `?action=cron` 强制触发；回调内自行判断是否到达执行周期，保证可重复运行。
 
 前端扩展点（右键菜单按落点分流，v1.0.69 起）：
 
@@ -289,24 +347,6 @@ OwChat.registerAvatarUploader(function (file, filename, onOk) {
 - `OwChat.onMsgContent(fn)`：右键**消息内容**（针对「消息」）时追加菜单项——内置复制 / 引用 / 删除，插件可追加翻译、举报等。
 - `OwChat.onQuote(fn)`：构造引用内容时改写（`[quote, msg]`，可改 `quote.nick` / `quote.text`）；服务端另有 `message.quote` 做最终校验。
 - `OwChat.onUserAction(fn)`：**按人**发起时的操作菜单（v1.3.24）——「所有成员」区搜索出某个用户后点他，弹出的就是它。与 `onMsgCtx` 的区别是没有消息上下文，参数是 `u = {uid, gid, nickname, kind, role}`。禁言 / 举报都挂在这里。
-- `OwChat.onUserAction(fn)`：**按人**发起时的操作菜单（v1.3.24）——「所有成员」区搜索出某个用户后点他，弹出的就是它。与 `onMsgCtx` 的区别是没有消息上下文，参数是 `u = {uid, gid, nickname, kind, role}`。禁言 / 举报都挂在这里。
-
-| `mail.send` | 发验证码等邮件要投递时（`Mailer::send`） | `[&$sent, $to, $subject, $body, &$error, $ctx]` —— 核心 v1.0.81 起不再内置 SMTP；插件完成投递后把 `$sent` 置 true，失败时把可展示的原因写进 `$error`（会拼进用户提示，**不要塞原始异常/凭据**）。无人响应时验证码仍入库，但接口返回「站点未启用邮件发送」。`$ctx` 含 `kind`（register/reset/chpwd…）、`code`、`ttl`、`name`、`email`、`site_name`、`format`（text/html） |
-| `mail.render` | `mail.send` **之前**，核心已生成码与默认文案（v1.3.55） | `[&$subject, &$body, &$format, $ctx]` —— 插件按 `$ctx['kind']` 套自己的模板改写主题与正文，并把 `$format` 置 `html`。⚠️ 只对验证码生效：`$ctx['code']` 为空的邮件（别的插件群发通知）不要改写，否则会把别人的正文换成验证码模板 |
-| `mail.available` | `Mailer::deliverable()` 判定「这台站点现在真能发信吗」（v1.3.64） | 返回 `'1'` 表示有可用通道。核心用它决定**要不要要求**邮箱验证码：只看后台开关会出现「要求一个根本发不出来的凭证」—— 没配 SMTP 时用户被永久卡在改不了密码上。⚠️ 降级只适用于还有别的凭证的流程（改密码有当前密码、注册是本人建号）；**找回密码绝不能降级**，那里验证码是唯一凭证，一降级就是「知道邮箱就能改别人密码」的接管漏洞 |
-| `mail.unsent` | 没有任何插件响应 `mail.send`（v1.3.55） | `[$info]` —— 键 `to` / `subject` / `kind`。用于记「待发送」统计：码已入库但没发出去，用户必然收不到 |
-| `room.restored` | 群聊从审核回收站撤销「删除」后 | `[$roomId, $row, $actor]` —— `$row` 为恢复的整行数据 |
-
-| `login.after_verify` | 登录验证完成（`Auth::login` 内，密码校验通过且会话已建立） | `[$user, $method, $ctx]` —— 通知型，`$method` 为本通过验证的方式（核心仅 `password`；插件实现两步验证时可自行触发本钩子并传 `totp` / `recovery`）；`$ctx` 含 `ip`。**仅在成功登录时触发，验证失败不触发** |
-| `login.failed` | 登录失败（`Auth::login` 内，**每次失败都触发**，v1.1.12 起） | `[$info]` —— 键：`identity`（用户提交的登录标识，原样）、`reason`（`fail` 密码或账号错 / `locked` 临时锁定 / `disabled` 账号被禁用）、`msg`（用户看到的文案）、`left`（剩余尝试次数，`-1` 表示不适用）、`user`（命中的 `users` 行）、`ip`。⚠️ **密码错误时 `user` 为 `null`**（确认「账号存在」本身就是信息，核心不给出以防账号枚举侧信道），回调内**必须判空**。与 `login.after_verify` 严格成对：一个只在成功时触发、一个只在失败时触发，插件不必自己判断方向 |
-| `logout.before_destroy` | 用户主动登出（`Auth::logout` 内，**`session_destroy()` 之前**，v1.1.12 起） | `[$info]` —— 键：`uid`、`nickname`、`had_uid`（是否带登录态）、`ip`、`reason`（恒为 `manual`）。⚠️ 核心保证在销毁前 fire，所以 uid / 昵称一定拿得到；**游客会话 `had_uid` 为 false，判空后跳过可免得刷出一堆噪声** |
-| `session.destroyed` | 会话被服务端销毁（`Sec::fingerprintGuard` 内，指纹不符时，**`session_destroy()` 之前**，v1.1.12 起） | `[$info]` —— 键：`reason`（当前唯一值 `fingerprint_mismatch`）、`uid`、`had_uid`、`fp_saved`（会话内原指纹）、`fp_now`（本次算出的指纹）、`ip`。⚠️ **这不是用户主动登出**，插件应与 `logout.before_destroy` 区别对待（如记成「疑似会话被盗」而非「主动退出」） |
-
-> **涉及会话的钩子必须在 `session_destroy()` 之前 fire**（上表后两个已由核心保证）。销毁之后 `$_SESSION` 已清空，回调拿不到 uid / 指纹，只能记一条匿名日志。
->
-> 在 `core/auth.php` 里 fire 插件钩子必须写 `class_exists('Plugin')` 防御 —— `index.php` 的 require 顺序是 `auth.php` **先于** `plugin.php`，而 CLI 诊断脚本可能只 require 部分 core 文件。
-
-计划任务由长轮询驱动（`Plugin::cronTick()`），也可用系统计划任务调 `?action=cron` 强制触发；回调内自行判断是否到达执行周期，保证可重复运行。
 
 ## 前台页面输出
 
@@ -400,8 +440,9 @@ OwChat.onUserAction(function (items, u, env) {
 聊天页最左侧的一级导航条（`.ow-rail`，竖排图标条）向插件开放入口。
 **v1.3.4 起它取代了原先侧栏顶部的横向「消息 / 联系人」标签条**，插件注册入口请用新名字。
 
-服务端 —— 注册一个入口按钮（记得在 `plugin.json` 的 `hooks` 里声明 `sidebar.rail`，
-否则按需加载不会触发；`ow_icon()` 是核心的线性 SVG 图标函数，**不要用 Emoji 或位图**）。
+服务端 —— 注册一个入口按钮（`Plugin::on('sidebar.rail', …)` 写在 `main.php` 顶层即可，
+**不用在 `plugin.json` 里声明钩子** —— 注册清单是核心扫描 `main.php` 时自动记下的，见「钩子」一节；
+`ow_icon()` 是核心的线性 SVG 图标函数，**不要用 Emoji 或位图**）。
 `<span class="ow-rail-lb">` 是入口文字标签：桌面隐藏，窄屏 rail 沉底变标签栏时显示，建议照写：
 
 ```php
@@ -434,7 +475,7 @@ OwChat.onRail({
 **按钮 HTML 由服务端产出，事件仍由各插件自己的 chat.js 绑定**。
 
 ```php
-// main.php：在 plugin.json 的 hooks 里声明 chat.toolbar，否则按需加载不会触发
+// main.php：顶层 Plugin::on('chat.toolbar', …) 即可，不用在 plugin.json 里声明钩子
 Plugin::on('chat.toolbar', function (): string {
     return '<button class="ow-icon-btn" id="owBtnMy" type="button" title="我的入口" aria-label="我的入口">'
          . ow_icon('smile', 16) . '</button>';

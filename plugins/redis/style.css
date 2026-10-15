@@ -1,0 +1,162 @@
+/**
+ * Redis 缓存插件 —— 后台样式
+ *
+ * 约定：
+ *   - 颜色一律引用核心 --ow-* 变量，深浅两套主题自动跟随（禁止写死颜色）。
+ *   - 类名统一 ow-rds- 前缀；能复用核心类的（ow-card / ow-form-row / ow-input /
+ *     ow-btn / ow-table / ow-card-meta-row）一律复用，这里只定义核心没有的部分。
+ *   - 移动端：KPI 自动换行、柱状图降高、表格改为横向滚动（后台页在手机上也要能用）。
+ */
+
+/* ---------- 状态条 ---------- */
+.ow-rds-state {
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--ow-text);
+    padding: 2px 0 10px;
+}
+.ow-rds-ok { color: var(--ow-green); font-weight: 500; }
+.ow-rds-bad { color: var(--ow-red); font-weight: 500; }
+
+/* ---------- KPI 卡片（与 daily-checkin / level-trust 同一视觉基准） ---------- */
+.ow-rds-kpis {
+    display: flex; display: -webkit-flex;
+    gap: 10px; -webkit-gap: 10px;
+    flex-wrap: wrap; -webkit-flex-wrap: wrap;
+}
+.ow-rds-kpi {
+    flex: 1; -webkit-flex: 1;
+    min-width: 110px;
+    background: var(--ow-bg-sub);
+    border-radius: 10px;
+    padding: 10px 12px;
+}
+.ow-rds-kpi b {
+    display: block;
+    font-size: 20px;
+    color: var(--ow-text-title);
+    font-variant-numeric: tabular-nums;
+}
+.ow-rds-kpi span { font-size: 12px; color: var(--ow-text-sub); }
+
+/* ---------- 趋势柱状图（纯 CSS，柱高按百分比内联） ---------- */
+.ow-rds-bars {
+    display: flex; display: -webkit-flex;
+    align-items: flex-end; -webkit-align-items: flex-end;
+    gap: 4px; -webkit-gap: 4px;
+    height: 120px;
+    padding-top: 6px;
+}
+.ow-rds-bar { flex: 1; -webkit-flex: 1; min-width: 0; text-align: center; }
+.ow-rds-bar i {
+    display: block;
+    width: 100%;
+    min-height: 2px;
+    border-radius: 3px 3px 0 0;
+    background: var(--ow-primary-strong);
+}
+.ow-rds-bar i.zero { background: var(--ow-border); }
+.ow-rds-bar-num { display: block; font-size: 10px; color: var(--ow-text-sub); margin-bottom: 2px; }
+.ow-rds-bar em {
+    display: block;
+    font-style: normal;
+    font-size: 10px;
+    color: var(--ow-text-sub);
+    margin-top: 4px;
+}
+
+/* ---------- 空状态 ---------- */
+.ow-rds-empty {
+    padding: 18px 8px;
+    text-align: center;
+    font-size: 12.5px;
+    color: var(--ow-text-sub);
+    line-height: 1.6;
+}
+
+/* ---------- 表格横向滚动容器（窄屏不撑破卡片） ---------- */
+.ow-rds-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+}
+.ow-rds-scroll table { min-width: 420px; }
+
+/* ---------- 体检结果 ---------- */
+.ow-rds-probe { margin-top: 10px; }
+.ow-rds-probe-h {
+    font-size: 13px;
+    line-height: 1.6;
+    margin-bottom: 10px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--ow-bg-sub);
+}
+.ow-rds-probe-h.ow-rds-ok,
+.ow-rds-probe-h.ow-rds-bad { font-weight: 500; }
+
+/* ---------- 核心钩子待办 ---------- */
+.ow-rds-todo {
+    border-top: 1px solid var(--ow-border);
+    padding: 10px 0 4px;
+}
+.ow-rds-todo:first-of-type { border-top: 0; }
+.ow-rds-todo-h {
+    display: flex; display: -webkit-flex;
+    flex-wrap: wrap; -webkit-flex-wrap: wrap;
+    align-items: baseline; -webkit-align-items: baseline;
+    gap: 6px; -webkit-gap: 6px;
+    font-size: 13px;
+    color: var(--ow-text);
+}
+.ow-rds-todo-h b { color: var(--ow-text-title); }
+.ow-rds-todo-h span { font-size: 12px; color: var(--ow-text-sub); }
+.ow-rds-todo-d {
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--ow-text-sub);
+    margin-top: 6px;
+}
+.ow-rds-todo code {
+    display: block;
+    /* 核心没有等宽字体变量；等宽栈属于「字体」不是「颜色」，不参与主题切换 */
+    font-family: Consolas, Menlo, Monaco, "Courier New", monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--ow-text);
+    background: var(--ow-bg-sub);
+    border: 1px solid var(--ow-border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-top: 6px;
+    white-space: pre;
+    min-width: 100%;
+    box-sizing: border-box;
+}
+
+/* ---------- 杂项 ---------- */
+.ow-rds-check {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    gap: 6px; -webkit-gap: 6px;
+    font-size: 12.5px;
+    color: var(--ow-text);
+    padding-top: 6px;
+}
+.ow-rds-mini { padding: 3px 10px; font-size: 12px; }
+
+/* ---------- 移动端 ---------- */
+@media (max-width: 640px) {
+    .ow-rds-kpi { min-width: 46%; padding: 8px 10px; }
+    .ow-rds-kpi b { font-size: 18px; }
+    .ow-rds-bars { height: 96px; }
+    .ow-rds-todo code { font-size: 11.5px; padding: 7px 8px; }
+    .ow-rds-state { font-size: 12.5px; }
+}
+@media (max-width: 400px) {
+    .ow-rds-kpis { gap: 8px; -webkit-gap: 8px; }
+    .ow-rds-kpi { min-width: 100%; }
+    .ow-rds-bars { height: 84px; }
+    /* 14 根柱子在小屏上会把日期标签挤成一团：只留柱子与数值 */
+    .ow-rds-bar em { display: none; }
+}
