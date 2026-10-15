@@ -114,31 +114,38 @@
         if (slot.firstChild !== ctx.box) slot.appendChild(ctx.box);
         ctx.box.style.display = '';                   // 清掉服务端首屏的 display:none（弹窗模式）
         ov.style.display = '';
-        // ⚠️ 必须等弹窗可见后再让组件补渲染：Turnstile 会跳过不可见容器，
-        //    首屏藏着的组件在有些页面（注册/找回）会被它整块跳过 —— 容器里永远没有
-        //    iframe、也没有 token，弹窗就一直等着（实测踩到、登录页侥幸不受影响）。
-        //    ensureTurnstile 幂等：已渲染过 / 非 turnstile / 容器仍不可见都会安静返回。
+        // ⚠️ 等弹窗可见后再让组件进入「能出 token」的状态。两个必须在这里做的原因：
+        //    ① Turnstile implicit 渲染会跳过不可见容器（首屏藏着就被跳过，容器被标记占用，
+        //       之后再 render 会被拒 —— 组件永远不出现）；
+        //    ② 重试（失败后不刷新再点）时组件可能还以为手里那枚 token 有效，
+        //       需要它重新出题，否则观察器永远等不到新 token。
+        //    ensureTurnstile 内部已经把这些情形分好了（解题中不动 / 已消费重出题 /
+        //    半成品重建），这里只负责「可见之后叫它一次」。
+        clearSpentToken(ctx.form);
         if (w.OwCv.ensureTurnstile) w.OwCv.ensureTurnstile(ctx.box);
-        resetIfSpent(ctx);                            // 上一枚已消费且组件没续写 → 按需重解
         ctx.box.classList.add('ow-cv-wait');
         text(ov.querySelector('.ow-cv-mtip'), '通过验证后自动继续，无需再点按钮。');
     }
 
     /**
-     * 同一页面上第二次用同一枚组件时（注册页：先提交注册、再点发码），
-     * token 已被上一轮核销、组件却没有自动续写 —— 观察器干等。
-     * 处理：若这个表单消费过 token、且此刻字段是空的，就 reset 一次让组件重新解题。
-     * 只是把 SDK 自己的重解按钮按一下，不碰判定链路。
+     * 开窗前清掉「上一轮已消费、又被 SDK 写回」的旧 token。
+     *
+     * ⚠️ 为什么需要：Token 一次性，登录失败后重试时若字段里还留着上一枚
+     *    （Turnstile 的 dummy key / 网络重试等场景会把同一枚 token 再写回），
+     *    观察器会立刻判「已完成」→ 弹窗一闪而过、带着废 token 提交
+     *    —— 用户看到的就是「弹窗根本不出来、点了没反应」。
+     *    这里只在「值与上一轮消费的一模一样」时清，不会误伤 SDK 主动续写的新 token。
      */
-    function resetIfSpent(ctx) {
-        var form = ctx.form;
-        if (!form.__owCvSpent) return;                // 本页从未消费过：组件状态本来就干净
-        if (hasToken(form)) return;                   // 已有新 token（SDK 自己续上了）
-        if (ctx.box.getAttribute('data-owcv-provider') !== 'turnstile') return;
-        if (!w.turnstile || typeof w.turnstile.reset !== 'function') return;
-        var cf = ctx.box.querySelector('.cf-turnstile');
-        if (cf) { try { w.turnstile.reset(cf); } catch (e) { /* 实例还没就绪：忽略 */ } }
-        form.__owCvSpent = 0;
+    function clearSpentToken(form) {
+        var used = form.__owCvUsed;
+        if (!used) return;
+        var i, j;
+        for (i = 0; i < FIELDS.length; i++) {
+            var els = form.querySelectorAll('[name="' + FIELDS[i] + '"]');
+            for (j = 0; j < els.length; j++) {
+                if (used[FIELDS[i]] && els[j].value === used[FIELDS[i]]) els[j].value = '';
+            }
+        }
     }
 
     /** 关闭弹窗并把等待中的动作放行（按钮还原成可点） */
@@ -182,6 +189,10 @@
         var t0 = (new Date()).getTime();
         watchTimer = setInterval(function () {
             if (cur !== c) { stopTimer(); return; }
+            // ⚠️ 这一行是弹窗的「完成信号」本体：字段里出现有效 token 就放行。
+            //    曾经在这段上做实验时把它误删过一次，表现成「弹窗开着、token 也有了，
+            //    但永远不继续」——改动本段后务必回归「重试自动继续」用例。
+            if (hasToken(c.form)) { fire(); return; }
             if ((new Date()).getTime() - t0 > 120000) stopTimer();   // 两分钟没解出来就停轮询
         }, 500);
     }
@@ -234,12 +245,16 @@
         return { form: form, box: box, scene: scene };
     }
 
-    /** 拦住 → 弹窗 → 通过后 run()。同场景已在等（弹窗开着）时直接返回，防重入。 */
+    /** 拦住 → 弹窗 → 通过后 run()。同场景已在等（弹窗开着）时直接吞掉这次点击。 */
     function gate(ctx, cont) {
-        if (cur) return true;                         // 已经有动作在等验证：吞掉这次点击
-        cur = ctx;
+        if (cur) return true;                         // 已经有动作在等验证
+        // ⚠️ 每次开窗都用**新的上下文对象**（不能就地复用 ctx）：
+        //    fire() 会把 _fired 写到上下文上防重复放行，复用对象会让第二次开窗
+        //    一进来就带着上一轮的 _fired=1 → 直接早退，表现成「重试时弹窗开着、
+        //    token 也有了，但永远不继续」。实测踩到过，别改回共享对象。
+        cur = { form: ctx.form, box: ctx.box, scene: ctx.scene };
         cur.cont = cont;
-        open(ctx);
+        open(cur);
         startWatch();
         return true;
     }
@@ -265,18 +280,18 @@
             if (!e) e = w.event || { preventDefault: function () {}, returnValue: true };
             if (e.preventDefault) e.preventDefault(); else e.returnValue = false;
             if (!cur) {
-                cur = ctx;
-                cur.cont = {
+                var c = { form: ctx.form, box: ctx.box, scene: ctx.scene };
+                c.cont = {
                     btn: btn, btnWasDisabled: btn.disabled,
-                    run: function () { form.__owCvPass = 1; fireOrig(ctx, orig); }
+                    run: function () { form.__owCvPass = 1; fireOrig(c, orig); }
                 };
-                open(ctx);
+                cur = c;
+                open(c);
                 startWatch();
             }
             return false;
         };
     }
-
     /**
      * 放行后立刻把 token 字段清空。
      *
@@ -287,12 +302,19 @@
      *    弹窗时组件还没重解，弹窗就已经自动关掉。
      *    在字段清空后新写进来的 token（SDK 正常续写）不会被误清 —— 清的是「这一刻」的值。
      */
+    /**
+     * 放行后立刻把 token 字段清空，并把清掉的值记成「已消费」（供重试时识别写回的旧值）。
+     * 语义：只清「这一刻」的值 —— 之后 SDK 主动续写的新 token 不受影响。
+     */
     function consumeFields(form) {
-        var i, j;
+        var used = {}, i, j;
         for (i = 0; i < FIELDS.length; i++) {
             var els = form.querySelectorAll('[name="' + FIELDS[i] + '"]');
-            for (j = 0; j < els.length; j++) els[j].value = '';
+            for (j = 0; j < els.length; j++) {
+                if (els[j].value) { used[FIELDS[i]] = els[j].value; els[j].value = ''; }
+            }
         }
+        form.__owCvUsed = used;
     }
 
     /**
@@ -309,9 +331,12 @@
         } catch (err) {
             /* 原处理器抛错时不再二次尝试：它自己会写错误提示 */
         }
-        consumeFields(form);                   // ② 值已被收走 → 清掉
+        consumeFields(form);                   // ② 值已被收走 → 清掉，并把它记成「已消费」
         form.__owCvSpent = 1;                  // ③ 这页这副表单消费过 token（再开窗要按需重解）
-        form.__owCvPass = 0;                   // ④ 放行一次性
+        // ④ 组件状态复位：下一轮开窗时 ensureTurnstile 才会让它重新出题
+        //    （不清的话它以为自己手里那枚 token 还有效，重试永远拿不到新 token）
+        ctx.box._owCvSolved = 0;
+        form.__owCvPass = 0;                   // ⑤ 放行一次性
     }
 
     /**

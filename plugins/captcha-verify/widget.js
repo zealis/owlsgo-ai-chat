@@ -57,48 +57,73 @@
     w.OwCv.onToken = function () {};
 
     /**
-     * v1.1.0：确保 Turnstile 组件在**可见容器**里完成渲染。
+     * v1.1.1：确保 Turnstile 组件在**可见容器**里处于「能出 token」的状态。
      *
-     * 为什么必须显式调用：Turnstile 的 implicit 渲染（api.js 自动扫 .cf-turnstile）会
-     * **跳过不可见容器** —— 弹窗模式首屏把组件藏在 display:none 里，注册/找回页的
-     * 组件就这样被跳过：容器里只有隐藏字段、没有 iframe，也不会有任何 token 写入。
-     * 表现是「弹窗开着、永远等不到验证通过」。登录页侥幸能用的原因是它上面有别的
-     * 组件（发码/找回共用页签）先被渲染过，一旦页面结构不同就翻车。
-     * 解法：弹窗打开、容器可见之后，对还没渲染过的 .cf-turnstile 调一次显式 render。
-     * 幂等：容器里已有 iframe 就跳过（重复 render 会被 Turnstile 拒绝）。
+     * 为什么必须显式调用：Turnstile 的 implicit 渲染（api.js 自动扫 .cf-turnstile）
+     * 在容器不可见时**只登记不渲染**（SDK 控制台会打 "skipped implicit render"），
+     * 容器被标记为「已占用」，之后对同一容器 render() 会被
+     * "already been rendered in this container" 直接拒绝 —— 组件永远不出现。
+     * 弹窗模式首屏把组件藏在 display:none 里，每个页面都会撞上这条。
+     *
+     * 三种情形的处理：
+     *   ① 组件已渲染（有 iframe）且没在解题：原地 reset 让它重新出题 —— 重试用它。
+     *      （不能拆掉重建：会把正在进行的异步解题打断，token 永远不来。）
+     *   ② 组件已渲染且正在解题：不动，等它出结果。
+     *   ③ 组件没渲染（被隐形容器坑过的半成品）：拆掉重建，再显式 render。
      */
     function ensureTurnstile(box) {
         if (!box || box.getAttribute('data-owcv-provider') !== 'turnstile') return;
         var holder = box.querySelector('.ow-cv-box');
         if (!holder) return;
-        // ⚠️ 容器不可见时不渲染（渲染了也会被 Turnstile 当成 skipped，白忙还留错标记）——
-        //    弹窗打开后容器可见，这里才真正动手。offsetParent 为 null = 自身或祖先被隐藏。
-        if (holder.offsetParent === null) return;
-        var els = holder.querySelectorAll('.cf-turnstile'), pending = [];
-        for (var i = 0; i < els.length; i++) {
-            if (!els[i].querySelector('iframe') && !els[i].getAttribute('data-owcv-rendered')) pending.push(els[i]);
+        if (holder.offsetParent === null) return;             // 容器仍不可见：等弹窗打开
+
+        var el = holder.querySelector('.cf-turnstile');
+        var hasFrame = el && !!el.querySelector('iframe');
+        if (hasFrame) {
+            if (box._owCvSolving) return;                     // ② 解题中：别动
+            if (box._owCvSolved) return;                      // 已有新鲜 token（等观察器消费）
+            try { w.turnstile.reset(el); } catch (e) { /* 实例未就绪：忽略 */ }
+            return;
         }
-        if (!pending.length) return;
+
+        // ③ 重建
+        var sitekey = box.getAttribute('data-owcv-sitekey') || (el && el.getAttribute('data-sitekey')) || '';
+        if (!sitekey) return;
+        if (el && el.parentNode) {
+            // ⚠️ 从 SDK 的注册表里注销旧实例（remove 传元素），否则新元素 render 会被
+            //    「该容器已存在 widget」拒绝 —— 表现成重试时组件永远不出现（实测）。
+            try { w.turnstile.remove(el); } catch (e) { /* 未注册/未就绪：忽略 */ }
+            el.parentNode.removeChild(el);
+        }
+        var fresh = document.createElement('div');
+        fresh.className = 'cf-turnstile';
+        fresh.setAttribute('data-sitekey', sitekey);
+        fresh.setAttribute('data-theme', 'auto');
+        fresh.setAttribute('data-size', 'flexible');
+        holder.appendChild(fresh);
+
         var doRender = function () {
-            for (var k = 0; k < pending.length; k++) {
-                var opts = {
-                    callback: function () { w.OwCv.onToken(box); },
-                    'error-callback': function () { tip(box, '验证组件出错，请刷新页面重试'); }
-                };
-                var sk = pending[k].getAttribute('data-sitekey');
-                if (sk) opts.sitekey = sk;
-                try {
-                    w.turnstile.render(pending[k], opts);
-                    pending[k].setAttribute('data-owcv-rendered', '1');
-                } catch (e) { /* 已渲染过：忽略 */ }
-            }
+            if (!w.turnstile || typeof w.turnstile.render !== 'function') return;
+            box._owCvSolving = 1;
+            try {
+                w.turnstile.render(fresh, {
+                    callback: function () {
+                        box._owCvSolving = 0;
+                        box._owCvSolved = 1;
+                        w.OwCv.onToken(box);
+                    },
+                    'error-callback': function () {
+                        box._owCvSolving = 0;
+                        tip(box, '验证组件出错，请刷新页面重试');
+                    }
+                });
+            } catch (e) { box._owCvSolving = 0; }
         };
         if (w.turnstile && typeof w.turnstile.render === 'function') { doRender(); return; }
-        // 库还没加载好：轮询等它出现（最多 10 秒），出现即渲染
         var n = 0;
         var t = setInterval(function () {
             if (w.turnstile && typeof w.turnstile.render === 'function') { clearInterval(t); doRender(); return; }
-            if (++n > 20) clearInterval(t);
+            if (++n > 20 || !fresh.parentNode) clearInterval(t);
         }, 500);
     }
     w.OwCv.ensureTurnstile = ensureTurnstile;

@@ -347,6 +347,9 @@ Plugin::on('captcha.form', function (array $ctx = []): string {
         . ($modal === '1' ? ' style="display:none"' : '')
         . ' data-owcv-vid="' . htmlspecialchars((string)$c['vaptcha_vid'], ENT_QUOTES) . '"'
         . ' data-owcv-gid="' . htmlspecialchars((string)$c['geetest_captcha_id'], ENT_QUOTES) . '"'
+        // v1.1.1：弹窗模式要在可见容器里**重建** Turnstile 组件（被占用的老容器 render 会被拒），
+        // sitekey 必须能从盒子上读到 —— 内层那个 .cf-turnstile 会被整个替换掉。
+        . ' data-owcv-sitekey="' . htmlspecialchars((string)$c['turnstile_site_key'], ENT_QUOTES) . '"'
         . ' data-owcv-cap-script="' . htmlspecialchars((string)$c['cap_script_url'], ENT_QUOTES) . '">'
         . '<div class="ow-cv-box" id="' . $dom . '">' . $inner . '</div>'
         . '<p class="ow-cv-tip" role="status" aria-live="polite"></p></div>';
