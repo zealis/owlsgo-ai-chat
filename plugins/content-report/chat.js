@@ -345,9 +345,23 @@
         load();
     };
 
-    /* ---------- 注册为「通知联系人」的点击处理（v1.3.160 扩展点） ---------- */
+    /* ---------- 注册为「通知联系人」的点击处理（v1.3.160 扩展点） ----------
+       两个 key 分工（服务端分别登记，见 main.php）：
+         content-report        = 侧栏那一行：点它进「通知流」（与点系统通知同一片消息区，
+                                  插件的消息与系统通知混排在里面；打开即把该行未读清零）
+         content-report-alert  = 通知流里那条消息的「查看」：打开待处理举报面板 */
     if (typeof OwChat.onNoticeContact === 'function') {
-        OwChat.onNoticeContact(NOTICE_KEY, function () { CR.openAlerts(); });
+        OwChat.onNoticeContact(NOTICE_KEY, function () {
+            try {
+                var cs = (OwChat.cfg && OwChat.cfg.notice_contacts) || [];
+                for (var i = 0; i < cs.length; i++) {
+                    if (cs[i].key === NOTICE_KEY) cs[i].unread = 0;   // 打开过就清零（与系统通知同一语义）
+                }
+                OwChat.openNotices();                                 // 视图切换全部交给核心
+                if (typeof OwChat.renderNoticeRow === 'function') OwChat.renderNoticeRow();
+            } catch (e) { /* 通知流是核心的视图，失败不影响举报本身 */ }
+        });
+        OwChat.onNoticeContact(NOTICE_KEY + '-alert', function () { CR.openAlerts(); });
     }
 
     /* ---------- 注册到头像右键菜单（针对「人」的操作） ---------- */

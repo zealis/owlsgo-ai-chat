@@ -623,6 +623,31 @@ function owCRAlertCount(): int
     return (int)DB::val('SELECT COUNT(*) FROM plugin_content_report WHERE alerted=1 AND status=0');
 }
 
+/** 最新一条待处理举报（通知流里只放这一条的摘要，见下方钩子注释） */
+function owCRLatestAlert(): ?array
+{
+    $r = DB::one('SELECT * FROM plugin_content_report WHERE alerted=1 AND status=0 ORDER BY id DESC LIMIT 1');
+    return $r ?: null;
+}
+
+/** 一条举报的截图地址列表（库里存的是 uploads/ 相对地址的 JSON） */
+function owCRRepImages(array $rep): array
+{
+    $j = json_decode((string)($rep['images'] ?? ''), true);
+    return is_array($j) ? array_values(array_filter(array_map('strval', $j))) : [];
+}
+
+/** 一条待处理举报的摘要（通知流正文，≤60 字，服务端还会再截一次） */
+function owCRAlertText(array $rep, int $total, int $imgs): string
+{
+    $what = (int)($rep['loss'] ?? 0) === 1 ? '财产损失举报' : 'AI 判定违规';
+    $text = $what . '：' . (string)$rep['reporter_nick'] . ' 举报 ' . (string)$rep['target_nick']
+        . '（' . (string)$rep['reason'] . '）';
+    if ($imgs > 0) $text .= '·附 ' . $imgs . ' 张截图';
+    if ($total > 1) $text .= '，另有 ' . ($total - 1) . ' 条待处理';
+    return $text;
+}
+
 /**
  * 把一次 AI 判定写回队列（单独成函数是为了能**离线逐条测**：
  * 真跑 owCRAiAsk 要联网，而自检机上没有密钥，那条路径就永远没被验证过）。
@@ -725,6 +750,9 @@ function owCRAiTick(): string
  * 只给**超级管理员**登记 —— 举报的处置是管理员的事，普通用户看到这一行只会困惑。
  * 钩子参数只有登记函数、没有 actor，所以这里自己取当前登录用户（Auth::user()）。
  * 昵称/头像不填就交给核心兜底：插件名 + 按插件 id 派生的 open-peeps 生成头像。
+ *
+ * 侧栏这一行是**入口**：点它进「通知流」（与点系统通知同一片消息区，插件的消息混排在里面）；
+ * 流里那条消息的「查看」才开待处理举报面板（见下面的 notice.items）。
  */
 Plugin::on('notice.contacts', function (callable $add) {
     if (!class_exists('Auth')) return;
@@ -732,21 +760,53 @@ Plugin::on('notice.contacts', function (callable $add) {
     if (!$u || (string)($u['role'] ?? '') !== 'admin') return;
 
     $cfg = owCRGetConfig();
-    $n = owCRAlertCount();
-    $last = DB::one('SELECT * FROM plugin_content_report WHERE alerted=1 AND status=0 ORDER BY id DESC LIMIT 1');
-    if ($last) {
-        $what = (int)$last['loss'] === 1 ? '财产损失举报' : 'AI 判定违规';
-        $text = $what . '：' . (string)$last['reporter_nick'] . ' 举报 ' . (string)$last['target_nick']
-            . '（' . (string)$last['reason'] . '）';
-    } else {
-        $text = '暂无待处理举报';
-    }
+    $last = owCRLatestAlert();
+    $text = $last
+        ? owCRAlertText($last, owCRAlertCount(), count(owCRRepImages($last)))
+        : '暂无待处理举报';
     $add([
         'key'       => OWCR_NOTICE_KEY,
         'name'      => (string)$cfg['notify_name'],
         'avatar'    => (string)$cfg['notify_avatar'],
-        'unread'    => $n,
+        'unread'    => owCRAlertCount(),
         'last_text' => $text,
+        'at'        => $last ? (int)($last['alert_at'] ?: $last['created_at']) : 0,
+    ]);
+});
+
+/**
+ * 通知流里的一条消息（v1.3.162 notice.items 扩展点）。
+ *
+ * 契约（PLUGIN.md「通知流条目」）：**一个 key 只认第一行** —— 插件在通知流里是一条
+ * 「最新动态」，不是历史列表。所以这里只投**最新一条待处理举报**的摘要；
+ * 完整清单放在点「查看」打开的面板里（弹窗代码已存在）。
+ *
+ * key 刻意与侧栏行不同（`content-report-alert` vs `content-report`）：
+ * 侧栏行点击 = 进通知流；流里消息的「查看」 = 开待处理面板。两件事共用
+ * `OwChat.onNoticeContact(key)` 派发器，但要做不同的动作，key 就必须分开。
+ *
+ * ⚠️ `images` 目前会被核心的 pluginRows() 白名单丢掉（输出只有 key/name/avatar/unread/last_text/at）。
+ * 站方要把缩略图接进通知流，需要 core/notice.php 的 pluginItems() 透传 images
+ * （校验口径：只认本站 uploads/ 产物或 https，最多 3 张）+ renderNoticeStream 正文后渲染
+ * `.ow-msg-img`（z-index 200 的灯箱 + OwChat.viewImg 都是现成的）。补上之前，
+ * 正文里用「· 附 N 张截图」让超管知道有证据，点「查看」看原图。
+ */
+Plugin::on('notice.items', function (callable $add) {
+    if (!class_exists('Auth')) return;
+    $u = Auth::user();
+    if (!$u || (string)($u['role'] ?? '') !== 'admin') return;   // 与侧栏行同一口径：只给超管
+
+    $last = owCRLatestAlert();
+    if (!$last) return;                        // 没有待处理就不投：通知流里不出现空条目
+
+    $cfg = owCRGetConfig();
+    $add([
+        'key'       => OWCR_NOTICE_KEY . '-alert',
+        'name'      => (string)$cfg['notify_name'],
+        'avatar'    => (string)$cfg['notify_avatar'],
+        'last_text' => owCRAlertText($last, owCRAlertCount(), count(owCRRepImages($last))),
+        'at'        => (int)($last['alert_at'] ?: $last['created_at']),
+        'images'    => array_slice(owCRRepImages($last), 0, 3),   // 见上方说明：等核心透传
     ]);
 });
 
