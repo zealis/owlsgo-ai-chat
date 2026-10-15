@@ -1168,8 +1168,23 @@ input[type=range] {
     -webkit-transition: background .15s;
 }
 .ow-brand-me:hover, .ow-brand-me:focus { background: var(--ow-brand-hover); outline: none; }
-/* 长昵称截断，不把胶囊撑出屏幕（头像那侧的 padding 只有 3px，靠这里收） */
-.ow-brand-me-n { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* v1.3.143：昵称上移 1px 的光学补偿 —— 站方反馈「头像和昵称不太对齐」。
+   几何上其实是对齐的（实测头像盒中心 28.17、昵称行盒中心 28.17），歪的是**墨迹**：
+   .ow-brand-me 的 align-items:center 按盒子居中，而这支字体栈的 font bounding box 是
+   ascent 15 / descent 4（14px 下，chrome measureText 实测）—— 行盒中心比基线高 5.5px，
+   字身（去掉降部的可见主体）中心却只在基线上方 aAscent/2，于是文字整体看着下沉。
+   按字身算各档需要补多少（实测 aAscent/aDescent）：
+     · 汉字 / 中英混排（哈哈哈、管理员、游客4f34b）11/1 → 需 -0.8px
+     · 首字母大写拉丁（Alpha）11/3 → 需 -0.3px
+     · 全小写带降部（oygs）8/4 → 需 -1.8px ← 站方自己这个账号，头像才 20px，最刺眼
+   取 -1px 落在中间：三档都收在 ±0.8px 内。补到 -2px 能把全小写压平，但占多数的汉字
+   昵称会反过来偏高 1.2px，等于换个方向歪；再往上的残差是降部（y/g 的尾巴）本身，CSS 改不动。
+   ⚠️ transform 不参与布局：胶囊仍 28px、品牌条仍 57px，「三线齐平」与窄屏 top:57px 都不受影响。
+   ⚠️ 与 .ow-brand > img 的 translateY(1.7px) 同一套路，但方向相反 —— 那颗是图标下沉去追文字，
+      这里是文字追图标，两者不叠加（选择器互斥，一个 > img、一个 .ow-brand-me-n）。
+   长昵称截断，不把胶囊撑出屏幕（头像那侧的 padding 只有 3px，靠这里收）。 */
+.ow-brand-me-n { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    transform: translateY(-1px); -webkit-transform: translateY(-1px); }
 /* v1.2.31：站点名右侧的**搜索按钮**（原竖三点菜单已删除）。
    v1.2.32 位置修正：原来用 line-height 顶行 + 继承 .ow-icon-btn 的 padding，
    图标在 28px 方框里偏上、按钮也显得偏左。改为 flex 双向居中 + 加大右间距。
