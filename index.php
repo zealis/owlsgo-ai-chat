@@ -1316,6 +1316,10 @@ function ow_icon(string $name, int $size = 18): string
         // 原先用 chat 气泡，但气泡表达的是「聊天」而非「审核」；
         // shield（盾+勾）已被「安全日志」占用，两者并排时又是一对重复。
         'check-circle' => '<circle cx="12" cy="12" r="9"/><polyline points="8 12.2 11 15.2 16.5 9.5"/>',
+        // v1.3.158：仪表盘（后台首屏）。做成「三根柱子 + 基线」的柱状图 ——
+        // 这是后台里唯一一个「概览」性质的菜单项，需要形状上一眼能与审核/设置区分开。
+        // JS 侧 OW_ICONS.chart 是同一份 path（icon-audit 会逐字对账）。
+        'chart' => '<line x1="4" y1="20" x2="20" y2="20"/><rect x="5.6" y="12" width="3.4" height="8" rx="1"/><rect x="10.3" y="6.5" width="3.4" height="13.5" rx="1"/><rect x="15" y="15" width="3.4" height="5" rx="1"/>',
     ];
     $d = $paths[$name] ?? $paths['chat'];
     return '<svg class="ow-ico" width="' . $size . '" height="' . $size . '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' . $d . '</svg>';
@@ -1908,9 +1912,12 @@ function renderAdmin(array $actor): void
        . '<aside class="ow-admin-side" id="owAdminSide">'
        . '<div class="ow-admin-brand">ADMIN CONSOLE<br><strong>管理后台</strong></div>'
        . '<ul class="ow-admin-menu" id="owAdminMenu">'
+       // v1.3.158：仪表盘进后台首屏（站方要求）—— 计数 + 今日新增 + 近 7 天 + 常用设置快捷入口。
+       // 它是新的默认页：服务端预置的 active 与前端 sessionStorage 的兜底都指向它（见 chat.js）。
+       . '<li data-apage="dash" class="active"><span class="ow-admin-ico">' . ow_icon('chart', 16) . '</span>仪表盘</li>'
        // v1.3.25：群聊审核改用 check-circle（圆圈勾）——原用 chat 气泡，
        // 但气泡表达「聊天」而非「审核」；shield 已被安全日志占用。
-       . '<li data-apage="rooms" class="active"><span class="ow-admin-ico">' . ow_icon('check-circle', 16) . '</span>群聊审核</li>'
+       . '<li data-apage="rooms"><span class="ow-admin-ico">' . ow_icon('check-circle', 16) . '</span>群聊审核</li>'
        // 敏感词过滤（v1.0.104）、群聊公告（v1.0.102）已剥离为插件，菜单由插件 adminPage 自动挂载
        . '<li data-apage="logs"><span class="ow-admin-ico">' . ow_icon('shield', 16) . '</span>安全日志</li>'
        // 注：系统日志（PHP 报错文件日志，v1.2.60）**不进侧栏**——只在「安全日志」页

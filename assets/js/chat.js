@@ -1146,7 +1146,9 @@
         star: '<path d="M12 4l2.4 5 5.4.7-4 3.8 1 5.4-4.8-2.7-4.8 2.7 1-5.4-4-3.8 5.4-.7z"/>',
         // 右键头像菜单第一行「@ 昵称」：标签是动态的，按文字查表查不到，只能显式指定
         at: '<circle cx="12" cy="12" r="4"/><path d="M16 8v5.5a2.5 2.5 0 0 0 5 0V12a9 9 0 1 0-3.6 7.1"/>',
-        monitor: '<rect x="3.5" y="5" width="17" height="11.5" rx="2"/><path d="M9 20h6M12 16.5V20"/>'
+        monitor: '<rect x="3.5" y="5" width="17" height="11.5" rx="2"/><path d="M9 20h6M12 16.5V20"/>',
+        // v1.3.158：仪表盘（后台首屏菜单）。与 PHP ow_icon('chart') 同一份 path，icon-audit 逐字对账。
+        chart: '<line x1="4" y1="20" x2="20" y2="20"/><rect x="5.6" y="12" width="3.4" height="8" rx="1"/><rect x="10.3" y="6.5" width="3.4" height="13.5" rx="1"/><rect x="15" y="15" width="3.4" height="5" rx="1"/>'
     };
     function owIco(name, size, extra) {
         var d = OW_ICONS[name] || '';
@@ -7268,11 +7270,11 @@
                     setSide(false);   // 移动端点完菜单收起抽屉
                 };
             }
-            /* 恢复上次所在页面（启停插件刷新后不跳回默认页）；无记录时进群聊管理 */
-            var lastPage = 'rooms';
-            try { lastPage = sessionStorage.getItem('owAdminPage') || 'rooms'; } catch (e) {}
+            /* 恢复上次所在页面（启停插件刷新后不跳回默认页）；无记录时进仪表盘（v1.3.158 起） */
+            var lastPage = 'dash';
+            try { lastPage = sessionStorage.getItem('owAdminPage') || 'dash'; } catch (e) {}
             try { if (sessionStorage.getItem('owAdminPluginsOpen') === '1') self.togglePluginSub(true); } catch (e) {}
-            // 摘掉服务端预置的默认选中态（rooms），避免双高亮
+            // 摘掉服务端预置的默认选中态（dash），避免双高亮
             var all0 = menu.getElementsByTagName('li'), k0;
             for (k0 = 0; k0 < all0.length; k0++) {
                 all0[k0].className = trimCls(all0[k0].className.replace(/\bactive\b/g, ''));
@@ -7283,7 +7285,7 @@
                 li0.className += ' active';
                 this.page(lastPage);
             } else {
-                this.page('rooms');
+                this.page('dash');
             }
         },
 
@@ -7347,6 +7349,85 @@
         pages: {
             /* 用户管理（v1.0.44）、禁言管理（v1.0.52）、系统公告（v1.0.102）、
                敏感词过滤（v1.0.104）已剥离为插件，见 plugins/ 对应目录 */
+            /* 仪表盘（v1.3.158）：站方要的后台首屏 —— 计数 + 今日新增 + 近 7 天 + 常用设置快捷入口。
+               数字全部现算（服务端 admin_stats），刷新即最新，没有缓存要等。
+               风格尽量吃站内现成轮子：卡片 .ow-card、提示 .ow-admin-desc、图标 owIco()、
+               开关/设置页的折叠分组也在下面被 goSetting 复用。 */
+            dash: function (main) {
+                OwApi.post('admin_stats', {}, function (r) {
+                    if (!r || !r.ok) {
+                        main.innerHTML = '<h2>仪表盘</h2><div class="ow-card">' + esc((r && r.msg) || '统计接口没有响应') + '</div>';
+                        return;
+                    }
+                    var d = r.data || {};
+                    /** 千分位：四位数以上一眼读不出来（「12345」vs「12,345」） */
+                    var n = function (v) { return Number(v || 0).toLocaleString(); };
+                    var stat = function (label, num, sub) {
+                        return '<div class="ow-stat"><div class="ow-stat-n">' + n(num) + '</div>'
+                             + '<div class="ow-stat-l">' + esc(label) + '</div>'
+                             + (sub ? '<div class="ow-stat-s">' + sub + '</div>' : '') + '</div>';
+                    };
+                    var todayOf = function (v) { return v > 0 ? '今日 <b class="ow-stat-up">+' + n(v) + '</b>' : '今日 +0'; };
+                    var days = d.days || [], i;
+                    /* 一行 7 根柱子：柱高按**本行**最大值归一 —— 三行各自成比例，
+                       否则量级差十倍的那行会被压成一条线（用户 3 个 vs 好友 300 个）。 */
+                    var trend = function (label, key) {
+                        var vals = [];
+                        for (i = 0; i < days.length; i++) vals.push(Number(days[i][key] || 0));
+                        var max = Math.max.apply(null, vals.concat([1]));
+                        var bars = '';
+                        for (i = 0; i < days.length; i++) {
+                            var v = vals[i], hp = Math.round(v / max * 100);
+                            bars += '<div class="ow-bar' + (days[i].today ? ' is-today' : '') + '" title="'
+                                 + esc(days[i].label) + '：' + n(v) + '">'
+                                 + '<span class="ow-bar-v">' + (v ? n(v) : '') + '</span>'
+                                 + '<i style="height:' + (v ? Math.max(8, hp) : 3) + '%"></i>'
+                                 + '<span class="ow-bar-l">' + esc(days[i].label) + '</span></div>';
+                        }
+                        return '<div class="ow-trend-row"><span class="ow-trend-n">' + esc(label) + '</span>'
+                             + '<div class="ow-bars">' + bars + '</div></div>';
+                    };
+                    /* 快捷访问 = 系统设置里最常改的那几条。第三列是图标名（OW_ICONS 里有的）。 */
+                    var quick = [
+                        ['allow_register', '开放注册', 'user'],
+                        ['reg_email_verify', '注册需邮箱验证', 'lock'],
+                        ['guest_chat', '游客可发言', 'users'],
+                        ['guest_msg_interval', '游客发言间隔', 'clock'],
+                        ['login_fail_lock', '登录失败锁定', 'shield'],
+                        ['msg_retain_days', '消息保留天数', 'file'],
+                        ['debug_mode', '调试模式', 'gear'],
+                        ['site_name', '站点名称', 'mega']
+                    ];
+                    var chips = '';
+                    for (i = 0; i < quick.length; i++) {
+                        chips += '<button type="button" class="ow-quick" onclick="OwAdmin.goSetting(\'' + quick[i][0] + '\')">'
+                              + owIco(quick[i][2], 14) + '<span>' + esc(quick[i][1]) + '</span>'
+                              + '<span class="ow-quick-go">›</span></button>';
+                    }
+                    var env = d.env || {};
+                    main.innerHTML = '<h2>仪表盘</h2><p class="ow-admin-desc">站点概况与常用入口。数字实时统计，刷新即最新。</p>'
+                        + '<div class="ow-dash-grid">'
+                        + stat('用户总数', d.users, todayOf(d.users_today))
+                        + stat('群聊总数', d.rooms, todayOf(d.rooms_today))
+                        + stat('群聊消息', d.msg_group, '累计')
+                        + stat('私聊消息', d.msg_dm, '累计')
+                        + stat('好友关系', d.friends, '累计')
+                        + stat('当前在线', d.online, '近 45 秒有心跳')
+                        + '</div>'
+                        + '<div class="ow-card"><h3>今日新增</h3><div class="ow-dash-today">'
+                        + '<div class="ow-dash-today-i"><b>' + n(d.users_today) + '</b><span>新注册用户</span></div>'
+                        + '<div class="ow-dash-today-i"><b>' + n(d.rooms_today) + '</b><span>新创建群组</span></div>'
+                        + '</div></div>'
+                        + '<div class="ow-card"><h3>近 7 天新增</h3>'
+                        + trend('用户', 'users') + trend('群聊', 'rooms') + trend('好友', 'friends')
+                        + '</div>'
+                        + '<div class="ow-card"><h3>快捷访问</h3>'
+                        + '<p style="font-size:12px;color:var(--ow-text-sub);margin:0 0 10px">系统设置里常改的那几条，点一下直达（自动展开所属分组并高亮）。</p>'
+                        + '<div class="ow-quick-wrap">' + chips + '</div></div>'
+                        + '<p class="ow-dash-env">Owlsgo ' + esc(env.version || '') + ' · PHP ' + esc(env.php || '')
+                        + ' · ' + esc(env.driver || '') + ' · ' + esc(env.now || '') + '</p>';
+                });
+            },
             plugins: function (main) {
                 OwApi.post('admin_plugins', {}, function (r) {
                     var h = '<h2>插件管理</h2><p class="ow-admin-desc">安装（上传 zip）、启用 / 停用、下载与卸载插件。插件存放于 plugins/ 目录。</p>'
@@ -8097,6 +8178,49 @@
             if (!f.files || !f.files[0]) { toast('请选择 zip 文件'); return; }
             OwApi.upload('admin_plugin_install', f.files[0], {}, function (r) { toast(r.msg); if (r.ok) OwAdmin.page('plugins'); });
         },
+        /**
+         * 仪表盘「快捷访问」：跳到系统设置、展开所属分组、滚过去并闪一下（v1.3.158）。
+         *
+         * ⚠️ 设置页是**异步**渲染的（先 admin_settings_get、回调里才 main.innerHTML），
+         *    所以不能调完 page('settings') 就去找控件 —— 那一刻 DOM 还没建出来。
+         *    固定 setTimeout 要么白等、要么在接口慢时不够，这里用短轮询（最多 1.5 秒）。
+         */
+        goSetting: function (key) {
+            var menu = $('owAdminMenu');
+            if (menu) {
+                var all = menu.getElementsByTagName('li'), li = null, j;
+                for (j = 0; j < all.length; j++) {
+                    if (all[j].getAttribute('data-apage') === 'settings') li = all[j];
+                    all[j].className = trimCls(all[j].className.replace(/\bactive\b/g, ''));
+                }
+                if (li) li.className += ' active';
+            }
+            try { sessionStorage.setItem('owAdminPage', 'settings'); } catch (e) {}
+            this.page('settings');
+            var tries = 0;
+            (function wait() {
+                var el = $('owS_' + key);
+                if (!el) { if (++tries < 30) setTimeout(wait, 50); return; }
+                /* 开关类设置的 id 挂在**隐藏的** checkbox 上（.ow-switch-input 是
+                   position:absolute + 0×0 + opacity:0，视觉控件是旁边那根轨道）——
+                   滚动与高亮必须落在整行 .ow-switch-row 上，否则滚的是个看不见的元素、什么都不会发生。 */
+                var target = (' ' + el.className + ' ').indexOf(' ow-switch-input ') >= 0 ? el.parentNode : el;
+                if (!target || target.nodeType !== 1) target = el;
+                // 往上找到所属的折叠分组（.ow-fold），展开并滚到**分组标题** ——
+                // 控件本身就在分组第一行时，滚标题比滚控件更符合「我现在在哪」的预期。
+                var box = target;
+                while (box && box.nodeType === 1 && (' ' + box.className + ' ').indexOf(' ow-fold ') < 0) box = box.parentNode;
+                if (box && box.nodeType === 1) {
+                    if (box.className.indexOf('is-open') < 0) box.className += ' is-open';
+                    box.scrollIntoView(true);
+                } else {
+                    target.scrollIntoView(true);
+                }
+                target.className += ' ow-set-hit';
+                setTimeout(function () { target.className = trimCls(target.className.replace(/\bow-set-hit\b/g, '')); }, 1700);
+            })();
+        },
+
         /**
          * 折叠分组开关（v1.2.53，配合 .ow-fold 样式）。
          * 只切 is-open 类，内容始终留在 DOM 里 —— 收起状态下表单值照样被 settingsSave 读到。

@@ -2503,6 +2503,59 @@ span.ow-panel-entry-ico.ow-avatar { width: 24px; height: 24px; line-height: 24px
     padding: 18px;
     margin-bottom: 16px;
 }
+/* ---------- 仪表盘（v1.3.158，后台首屏） ----------
+   计数卡 + 今日新增 + 近 7 天柱图 + 常用设置快捷入口。
+   颜色一律走 token（卡片 --ow-bg、柱子 --ow-primary/--ow-primary-strong、快捷键 --ow-bg-sub），
+   深浅两套主题自动跟随，不写深色补丁。 */
+.ow-dash-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.ow-stat { background: var(--ow-bg); border: 1px solid var(--ow-border); border-radius: 8px; padding: 14px 16px; }
+/* tabular-nums：等宽数字。数字是这页的主角，跳动时不该把卡片宽度也带着抖 */
+.ow-stat-n { font-size: 26px; font-weight: 600; color: var(--ow-text-title); line-height: 1.15; font-variant-numeric: tabular-nums; }
+.ow-stat-l { font-size: 13px; color: var(--ow-text-sub); margin-top: 3px; }
+.ow-stat-s { font-size: 12px; color: var(--ow-text-sub); margin-top: 6px; }
+.ow-stat-up { color: var(--ow-green); font-weight: 600; }
+.ow-dash-today { display: flex; display: -webkit-flex; gap: 12px; flex-wrap: wrap; -webkit-flex-wrap: wrap; }
+.ow-dash-today-i { flex: 1 1 160px; background: var(--ow-bg-sub); border-radius: 8px; padding: 12px 14px; }
+.ow-dash-today-i b { display: block; font-size: 22px; color: var(--ow-text-title); line-height: 1.2; font-variant-numeric: tabular-nums; }
+.ow-dash-today-i span { font-size: 12px; color: var(--ow-text-sub); }
+/* 近 7 天：每行 7 根柱子。柱高是 chat.js 写进去的**内联百分比**（按行内最大值归一），
+   这里只负责容器与外观 —— 行是 flex-end 贴底，柱子才会从底部往上长。 */
+.ow-trend-row { display: flex; display: -webkit-flex; align-items: flex-end; -webkit-align-items: flex-end; gap: 12px; }
+.ow-trend-row + .ow-trend-row { margin-top: 10px; }
+/* padding-bottom 与 .ow-bar-l 那一行等高：让「用户/群聊/好友」三个标签与柱子底部对齐 */
+.ow-trend-n { flex: none; -webkit-flex: none; width: 56px; font-size: 12px; color: var(--ow-text-sub); padding-bottom: 20px; }
+.ow-bars { flex: 1; -webkit-flex: 1; display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; }
+.ow-bar { display: flex; display: -webkit-flex; flex-direction: column; align-items: center; -webkit-align-items: center; justify-content: flex-end; height: 96px; }
+.ow-bar-v { font-size: 11px; line-height: 1; color: var(--ow-text-sub); margin-bottom: 3px; min-height: 11px; }
+.ow-bar i { display: block; width: 100%; max-width: 28px; min-height: 2px; background: var(--ow-primary); opacity: .5; border-radius: 3px 3px 0 0; }
+/* 今天那根实心 + 深一档：柱子少的时候一眼看出哪根是今天 */
+.ow-bar.is-today i { opacity: 1; background: var(--ow-primary-strong); }
+.ow-bar-l { font-size: 10px; color: var(--ow-text-sub); margin-top: 5px; white-space: nowrap; }
+.ow-bar.is-today .ow-bar-l { color: var(--ow-text-title); }
+/* 快捷访问：胶囊按钮。hover 用品牌蓝描边 + --ow-blue-light 底（深色下自动变深青底） */
+.ow-quick-wrap { display: flex; display: -webkit-flex; flex-wrap: wrap; -webkit-flex-wrap: wrap; gap: 8px; }
+.ow-quick {
+    display: inline-flex; display: -webkit-inline-flex;
+    align-items: center; -webkit-align-items: center;
+    gap: 6px;
+    padding: 7px 12px;
+    border: 1px solid var(--ow-border);
+    border-radius: 999px;
+    background: var(--ow-bg-sub);
+    font: inherit; font-size: 13px;
+    color: var(--ow-text);
+    cursor: pointer;
+    transition: border-color .15s, background .15s, color .15s;
+    -webkit-transition: border-color .15s, background .15s, color .15s;
+}
+.ow-quick .ow-ico { color: var(--ow-text-sub); flex-shrink: 0; -webkit-flex-shrink: 0; }
+.ow-quick:hover { border-color: var(--ow-primary); background: var(--ow-blue-light); color: var(--ow-primary-dark); }
+.ow-quick:hover .ow-ico { color: inherit; }
+.ow-quick-go { color: var(--ow-text-sub); }
+.ow-dash-env { font-size: 12px; color: var(--ow-text-sub); margin-top: 4px; }
+/* 快捷访问跳过去后闪一下（一次性 keyframes，不改元素本身的状态 —— 摘掉类即恢复） */
+.ow-set-hit { animation: owSetHit 1.6s ease-out; }
+@keyframes owSetHit { 0% { box-shadow: 0 0 0 3px var(--ow-primary); border-radius: 6px; } 100% { box-shadow: 0 0 0 3px transparent; } }
 .ow-table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--ow-bg); }
 .ow-table th, .ow-table td { padding: 8px 10px; border-bottom: 1px solid var(--ow-border); text-align: left; }
 .ow-table th { color: var(--ow-text-sub); font-weight: 400; font-size: 12px; background: var(--ow-bg-sub); }

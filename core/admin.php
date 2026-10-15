@@ -177,6 +177,57 @@ class Admin
         $p = fn($k, $d = '') => trim((string)($_POST[$k] ?? $d));
 
         switch ($action) {
+            // ---------- 仪表盘（v1.3.158） ----------
+            /* 后台首页要的计数一次算完。计数一律现算、不做缓存：这个页面是「点开才看一眼」的，
+               不在每请求路径上，多一次 COUNT 无所谓。三个趋势各自只扫小表（users / rooms /
+               friends），messages 的两条计数分别走 idx_msg_room 与 idx_msg_private 索引。
+               ⚠️ 不给 messages 做「按天」统计：messages.created_at **没有索引**，按时间区间数会
+                  全表扫；用户 / 群聊 / 好友三张表小得多，7 天趋势就用它们仨。 */
+            case 'admin_stats':
+                $now = time();
+                $todayStart = strtotime('today');
+                /* 近 7 天（含今天）分桶：**用 PHP 算出每天的起止时刻，再让 SQL 分桶** ——
+                   不写 DATE()/strftime() 这类方言函数（SQLite 与 MySQL 的日期函数完全不同），
+                   也不按「时间戳整除 86400」切（那是 UTC 天，与站点时区差 8 小时，
+                   CST 早上 8 点前的数据会被算到前一天）。 */
+                $buckets = [];
+                $sums = [];
+                $targs = [];
+                for ($i = 6; $i >= 0; $i--) {
+                    $s = $todayStart - $i * 86400;
+                    $buckets[] = ['label' => date('m-d', $s), 'today' => $i === 0];
+                    $sums[] = 'SUM(CASE WHEN created_at>=? AND created_at<? THEN 1 ELSE 0 END)';
+                    $targs[] = $s;
+                    $targs[] = $s + 86400;
+                }
+                $trendOf = function (string $table) use ($sums, $targs): array {
+                    $row = DB::one('SELECT ' . implode(',', $sums) . ' FROM ' . $table, $targs);
+                    return array_map(fn($v) => (int)$v, array_values((array)$row));
+                };
+                $uTrend = $trendOf('users');
+                $rTrend = $trendOf('rooms');
+                $fTrend = $trendOf('friends');
+                $days = [];
+                foreach ($buckets as $i => $b) {
+                    $days[] = $b + ['users' => $uTrend[$i] ?? 0, 'rooms' => $rTrend[$i] ?? 0, 'friends' => $fTrend[$i] ?? 0];
+                }
+                Api::json(['ok' => true, 'data' => [
+                    'users'       => (int)DB::val('SELECT COUNT(*) FROM users'),
+                    'rooms'       => (int)DB::val('SELECT COUNT(*) FROM rooms'),
+                    'msg_group'   => (int)DB::val('SELECT COUNT(*) FROM messages WHERE room_id>0'),
+                    'msg_dm'      => (int)DB::val('SELECT COUNT(*) FROM messages WHERE room_id=0 AND to_user_id>0'),
+                    'friends'     => (int)DB::val('SELECT COUNT(*) FROM friends'),
+                    // 在线口径与 Chat::onlineList 同源（45 秒内有过心跳）
+                    'online'      => (int)DB::val('SELECT COUNT(*) FROM online WHERE last_seen>?', [$now - 45]),
+                    'users_today' => $uTrend[6] ?? 0,
+                    'rooms_today' => $rTrend[6] ?? 0,
+                    'days'        => $days,
+                    'env'         => [
+                        'version' => OWLSGO_VERSION, 'php' => PHP_VERSION,
+                        'driver'  => DB::driver(), 'now' => date('Y-m-d H:i'),
+                    ],
+                ]]);
+
             // ---------- 用户管理 ----------
             // 用户管理自 v1.0.44 起剥离为插件 user-manager（plugins/user-manager/），
             // 原搜索/角色/积分/禁用接口随迁：plugin_user_manager_search/save/status
