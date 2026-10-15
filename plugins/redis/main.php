@@ -15,14 +15,14 @@
  *      **login.attempt 刻意不接**——核心只开了读没开写，自己计数就得复制三条安全规则，理由写在
  *      「读路径接手」小节顶部。能不能接取决于核心有没有同时开写入侧，后台页逐条列了状态与原因。
  *
- * ── 为什么本插件不加速聊天（关键结论，勿误解）────────────────────
- *   Redis 要生效必须插在「读消息」的路上，而核心只在「写消息」的路上留了钩子：
- *   前端取数一律走核心 action history / poll（assets/js/chat.js），
- *   `Plugin::dispatch()` 只对**未命中**的 action 兜底（core/plugin.php），
- *   所以插件根本拿不到这些请求；Chat::history / Chat::poll / onlineList /
- *   Sec::rateLimit 等读路径函数体内没有任何 Plugin::fire() 调用点。
- *   ⇒ 本插件是「旁路镜像 + 统计」，聊天照旧走数据库。
- *     详见后台页「核心钩子待办」卡片。
+ * ── 读路径接手（v1.3.159 起：核心侧的火点已全部就位）────────────────
+ *   v1.3.155 起核心在读路径上开了历史/轮询/在线/限流/登录计数 5 处 fire 点，
+ *   v1.3.159 补上最后一块拼图 Chat::rooms 的 `rooms.rows`（公开房间列表 —— 全站读得最频繁的一处）。
+ *   于是本插件现在**真的能替核心省查询**：poll.hint 长轮询短路、online.track/list 在场名单、
+ *   rate.limit 计数、rooms.rows 房间列表（缓存热时不查库）、history.rows 校准水位。
+ *   唯一**刻意不接**的是 login.attempt：核心只开了读、没开写（失败自增与成功清零仍在库函数里），
+ *   硬接就得把「阈值 / 锁定分钟 / 到期重算」三条安全规则复制一份 —— 代价不对等。
+ *   ⇒ 逐处的状态、开关与理由见后台页「读路径接手」卡片。
  *
  * ── 零依赖 ────────────────────────────────────────────────────
  *   优先用 phpredis 扩展；**没装扩展时自动切到内置的极简 RESP 客户端**
@@ -1055,14 +1055,14 @@ Plugin::on('rate.limit', function (&$handled, $bucket, $ident, $window, $max) {
 /* ---------- 公开房间列表（缓存 rooms 表的原始行，可见性过滤留给核心） ---------- */
 
 /**
- * rooms.rows —— **这一处需要核心补一个 fire 点才生效**（Chat::rooms 里那句 SELECT 之前）：
+ * rooms.rows —— 公开房间列表。核心 **v1.3.159 起**在 Chat::rooms 里 fire（那句 SELECT 之前）：
  *
  *     $list = [];
  *     Plugin::fire('rooms.rows', [&$list, $actor]);
  *     if (!$list) $list = DB::all('SELECT * FROM rooms WHERE status=1 ORDER BY id');
  *
  * 契约与 online.list 完全一致：回填了行（哪怕只有一行）核心就不再查库；仍是空数组则照查库。
- * 核心没补之前，这个处理器永远不会被调用 —— 挂在这里不会有害，补上那两行即自动生效。
+ * 缓存未热过时本处理器什么都不做 → 核心照旧查库（不会给错答案，只是那一次查询省不掉）。
  * ⚠️ 处理器刻意写得防御：参数形状不对就什么都不做（宁可回落查库，也不能把房间列表弄坏）。
  */
 Plugin::on('rooms.rows', function (&$list = null, $actor = null) {
@@ -1309,24 +1309,25 @@ Plugin::adminPage('redis', 'Redis 缓存', function () {
             . '仍在 Sec::loginFail() 里、成功清零在 Sec::loginOk() 里。插件若自己计数，就得把阈值、锁定分钟数、到期重算'
             . '这三条**安全规则**复制一份，而错的方向是「锁定失效 = 暴力破解可绕过」。要接，请核心先给一个写入侧钩子'
             . '（如 login.fail_add / login.fail_clear），插件只当计数器。'],
-        ['rooms.rows', '已实现·待核心补钩子', 'core/chat.php:290 那句 SELECT 之前', 'wait',
-            '公开房间列表是**全站查得最频繁的一处**（进聊天页 / 切群 / 建房后都要打一次 ?action=rooms），'
-            . '而那批行对所有人都一样（按身份的过滤在后面用 PHP 做）→ 插件只缓存**原始行**、可见性过滤仍留给核心。'
-            . '插件侧已写好并在缓存热时提供行；**还差核心补两行**（与 online.list 同款契约）：'
-            . '$list = []; Plugin::fire(\'rooms.rows\', [&$list, $actor]); if (!$list) $list = DB::all(...)。'
-            . '补上之前这个处理器不会被调用 —— 挂在这里无害，补上那两行即自动生效。'],
+        ['rooms.rows', '已接', 'core/chat.php:290 那句 SELECT 之前', 'on',
+            '公开房间列表是**全站读得最频繁的一处**（进聊天页 / 切群 / 建房后都要打一次），而那批行对所有人都一样'
+            . '（按身份的过滤在后面用 PHP 做）→ 插件只缓存**原始行**、可见性过滤仍留给核心。'
+            . '**核心已在 v1.3.159 补上那两行**（`$list = []; Plugin::fire(\'rooms.rows\', [&$list, $actor]);'
+            . ' if (!$list) $list = DB::all(...)`），缓存热时这次查询就省掉了。'
+            . '同一版还把「删群 / 封禁」两处的缓存失效补齐了（admin.php 现在会 fire room.after_update）——'
+            . '在那之前只能等 TTL 过期，最坏 60 秒内还列着已删/已封的群。'],
     ];
-    $h .= '<div class="ow-card"><h3 style="margin:0 0 10px">读路径接手（核心 v1.3.155 起的 6 处 fire 点）</h3>'
+    $h .= '<div class="ow-card"><h3 style="margin:0 0 10px">读路径接手（核心 v1.3.155 / v1.3.159 的 6 处 fire 点，已全部就位）</h3>'
         . '<p style="font-size:12px">下面每一处都标注了接手状态与理由。<strong>能不能接取决于核心有没有同时开写入侧</strong>：'
         . '只开读不开写的地方，插件要么返回「未接手」（等于没接），要么就得把核心的规则复制一份 —— 后者一旦与核心不一致，'
-        . '代价往往是权限或安全出问题，所以宁可不接。</p>'
+        . '代价往往是权限或安全出问题，所以宁可不接（目前只有 login.attempt 属于这种）。</p>'
         . '<div class="ow-form-row">'
         . $sel('readpath', '读路径总开关', ['1' => '开启', '0' => '关闭'],
             '关闭后 history.rows / poll.hint / online.* 一律不接手，完整恢复核心原行为')
         . $sel('ratelimit', '限流计数', ['1' => '放进 Redis', '0' => '留给核心（写 rate_limits 表）'],
             '只作用于非 mail 桶；出问题可一键关回去')
         . $sel('rooms', '房间列表缓存', ['1' => '开启', '0' => '关闭'],
-            '缓存 rooms 表的原始行（剥掉 password 列）；等核心补 rooms.rows 那个 fire 点后才真正省下查询')
+            '缓存 rooms 表的原始行（剥掉 password 列）；核心 v1.3.159 起有 rooms.rows 火点，缓存热时直接省下这次查询')
         . $f('rooms_ttl', '房间列表缓存寿命（秒）', '30~3600；另有每分钟的计划任务保活')
         . '</div>';
     // 说明里用 **…** 标重点：先 Sec::e() 转义再换成 <strong>（转义不会碰星号，顺序反了就是 XSS）
