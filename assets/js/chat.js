@@ -5549,15 +5549,19 @@
 
         /**
          * 把菜单开在某个触发按钮的旁边。
-         * align='bottom' 给沉底的 ☰：菜单往上长、底边与按钮底边对齐；
-         * align='top'    给品牌条上的头像：菜单往下长（顶边落在按钮下沿之外，不去盖品牌条）。
          * 横向默认开在按钮**右侧**（rail 贴最左，只能往右）；触发点在右半边时自动翻过去，
          * 品牌条那颗头像就是这种（v1.3.142）—— 不翻的话整张菜单会掉出视口右沿。
          * ⚠️ 翻过去时取「菜单右沿 = 触发点右沿」，不是「菜单摆在触发点左边留 8px 缝」：
          *   后者实测把 136px 宽的菜单推到胶囊左沿之外（胶囊 left 1275、菜单 right 1267），
          *   整张菜单离它的触发点 120px 远，看着像从聊天区标题里长出来的（v1.3.145 站方截图）。
          *   右沿对齐才是下拉菜单的常规接法，且天然不会掉出视口（触发点右沿本就在 16px 内边距里）。
-         * 上下也各自夹在视口里，别盖到品牌条上面。
+         * 竖向：align='bottom' 给沉底的 ☰，菜单往上长、底边与按钮底边齐平；
+         * align='top' 给品牌条那颗胶囊，菜单往下长、顶边离胶囊下沿 4px（v1.3.147）。
+         * ⚠️ 这里**不再**把菜单压到品牌条下面（v1.3.142 起那条 `bar.bottom + 8` 已删）：
+         *   胶囊在 57px 的条里居中，条自身在它下面还留 14.3px，再叠 8px = 菜单离触发点 23px，
+         *   站方两次指出「离头像昵称那么远」。而且 rail 那张 ☰ 菜单本来就是与按钮齐平的接法，
+         *   两张菜单贴触发点的方式不该一套一个样。盖住的是品牌条底部那条空白带与 1px 分隔线
+         *   （#E0E4E8 压在 #E4E4E4 上本就几乎看不见），菜单 z-index 400 浮在上面，是常规下拉观感。
          */
         _ctxOpenAt: function (items, from, anchor, align) {
             var menu = $('owCtxMenu');
@@ -5569,17 +5573,9 @@
             var r = anchor.getBoundingClientRect();
             var vw = w.innerWidth || document.documentElement.clientWidth;
             var vh = w.innerHeight || document.documentElement.clientHeight;
-            var mh = menu.offsetHeight || items.length * 34;
+            var mh = menu.offsetHeight || items.length * 28;
             var mw = menu.offsetWidth || 160;
-            var top = align === 'top' ? r.bottom + 8 : r.bottom - mh;
-            if (align === 'top') {
-                // 芯片在 57px 的条里居中，它的下沿比条的下沿高 ~14px → 落到条的外面才不盖条
-                var bar = anchor.parentNode;
-                if (bar && (' ' + bar.className + ' ').indexOf(' ow-brand ') >= 0) {
-                    var bb = bar.getBoundingClientRect().bottom + 8;
-                    if (top < bb) top = bb;
-                }
-            }
+            var top = align === 'top' ? r.bottom + 4 : r.bottom - mh;
             if (top < 8) top = 8;
             if (top + mh > vh - 8) top = Math.max(8, vh - 8 - mh);
             var left = r.right + 8;
