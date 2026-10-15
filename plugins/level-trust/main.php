@@ -55,6 +55,12 @@
  *   50 级 创建最多 8 个群、高级文件权限（= 全局上限）
  *   ⚠️ 全部限制可由后台「等级信任 → 限制开关」一键关闭（默认开启）。
  *
+ * ── v3.2 等级荣誉榜（对外接口，本插件不做页面）─────────────────
+ *   路由 plugin_level_trust_rank：≥「荣誉标识」等级（lv_honor，默认 60）的用户
+ *   按等级降序取 TOP N（N 由调用方传，签到插件传自己的「排行榜人数」，默认 8）。
+ *   消费方是每日签到插件 —— 在「本月签到榜」下方以「等级荣誉榜」展示。
+ *   与 mine 一样走 pull 模式：两个插件各自独立，谁停用都不残留半截 UI。
+ *
  * 安全与性能约束：
  *   - 所有 SQL 参数化；等级行按 user_id 主键读写。
  *   - `user.active` 每请求都会触发（含长轮询）：**同日内仍是「一次主键查询」起步**，
@@ -1274,6 +1280,56 @@ Plugin::route('plugin_level_trust_mine', function (array $ctx) {
         // v3.0：等级来源拆开下发（在线 / 任务 / 管理员设定），前端不必自己换算
         'prog' => owLTSnapshot($row),
     ]);
+});
+
+/**
+ * 等级荣誉榜（v3.2）—— ≥「荣誉标识」等级（lv_honor，默认 60）的用户，按等级降序取 TOP N。
+ *
+ * 消费方：每日签到插件在「本月签到榜」下方以「等级荣誉榜」展示（沿用 mine 的 pull 模式）。
+ * 对游客同样开放：荣誉名单本身是公开信息，游客看到也能理解这个体系是活的。
+ *
+ * rank_size 不在这里定义、也不走本插件配置 —— 由调用方传入（签到插件传自己的
+ * 「排行榜人数」配置，默认 8）。这样两个榜单人数始终一致，后台也只有一个地方要改；
+ * 再定义一个 rank 专用的配置键就成了同一个概念的第二份真相。
+ *
+ * 排序取 level DESC, user_id ASC：等级相同时按 uid 升序，保证翻页/刷新不跳动
+ * （与 owCIRank 的口径一致）。LIMIT 是 (int) 收敛后的字面量 —— 参数化的 LIMIT
+ * 在部分驱动上不可用（见 owCIRank 同样的处理）。
+ */
+Plugin::route('plugin_level_trust_rank', function (array $ctx) {
+    $minLv = max(2, owLTInt('lv_honor'));          // 「荣誉标识」等级就是上榜门槛：设成 60 即 60 级上榜
+    $n = (int)($ctx['post']['n'] ?? 8);
+    $n = max(1, min(50, $n));
+    owLTBoot();
+    $rows = DB::all('SELECT user_id, level FROM plugin_level_trust WHERE level>=? '
+        . 'ORDER BY level DESC, user_id ASC LIMIT ' . $n, [$minLv]);
+    $list = [];
+    if ($rows) {
+        $ids = array_map(fn($r) => (int)$r['user_id'], $rows);
+        $ph  = implode(',', array_fill(0, count($ids), '?'));
+        $users = [];
+        foreach (DB::all("SELECT id, nickname, avatar, avatar_type, avatar_style, avatar_seed, client_key, role
+                          FROM users WHERE id IN ($ph)", $ids) as $u) {
+            $users[(int)$u['id']] = $u;
+        }
+        foreach ($rows as $r) {
+            $uid = (int)$r['user_id'];
+            $u = $users[$uid] ?? null;
+            if (!$u) continue;                     // 用户已删除：榜单不再展示
+            $lv = (int)$r['level'];
+            $list[] = [
+                'uid' => $uid,
+                'nickname' => (string)$u['nickname'],
+                'role' => (string)$u['role'],
+                // class_exists 防御：CLI 诊断脚本可能只 require 了部分核心文件（同 owCIRank）
+                'avatar' => class_exists('Auth') ? Auth::avatarUrlFor($u, (string)$uid) : '',
+                'level' => $lv,
+                'stage_no' => owLTStageNo($lv),
+                'honor' => 1,                      // 榜内必然 ≥ lv_honor（用户自己把门槛调低时 honor 语义随之放宽）
+            ];
+        }
+    }
+    Api::json(['ok' => true, 'min_level' => $minLv, 'count' => count($list), 'list' => $list]);
 });
 
 
