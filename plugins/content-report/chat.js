@@ -346,8 +346,9 @@
     };
 
     /* ---------- 消息箱（独立一个消息框，站方 v1.2.0 口径） ----------
-       侧栏「内容举报」那一行点开的就是它：一条条消息（头像 + 昵称 + 时间 + 正文 +
-       截图缩略图 + 「查看」按钮），**不占用系统通知那一页**。
+       侧栏「内容举报」那一行点开的就是它：**主区**换成一条条消息（头像 + 昵称 + 时间 +
+       正文 + 截图缩略图 + 「查看」按钮），样式与「系统通知」那一页同一套气泡，
+       但不是那一页（系统通知页仍只显示系统通知与别的插件条目）。
        按身份给不同内容：超管看待处理举报，举报人看自己的审核结论。 */
 
     /** 通知行的头像 / 昵称（后台可配，没配由核心兜底成插件名 + 生成头像） */
@@ -411,19 +412,23 @@
         return esc(m.text || '') + '　被举报人：' + nickLink(m.target_uid, m.target_nick);
     }
 
-    /** 一条消息的 HTML（复用核心那套通知气泡样式，不另起一套） */
+    /** 一条消息的 HTML（就是核心那套通知气泡 .ow-msg .ow-msg-notice，不另起一套） */
     function boxMsgHtml(m, isAdmin, av, nick) {
         var imgs = m.images || [], ih = '', k;
         for (k = 0; k < imgs.length; k++) {
             ih += '<img class="ow-msg-img" src="' + esc(imgs[k]) + '" alt="举报截图" onclick="OwChat.viewImg(this.src)">';
         }
         if (ih) ih = '<div class="ow-notice-imgs">' + ih + '</div>';
+        // 时间与「系统通知」那条流同一个轮子（ChatList.time），两边看着才像一回事
+        var tm = (typeof ChatList !== 'undefined' && ChatList && typeof ChatList.time === 'function')
+            ? ChatList.time((m.at || 0) | 0)
+            : new Date((m.at || 0) * 1000).toLocaleString();
         return '<div class="ow-msg ow-msg-notice ow-cr-boxmsg' + (parseInt(m.unread, 10) ? ' is-unread' : '') + '">'
             + (av ? '<span class="ow-msg-av"><span class="ow-avatar"><img src="' + esc(av)
                   + '" alt="' + esc(nick) + '"></span></span>' : '')
             + '<div class="ow-msg-body">'
             + '<div class="ow-msg-meta"><span class="ow-msg-nick">' + esc(nick) + '</span>'
-            + '<span class="ow-msg-time">' + esc(new Date((m.at || 0) * 1000).toLocaleString()) + '</span></div>'
+            + '<span class="ow-msg-time">' + esc(tm) + '</span></div>'
             + '<span class="ow-msg-content">' + boxBody(m, isAdmin) + '</span>'
             + ih
             + '<div class="ow-cr-boxmsg-ops">'
@@ -431,24 +436,76 @@
             + '</div></div></div>';
     }
 
-    /** 打开消息箱 */
+    /**
+     * 「查看」用**一次事件委托**接住：#owMessages 是服务端静态输出的节点，
+     * 主区被 innerHTML 反复重建也不丢监听（与核心 renderNoticeStream 绑 .ow-notice-act 同一手法）。
+     */
+    function bindBoxView() {
+        var mb = $('owMessages');
+        if (!mb || mb._crViewBound) return;
+        mb._crViewBound = true;
+        mb.addEventListener('click', function (e) {
+            var t = e.target || e.srcElement;
+            while (t && t !== mb && !(t.className && (' ' + t.className + ' ').indexOf(' ow-cr-view ') >= 0)) {
+                t = t.parentNode;
+            }
+            if (!t || t === mb) return;
+            var id = parseInt(t.getAttribute('data-id'), 10) || 0;
+            // 超管：待处理举报面板（可直接处理）；举报人：这一条的结论详情
+            if (mb.getAttribute('data-cr-box') === 'admin') CR.openAlerts();
+            else CR.openResult(id);
+        });
+    }
+
+    /**
+     * 打开消息箱：把**主区**换成举报的消息流。
+     *
+     * 形态与「系统通知」完全一致（同一片 #owMessages、同一套 .ow-msg-notice 气泡）：
+     * 顶栏换成「内容举报」、收起属于房间的那几样控件、输入区禁用（单向、不需要回复）。
+     * 但它**不是系统通知那一页** —— 系统通知那一页仍只显示系统通知与别的插件条目。
+     *
+     * 进出都走核心那套通知视图流程（而不是自己弹一个窗）：
+     * noticeMode=true 后，用户切 rail 标签时核心的 exitNotices() 会自动把顶栏与
+     * 群聊按钮还回房间；同时要停掉在飞的轮询、清掉当前会话，否则旧房间的消息会盖掉消息箱。
+     */
     CR.openBox = function () {
-        OwChat.openModal(
-            '<h3 id="owCRBoxTitle">内容举报</h3>'
-            + '<p class="ow-modal-desc">这里是内容举报的消息，点「查看」看详情。</p>'
-            + '<div class="ow-cr-box" id="owCRBox"><div class="ow-cr-empty">加载中…</div></div>',
-            560
-        );
+        if (!isLogin()) return;
+        if (!OwChat.noticeMode) {
+            OwChat._titleBefore = ($('owRoomName') || {}).textContent || '';
+            OwChat.noticeMode = true;
+        }
+        OwChat.pollGen = (OwChat.pollGen || 0) + 1;
+        OwChat.dmGen = (OwChat.dmGen || 0) + 1;
+        OwChat._roomPollRunning = false;
+        OwChat.dm = null; OwChat.room = 0; OwChat.since = 0;
+        OwChat.historyDone = true; OwChat.loadingHistory = false;
+        ChatList.activate('owRoomList', '');
+        if (typeof OwChat.renderNoticeRow === 'function') OwChat.renderNoticeRow();
+        ChatList.activate('owNoticeList', 'dm:' + NOTICE_KEY);   // 点亮的是「内容举报」这一行
+        OwChat.paintNoticeChrome(true);                          // 收起「群聊信息」与延迟显示
+        var tn = $('owRoomName'); if (tn) tn.textContent = '内容举报';
+        OwChat.applyInputGate('notice');                         // 单向：禁用输入与工具栏
+        var inp = $('owInput'); if (inp) inp.placeholder = '举报消息不需要回复';
+        // v1.3.133：通知别的插件「视图已变」——不通知的话，上一个群的公告条会压在消息箱上
+        if (typeof OwChat._fireViewChange === 'function') OwChat._fireViewChange();
+        var box = $('owMessages');
+        if (box) box.innerHTML = '<div class="ow-notice-pending">加载中…</div>';
+        CR.paintDot(0);                                          // 打开即灭（系统通知那颗不受影响）
+        CR.loadBox();
+    };
+
+    /** 拉消息箱数据 → 主区渲染成消息流（旧→新，与通知流同向） */
+    CR.loadBox = function () {
         OwApi.post('plugin_content_report_box', {}, function (r) {
-            var box = $('owCRBox');
+            var box = $('owMessages');
             if (!box) return;
-            if (!r || !r.ok) { box.innerHTML = '<div class="ow-cr-empty">加载失败</div>'; return; }
+            bindBoxView();
+            if (!r || !r.ok) { box.innerHTML = '<div class="ow-notice-pending">加载失败</div>'; return; }
             var d = r.data || {}, list = d.list || [];
             var isAdmin = parseInt(d.admin, 10) === 1;
-            var title = $('owCRBoxTitle');
-            if (title) title.textContent = isAdmin ? '待处理举报' : '我的举报结果';
+            box.setAttribute('data-cr-box', isAdmin ? 'admin' : 'mine');
             if (!list.length) {
-                box.innerHTML = '<div class="ow-cr-empty">'
+                box.innerHTML = '<div class="ow-notice-pending">'
                     + (isAdmin ? '暂无待处理的举报' : '暂无举报结果') + '</div>';
                 return;
             }
@@ -458,17 +515,7 @@
             var h = '';
             for (var i = 0; i < list.length; i++) h += boxMsgHtml(list[i], isAdmin, av, nick);
             box.innerHTML = h;
-
-            var btns = box.getElementsByClassName('ow-cr-view');
-            for (var j = 0; j < btns.length; j++) {
-                (function (btn) {
-                    btn.onclick = function () {
-                        var id = parseInt(btn.getAttribute('data-id'), 10) || 0;
-                        if (isAdmin) CR.openAlerts();          // 超管：待处理面板（可直接处理）
-                        else CR.openResult(id);                // 举报人：结论详情
-                    };
-                })(btns[j]);
-            }
+            box.scrollTop = box.scrollHeight;
             // 打开过就算已读：水位上报后，刷新也不会再变回未读
             if (parseInt(d.max_id, 10) > 0) CR.markSeen(d.max_id);
         });
@@ -510,7 +557,7 @@
     };
 
     /* ---------- 注册为「通知联系人」的点击处理（v1.3.160 扩展点） ----------
-       侧栏那一行 = 入口：点它打开插件自己的消息箱（不再进系统通知那一页）。 */
+       侧栏那一行 = 入口：点它把主区换成插件自己的消息流（不再进系统通知那一页）。 */
     if (typeof OwChat.onNoticeContact === 'function') {
         OwChat.onNoticeContact(NOTICE_KEY, function () { CR.openBox(); });
     }
