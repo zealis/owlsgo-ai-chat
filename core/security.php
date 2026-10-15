@@ -166,10 +166,20 @@ class Sec
          · $until  锁定截止时间戳，-1 = 未接手 → 照旧读库；0 是有效值（"没锁"）。
        ⚠️ 第 3 个参数是后加的：只声明前两个参数的处理器照跑不误（PHP 允许多传实参），
           此时 $until 保持 -1，本函数退回读库 —— 加了参数不会让任何按文档写的处理器失灵。
-       ⚠️ 与 rate.limit 同理，security.php 先于 plugin.php require，必须 class_exists 防御。 */
+       ⚠️ 与 rate.limit 同理，security.php 先于 plugin.php require，必须 class_exists 防御。
+       ⚠️⚠️ **只接读侧会让登录保护失效，要接必须连写入侧一起开**（2026-10-15 站方核出）：
+          这里开的全是「读」—— 失败**自增**与 v1.3.131 那条「上一轮锁定已到期就重新起算」在 loginFail() 里、
+          成功**清零**在 loginOk() 里，**这两处都没有钩子**。于是插件只有两条路，都不好：
+            ① 顶掉 $fails 却没有权威来源 → 只能一直返回 -1（未接手），等于没接；
+            ② 自己按 login.failed / login.after_verify 计数 → 等于把「阈值 login_fail_lock、
+               锁定分钟 login_lock_minutes、到期重算」这三条**安全规则**复制到插件里。
+          而 ② 与核心一旦不一致，错的方向是「锁定失效 = 暴力破解可绕过」—— 代价不对等。
+          要真接，请先加写入侧钩子（如 login.fail_add / login.fail_clear），让插件只当计数器、
+          规则仍留在核心。redis 插件因此**刻意不接**这个钩子（它的后台页也写了这条理由）。 */
     public static function loginFails(string $identity): int
     {
         $fails = -1;
+        // ⚠️ 只接读侧会让锁定失效（写入侧没开钩子）—— 见上面 login.attempt 那一段；要接必须连写侧一起开。
         if (class_exists('Plugin')) Plugin::fire('login.attempt', [&$fails, $identity]);
         if ($fails >= 0) return $fails;
         $r = DB::one('SELECT fails, locked_until FROM login_attempts WHERE identity=?', [$identity]);
@@ -179,6 +189,7 @@ class Sec
     public static function loginLocked(string $identity): bool
     {
         $fails = -1; $until = -1;
+        // ⚠️ 同上：插件只能读，接不了写；返回 $until 却没有权威来源就等于「没锁」→ 锁定失效。
         if (class_exists('Plugin')) Plugin::fire('login.attempt', [&$fails, $identity, &$until]);
         if ($until >= 0) return $until > time();
         $r = DB::one('SELECT locked_until FROM login_attempts WHERE identity=?', [$identity]);
@@ -187,6 +198,9 @@ class Sec
 
     public static function loginFail(string $identity): void
     {
+        // ⚠️ 这里就是 login.attempt 缺掉的「写」侧。插件要真接手失败计数，应当**在这之后**加一个写入侧钩子
+        //    （如 Plugin::fire('login.fail_add', [$identity, $fails, $lock])），让插件只跟着记一笔 ——
+        //    阈值 / 锁定分钟 / 到期重算（下面这段）仍由核心算，插件不复制规则；成功清零同理在 loginOk() 之后。
         $row = DB::one('SELECT fails, locked_until FROM login_attempts WHERE identity=?', [$identity]);
         $fails = (int)($row['fails'] ?? 0);
         /* v1.3.131：上一轮锁定已经到期 → 重新起算。
@@ -224,6 +238,7 @@ class Sec
         /* v1.3.154：与 loginLocked 同一口径 —— 插件接手后这里也要跟着走，
            否则会出现「闸门说锁着、倒计时却显示 0 秒」的分裂（登录页那两处就是这么用的）。 */
         $fails = -1; $until = -1;
+        // ⚠️ 同上：唯一的「写」（loginFail 自增 / loginOk 清零）没有钩子，只接读侧会让锁定与倒计时一起失真。
         if (class_exists('Plugin')) Plugin::fire('login.attempt', [&$fails, $identity, &$until]);
         if ($until >= 0) return max(0, $until - time());
         $r = DB::one('SELECT locked_until FROM login_attempts WHERE identity=?', [$identity]);
