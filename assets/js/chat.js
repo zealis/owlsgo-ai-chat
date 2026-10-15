@@ -4520,18 +4520,58 @@
             if (!box) return;
             var last = (this.notices && this.notices.length) ? this.notices[0] : null;
             var unread = this.noticeMode ? 0 : ((this.cfg.notice_unread | 0) || 0);
-            ChatList.render([{
+            var rows = [{
                 conv: 'dm', peer: 'notice', name: '系统通知',
                 // v1.3.52：固定头像「小可爱第36号」，由服务端算好下发（Notice::avatarUrl）
                 avatar: this.cfg.notice_avatar || '',
                 last_at: last ? (last.created_at | 0) : 0,
                 last_text: last ? owNoticeText(last, this.noticeTexts) : '暂无系统通知',
                 unread: unread
-            }], {
+            }];
+            /* v1.3.160：插件注册的「通知联系人」拼在系统通知**之后**（同一张表、同一套行渲染，
+               所以看着就是通知区里多出来的联系人）。昵称与头像的默认值服务端已补好
+               —— 没给就用插件名 + 按插件 id 派生的 open-peeps 头像（Notice::contacts）。 */
+            var cs = this.cfg.notice_contacts || [], i;
+            for (i = 0; i < cs.length; i++) {
+                rows.push({
+                    conv: 'dm', peer: cs[i].key, name: cs[i].name,
+                    avatar: cs[i].avatar || '',
+                    last_at: 0,                      // 没有时间概念：ChatList.time(0) 渲染成空串
+                    last_text: cs[i].last_text || '',
+                    unread: cs[i].unread | 0
+                });
+            }
+            ChatList.render(rows, {
                 container: 'owNoticeList',
                 activeKey: this.noticeMode ? 'dm:notice' : '',
-                onClick: function () { OwChat.openNotices(); }
+                onClick: function (li) {
+                    var peer = li.getAttribute('data-dm');
+                    if (peer === 'notice') { OwChat.openNotices(); return; }
+                    OwChat.openNoticeContact(peer);   // 插件的联系人：交给它自己的处理器
+                }
             });
+        },
+
+        /**
+         * 注册「通知联系人」的点击处理器（v1.3.160，插件扩展点）。
+         *
+         * 服务端那边先用 `Plugin::on('notice.contacts', function ($add) { $add(['key' => '…']); })`
+         * 登记一行，前端再用本方法按同一个 key 接住点击 —— 两边只靠 key 约定，核心不认识插件的内容。
+         *
+         * @param {string}   key 与服务端登记时一致的 key
+         * @param {function} fn  点击时调用，收到行对象 {key, name, avatar, unread, last_text}
+         */
+        onNoticeContact: function (key, fn) {
+            if (key && typeof fn === 'function') this._noticeHooks[key] = fn;
+        },
+        _noticeHooks: {},
+        /** 点了插件的通知联系人：交给插件；没注册处理器就提示一句（免得作者对着没反应的入口查半天） */
+        openNoticeContact: function (key) {
+            var fn = this._noticeHooks[key];
+            if (typeof fn !== 'function') { toast('插件「' + key + '」没有注册点击处理'); return; }
+            var cs = this.cfg.notice_contacts || [], row = null, i;
+            for (i = 0; i < cs.length; i++) if (cs[i].key === key) row = cs[i];
+            fn(row || { key: key });
         },
 
         /** 进入通知模式：先停掉群聊/私聊长轮询，再把主区换成通知流 */

@@ -1810,6 +1810,11 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
         // v1.3.52：系统通知的固定头像（小可爱第 36 号）。服务端算一次，
         // 侧栏那一行与通知流共用 —— 两处各自拼 URL 迟早不一致。
         'notice_avatar' => ($actor['kind'] ?? '') === 'user' ? Notice::avatarUrl() : '',
+        // v1.3.160：插件注册的「通知联系人」。侧栏通知区（#owNoticeList）里除了「系统通知」
+        // 那一行，插件还能加自己的行 —— 头像 / 昵称 / 副标题 / 未读自定，没给的由 Notice::contacts()
+        // 补默认值（插件名 + 按插件 id 派生的 open-peeps 头像）。点击行为由插件自己的 JS 注册
+        // （OwChat.onNoticeContact）。游客没有通知区，不 fire 这个钩子，省一次遍历。
+        'notice_contacts' => ($actor['kind'] ?? '') === 'user' ? Notice::contacts() : [],
         // 「新朋友」那一行的固定头像（小可爱第 6 号）。同 notice_avatar：服务端算一次，
         // 前端只负责摆 —— 两处各自拼 DiceBear 地址迟早不一致（风格、背景色、种子都会漂）。
         'friend_avatar' => ($actor['kind'] ?? '') === 'user' ? Chat::friendAvatarUrl() : '',

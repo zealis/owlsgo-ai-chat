@@ -79,6 +79,74 @@ class Notice
         return Auth::avatarGeneratedUrl(self::AVATAR_STYLE, self::AVATAR_SEED);
     }
 
+    /**
+     * 插件注册的「通知联系人」（v1.3.160）。
+     *
+     * 侧栏通知区里除了「系统通知」那一行，插件还可以加自己的行 —— 与系统通知共用同一套列表渲染，
+     * 头像/昵称/副标题/未读都可自定；点击行为由插件自己的 JS 决定（见下）。
+     *
+     * 插件写法（main.php 顶层，插件拿到的第一个参数是**登记函数** $add）：
+     *
+     *     Plugin::on('notice.contacts', function (callable $add) {
+     *         $add(['key' => 'mykey', 'name' => '我的通知', 'unread' => 3, 'last_text' => '有新内容']);
+     *         // 只给 key 也能跑：昵称默认取插件名、头像默认取按插件 id 派生的 open-peeps 生成头像
+     *     });
+     *
+     * 点击（前端）：
+     *
+     *     OwChat.onNoticeContact('mykey', function (row) { /* 自己开弹窗 / 画页面 *\/ });
+     *
+     * 为什么参数是「登记函数」而不是按引用传数组：登记动作发生在**插件自己的回调里**，
+     * 此刻 Plugin::current() 正是它 —— 归属、默认昵称、默认头像都从这一处拿到，
+     * 插件不用自报家门（写 ['plugin' => '自己'] 那种重复信息迟早会有人写错）。
+     *
+     * @return array<int,array<string,mixed>> 已补好默认值、且形状合法的行（键：key/name/avatar/unread/last_text）
+     */
+    public static function contacts(): array
+    {
+        $rows = [];
+        $add = function (array $c) use (&$rows): void {
+            if (class_exists('Plugin')) $c['__owner'] = Plugin::current();
+            $rows[] = $c;
+        };
+        if (class_exists('Plugin')) Plugin::fire('notice.contacts', [$add]);
+        if (!$rows) return [];
+
+        // 插件名表：只给「没填昵称」的那些兜底用（名字以 plugin.json 的 name 为准）
+        $names = [];
+        if (class_exists('Plugin')) {
+            foreach (Plugin::listAll() as $pl) $names[(string)$pl['id']] = (string)$pl['name'];
+        }
+        $out = [];
+        $seen = [];
+        foreach ($rows as $c) {
+            $key = (string)($c['key'] ?? '');
+            // key 会被前端拿去注册点击处理器、也会进 data-* 属性：只收一段干净短串，其余丢掉
+            if (!preg_match('/^[A-Za-z0-9_-]{1,32}$/', $key)) continue;
+            if (isset($seen[$key])) continue;                    // 同一个 key 只认第一行
+            $seen[$key] = true;
+            $owner = (string)($c['__owner'] ?? '');
+            $name  = trim((string)($c['name'] ?? ''));
+            if ($name === '') $name = $names[$owner] ?? $owner;  // 兜底①：插件名（拿不到就退插件 id）
+            $avatar = trim((string)($c['avatar'] ?? ''));
+            if ($avatar === '' && $owner !== '') {
+                // 兜底②：open-peeps 生成头像。种子由**插件 id** 派生（crc32 稳定），
+                // 所以每个插件的默认头像固定不变 —— 同 Notice::avatarUrl 的理由：
+                // 通知是长期留痕，头像每次都变的话用户认不出是谁发的。
+                $seed = (string)(1 + (crc32($owner) % Auth::AVATAR_SEED_COUNT));
+                $avatar = Auth::avatarGeneratedUrl('open-peeps', $seed);
+            }
+            $out[] = [
+                'key' => $key,
+                'name' => mb_substr($name, 0, 20),
+                'avatar' => $avatar,
+                'unread' => max(0, (int)($c['unread'] ?? 0)),
+                'last_text' => mb_substr(trim((string)($c['last_text'] ?? '')), 0, 60),
+            ];
+        }
+        return $out;
+    }
+
     /** 已知事件类型（后台/插件判实用；也是模板表的键集合） */
     public static function kinds(): array
     {

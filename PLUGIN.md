@@ -291,6 +291,13 @@ OwChat.registerAvatarUploader(function (file, filename, onOk) {
 | `mail.render` | `mail.send` **之前**，核心已生成码与默认文案（v1.3.55） | `[&$subject, &$body, &$format, $ctx]` —— 插件按 `$ctx['kind']` 套自己的模板改写主题与正文，并把 `$format` 置 `html`。⚠️ 只对验证码生效：`$ctx['code']` 为空的邮件（别的插件群发通知）不要改写，否则会把别人的正文换成验证码模板 |
 | `mail.send` | 发验证码等邮件要投递时（`Mailer::send`） | `[&$sent, $to, $subject, $body, &$error, $ctx]` —— 核心 v1.0.81 起不再内置 SMTP；插件完成投递后把 `$sent` 置 true，失败时把可展示的原因写进 `$error`（会拼进用户提示，**不要塞原始异常/凭据**）。无人响应时验证码仍入库，但接口返回「站点未启用邮件发送」。`$ctx` 含 `kind`（register/reset/chpwd…）、`code`、`ttl`、`name`、`email`、`site_name`、`format`（text/html） |
 | `mail.unsent` | 没有任何插件响应 `mail.send`（v1.3.55） | `[$info]` —— 键 `to` / `subject` / `kind`。用于记「待发送」统计：码已入库但没发出去，用户必然收不到 |
+| `notice.contacts` | 渲染侧栏通知区时（`index.php` 组装 boot，**仅登录用户**） | `[$add]` —— 唯一一个参数是**登记函数**：`$add(['key' => 'mykey', 'name' => '我的通知', 'avatar' => 'https://…', 'unread' => 3, 'last_text' => '有新内容'])`。侧栏通知区里除了「系统通知」那一行，插件可以加自己的行（与系统通知共用同一套行渲染）。**只有 `key` 必填**（`[A-Za-z0-9_-]{1,32}`）：没给 `name` 就用插件名，没给 `avatar` 就用 open-peeps 生成头像（种子由插件 id 派生，固定不变 —— 通知是长期留痕，头像每次变的话用户认不出是谁发的）。点击交给插件的前端处理器（见「通知联系人」一节）。⚠️ 为什么要传登记函数而不是按引用传数组：登记发生在插件自己的回调里，此刻 `Plugin::current()` 正是它，默认值才拿得到来源，插件不用自报 `['plugin' => '自己']` |
+
+### `Plugin::current()` —— 「这个回调是谁的」
+
+在 `fire` / `collect` 调起**插件注册的回调**期间返回该插件的目录名（核心代码里调用一律空串）。
+用途是给插件登记出来的行补默认展示信息 —— 目前正是 `notice.contacts` 拿它来取插件名与派生头像种子。
+写自己的钩子契约时可以照用：`$owner = Plugin::current();`
 
 ### collect —— 要返回内容（返回值会被**拼接**）
 
@@ -347,6 +354,7 @@ OwChat.registerAvatarUploader(function (file, filename, onOk) {
 - `OwChat.onMsgContent(fn)`：右键**消息内容**（针对「消息」）时追加菜单项——内置复制 / 引用 / 删除，插件可追加翻译、举报等。
 - `OwChat.onQuote(fn)`：构造引用内容时改写（`[quote, msg]`，可改 `quote.nick` / `quote.text`）；服务端另有 `message.quote` 做最终校验。
 - `OwChat.onUserAction(fn)`：**按人**发起时的操作菜单（v1.3.24）——「所有成员」区搜索出某个用户后点他，弹出的就是它。与 `onMsgCtx` 的区别是没有消息上下文，参数是 `u = {uid, gid, nickname, kind, role}`。禁言 / 举报都挂在这里。
+- `OwChat.onNoticeContact(key, fn)`：侧栏**通知联系人**的点击（v1.3.160）—— 服务端用 `notice.contacts` 登记的那一行被点时调它。见下面「通知联系人」一节。
 
 ## 前台页面输出
 
@@ -405,6 +413,45 @@ OwChat.onUserAction(function (items, u, env) {
 
 实现可参照 `plugins/ban-manager/chat.js`：它同时挂在两个钩子上，
 `canBan` 只依赖 `{uid, gid, nickname, role}`，所以两个钩子共用同一份实现。
+
+### 通知联系人（notice.contacts / OwChat.onNoticeContact，v1.3.160）
+
+侧栏通知区（`#owNoticeList`）里除了「系统通知」，插件可以加**自己的行** —— 和系统通知一样是
+「头像 + 昵称 + 副标题 + 未读徽标」，用的是同一套行渲染，所以看起来就是通知区里的另一个联系人。
+典型用途：插件自己有需要用户看的消息流（群公告、审核结果、签到提醒…），不必再往系统通知里塞。
+
+服务端（`main.php` 顶层）—— 唯一参数是**登记函数**：
+
+```php
+Plugin::on('notice.contacts', function (callable $add) {
+    $add([
+        'key'       => 'announcements',              // 必填：前端的注册键，[A-Za-z0-9_-]{1,32}
+        'name'      => '群公告',                      // 可选：不填 → 用插件名（plugin.json 的 name）
+        'avatar'    => 'https://…/x.png',            // 可选：不填 → open-peeps 生成头像（按插件 id 派生，固定不变）
+        'unread'    => 3,                            // 可选：未读徽标数（前端选中该行时不显示）
+        'last_text' => '有新公告：本群今晚维护',        // 可选：行内副标题
+    ]);
+});
+```
+
+前端（插件自己的 `chat.js`）—— 按同一个 `key` 接住点击：
+
+```js
+OwChat.onNoticeContact('announcements', function (row) {
+    // row = { key, name, avatar, unread, last_text }（服务端补好默认值后的那一行）
+    // 想怎么展示都行：弹窗、切主区、跳页面…
+    OwChat.openModal('<h3>' + esc(row.name) + '</h3>…');
+});
+```
+
+约束与取舍：
+
+- **只有 `key` 必填**，其余全可省 —— 省略时用「插件名 + 该插件派生的固定头像」兜底（`Notice::contacts()`）。
+  头像与种子固定不变是刻意的：通知是**长期留痕**，头像每次刷新都变的话用户认不出是谁发的。
+- **游客不触发本钩子**（游客没有通知区，`#owNoticeList` 根本不存在），所以不必在回调里判身份。
+- 前端没注册处理器时点它会弹一句「插件「xxx」没有注册点击处理」—— 给插件作者留的路标，免得对着一个没反应的入口查半天。
+- 一个 `key` 只认第一行（重复登记会被忽略），`name` 截到 20 字、`last_text` 截到 60 字、
+  未读徽标超过 99 显示 99（与系统通知同一个徽标组件）。
 
 ### 侧栏一级导航扩展（sidebar.rail / OwChat.onRail）
 

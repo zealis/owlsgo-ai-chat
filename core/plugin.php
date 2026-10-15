@@ -19,6 +19,13 @@
 class Plugin
 {
     private static array $hooks = [];
+    /* v1.3.160：与 $hooks **平行**的「回调归属」表 —— 记下每个处理器是哪个插件注册的，
+       回调执行期间 Plugin::current() 返回它。用途：给插件注册出来的行补默认值
+       （如「通知联系人」没给昵称就用插件名、没给头像就用该插件派生的生成头像）。
+       ⚠️ 它必须与 $hooks 同生共死：init() 重置、on() 追加、snapshot/inspect 回滚三处都要一起动，
+          否则两个数组索引错位 —— 归属会张冠李戴。 */
+    private static array $hookOwner = [];
+    private static string $current = '';   // 正在执行的回调属于哪个插件（空串 = 核心或未知）
     private static array $routes = [];
     private static array $adminPages = [];
     private static array $frontPages = [];   // v1.2.44：插件注册的前台页 slug => ['title'=>..,'fn'=>..]
@@ -52,6 +59,7 @@ class Plugin
         self::$loaded = [];
         self::$stats = [];
         self::$hooks = [];
+        self::$hookOwner = [];
         self::$routes = [];
         self::$adminPages = [];
         self::$frontPages = [];
@@ -260,8 +268,19 @@ class Plugin
     public static function on(string $hook, callable $fn): void
     {
         self::$hooks[$hook][] = $fn;
+        // 归属：加载期 self::$loading 就是正在加载的插件名（核心自己注册回调时为空串）
+        self::$hookOwner[$hook][] = self::$loading;
         if (self::$pending !== null) self::$pending['hooks'][] = $hook;
     }
+
+    /**
+     * 当前正在执行的回调属于哪个插件（v1.3.160）。
+     *
+     * 只在 fire / collect 调起**插件注册的回调**期间有值；核心代码里调用一律为空串。
+     * 典型用法是给插件注册的行补默认展示信息，比如通知联系人：
+     * 插件没给昵称就取它自己的插件名、没给头像就按插件 id 派生一个生成头像。
+     */
+    public static function current(): string { return self::$current; }
 
     /**
      * 注册 API 路由。$opts['sensitive'] = true 标记为敏感操作：
@@ -525,8 +544,12 @@ class Plugin
                 self::loadPlugin($name);
             }
         }
-        foreach (self::$hooks[$hook] ?? [] as $fn) {
-            try { $fn(...$args); } catch (Throwable $e) { /* 插件异常不影响主流程 */ }
+        $owners = self::$hookOwner[$hook] ?? [];
+        foreach (self::$hooks[$hook] ?? [] as $i => $fn) {
+            $prev = self::$current;
+            self::$current = (string)($owners[$i] ?? '');
+            // finally：回调抛异常也要把「当前插件」还回去，否则后面所有回调都会被当成它
+            try { $fn(...$args); } catch (Throwable $e) { /* 插件异常不影响主流程 */ } finally { self::$current = $prev; }
         }
     }
 
@@ -553,11 +576,14 @@ class Plugin
             }
         }
         $out = '';
-        foreach (self::$hooks[$hook] ?? [] as $fn) {
+        $owners = self::$hookOwner[$hook] ?? [];
+        foreach (self::$hooks[$hook] ?? [] as $i => $fn) {
+            $prev = self::$current;
+            self::$current = (string)($owners[$i] ?? '');
             try {
                 $r = $fn(...$args);
                 if (is_string($r) && $r !== '') $out .= $r;
-            } catch (Throwable $e) { /* 插件异常不影响主流程 */ }
+            } catch (Throwable $e) { /* 插件异常不影响主流程 */ } finally { self::$current = $prev; }
         }
         return $out;
     }
@@ -729,7 +755,7 @@ class Plugin
     /** 注册计数快照：加载插件前后对比，得到该插件注册的钩子/路由/后台页数量 */
     private static function snapshot(): array
     {
-        return ['hooks' => self::$hooks, 'routes' => self::$routes, 'pages' => self::$adminPages, 'fpages' => self::$frontPages];
+        return ['hooks' => self::$hooks, 'hookOwner' => self::$hookOwner, 'routes' => self::$routes, 'pages' => self::$adminPages, 'fpages' => self::$frontPages];
     }
 
     private static function countReg(array $before): array
@@ -772,6 +798,7 @@ class Plugin
         self::$loading = '';
         // 回滚全部注册（探测不生效，包括资源与计划任务）
         self::$hooks = $before['hooks'];
+        self::$hookOwner = $before['hookOwner'] ?? [];
         self::$routes = $before['routes'];
         self::$adminPages = $before['pages'];
         self::$frontPages = $before['fpages'];
