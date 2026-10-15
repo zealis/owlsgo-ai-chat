@@ -10,8 +10,11 @@
  *   ③ 实时计数：消息数、登录数、活跃用户（按自然日累加，活跃用户用 Set 去重）。
  *   ④ 落库留痕：计划任务每 5 分钟把当日计数写进 plugin_redis_daily ——
  *      于是后台的 14 天趋势图不会因为 Redis 键到期而丢历史。
- *   ⑤ 核心钩子待办：后台页列出「要让 Redis 真正接管消息读路径」还需要核心补的
- *      5 个钩子（文件:行 + 建议签名），照抄即可，插件侧无需再改。
+ *   ⑤ 核心钩子待办：后台页列出「要让 Redis 真正接管消息读路径」所缺的 5 个读路径钩子
+ *      （文件:行 + 建议签名）。⚠️ **这条路现在只备好了核心那半边**：本插件目前只挂了
+ *      4 个写入侧钩子（message.after_send / msg.after_recall / user.active / login.after_verify）
+ *      与统计、体检，**那 5 个读路径钩子一个处理器都没有**。核心补 fire 点、插件补处理器，
+ *      两边必须成对落地：只补核心是空转（没人接），只补插件是死代码（钩子不 fire）。
  *
  * ── 为什么本插件不加速聊天（关键结论，勿误解）────────────────────
  *   Redis 要生效必须插在「读消息」的路上，而核心只在「写消息」的路上留了钩子：
@@ -833,27 +836,29 @@ Plugin::adminPage('redis', 'Redis 缓存', function () {
         . '<button class="ow-btn ow-btn-ghost" onclick="OwRdsAdmin.flush()">清空 Redis 中的本插件数据</button>'
         . '</div></div>';
 
-    // 核心钩子待办：把「要什么」写清楚，站方照抄即可
+    // 核心钩子待办：把「两边各要做什么」写清楚（原来这里写成「插件侧不用再改一行」是不对的，
+    // 站方 2026-10-15 核出：这 5 个读路径钩子插件侧一个处理器都没有）
     $todo = [
         ['history.rows', 'core/chat.php:992（Chat::history 里的 DB::all 之后）',
             "Plugin::fire('history.rows', [&\$rows, \$roomId, \$beforeId, \$limit, \$fromId, \$actor]);",
-            '插件在 $rows 为空时回填缓存行。pack() / 可见性 / 隐藏过滤仍由核心做 —— 插件只提供原始行，不复制核心规则。'],
+            '插件侧要做：命中缓存就把行回填进 $rows（未命中则把刚查到的行写进缓存），核心照旧做 pack() / 可见性 / 隐藏过滤 —— 插件只当搬运工，不复制核心规则。'],
         ['poll.hint', 'core/chat.php:1070（Chat::poll 的 while 循环内）',
             "\$hit = ''; Plugin::fire('poll.hint', [&\$hit, \$roomId, \$sinceId]); if (\$hit !== '1') { /* 原有 SELECT */ }",
-            'Redis 侧用发布订阅/列表长度替代「每 0.5 秒查一次库」的探活。'],
+            '插件侧要做：Redis 里有比 $sinceId 更新的消息时返回 \'1\'，把「每 0.5 秒查一次库」的探活换成一次 Redis 查询；拿不准就返回空串，交回核心原逻辑。'],
         ['online.track / online.list', 'core/chat.php:2021（heartbeat 的 upsert）与 2034（onlineList 的 SELECT）',
             "Plugin::fire('online.track', [\$actor, \$roomId]);   Plugin::fire('online.list', [&\$rows, \$roomId]);",
-            '在线状态是本项目最像 Redis 的场景：现在是每请求一次 upsert + 一次全表 DELETE。'],
+            '插件侧要做：track 写 Redis Hash + TTL；list 读回同样的行结构。在线状态是本项目最像 Redis 的场景（现在是每请求一次 upsert + 一次全表 DELETE）。'],
         ['rate.limit', 'core/security.php:126（Sec::rateLimit 计数处）',
             "Plugin::fire('rate.limit', [&\$handled, \$bucket, \$ident, \$window, \$max]);",
-            'INCR + EXPIRE 天然原子。注意：核心里「速率窗口只读不续期」的语义必须保留。'],
+            '插件侧要做：INCR + EXPIRE 计数、$handled 置 true 表示已接管。⚠️ 必须保留核心「速率窗口只读不续期」的语义，否则被拒后窗口被顺延，用户永远等不到放行。'],
         ['login.attempt', 'core/security.php:154（loginFails / loginLocked 读取处）',
             "Plugin::fire('login.attempt', [&\$fails, \$identity]);",
-            '登录失败计数与锁定时间进 Redis，跨进程一致。'],
+            '插件侧要做：从 Redis 读失败次数与锁定时间；login_attempts 表保留为落库真源，Redis 只是快路径。'],
     ];
-    $h .= '<div class="ow-card"><h3 style="margin:0 0 10px">核心钩子待办（需要手工改核心）</h3>'
-        . '<p style="font-size:12px">本插件已经把写入侧与统计侧做完了；要让 Redis 接管「读消息」这条路，'
-        . '只在核心补下面 5 个 fire 点即可，插件侧不用再改一行。'
+    $h .= '<div class="ow-card"><h3 style="margin:0 0 10px">核心钩子待办：两边都要改（核心补 fire 点 + 插件补处理器）</h3>'
+        . '<p style="font-size:12px">本插件已经把<strong>写入侧（4 个钩子）与统计、体检</strong>做完了；但要让 Redis 接管「读消息」这条路，'
+        . '下面 5 个<strong>读路径</strong>钩子插件侧<strong>目前一个处理器都没有</strong> —— 也就是说这条路现在只备好了核心那半边。'
+        . '核心补 fire 点、插件补处理器，<strong>两边必须成对落地</strong>：只补核心是空转（没人接），只补插件是死代码（钩子不 fire）。'
         . '原则：<strong>插件只提供原始行，可见性过滤一律留在核心</strong>——'
         . '否则隐藏消息、密码房、游客这些规则会被复制一份，核心一改口径插件就错。</p>';
     foreach ($todo as $i => $t) {
