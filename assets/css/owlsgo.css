@@ -682,11 +682,16 @@ input[type=range] {
 .ow-tag-green { background: #f6ffed; color: var(--ow-green); border: 1px solid #b7eb8f; }
 /* v1.2.56：危险/禁用标签（与 ow-tag-green 对称；此前没有红色系标签，禁用态只能用文字） */
 .ow-tag-red { background: #FFF1F0; color: var(--ow-red); border: 1px solid #FFA39E; }
-/* 群主（v1.0.89）：浅棕底 #F4DCCA + 橙字 #F4995D；会员同理去黑字改灰字 */
-.ow-tag-owner { background: #F4DCCA; color: #F4995D; border: 1px solid #E9CDB2; }
+/* 群主（v1.0.89）：浅棕底 #F4DCCA + 橙字。
+   v1.3.144：橙字 #F4995D → #8C4600。原值对米金底只有 **1.67:1**（10px 小字，AA 要 4.5），
+   是「文字太浅」的正主；#8C4600 就是 --ow-orange(#A05000) 再深一档、色相仍是同一族（底 26°、字 30°），
+   对比 5.33:1，与 vip 的 5.41:1 同档。底色与描边没动。 */
+.ow-tag-owner { background: #F4DCCA; color: #8C4600; border: 1px solid #E9CDB2; }
 .ow-tag-vip { background: #fff7e6; color: var(--ow-orange); border: 1px solid #ffd591; }
-/* 会员（v1.0.89）：灰底 + 中灰字（同群主思路：文字用标签色的深一档，不用黑） */
-.ow-tag-member { background: #E4E4E4; color: #8C8C8C; border: 1px solid #D5D5D5; }
+/* 会员（v1.0.89）：灰底 + 中灰字（同群主思路：文字用标签色的深一档，不用黑）。
+   v1.3.144：#8C8C8C 对 #E4E4E4 只有 2.64:1，同样太浅 → 改用 --ow-text-sub(#5C5C5C)，
+   该 token 注释里本来就按「徽章底 5.23」调过，实测对灰底 5.26:1。 */
+.ow-tag-member { background: #E4E4E4; color: var(--ow-text-sub); border: 1px solid #D5D5D5; }
 /* v1.2.40：超级管理员（仅管理场景出现：用户资料卡 / 群成员管理）。
    用主色系（蓝）以便一眼认出；**刻意区别于 .ow-tag-owner**（群主是米金），
    两者含义不同不能同色。 */
