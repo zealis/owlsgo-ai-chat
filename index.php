@@ -1615,7 +1615,13 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
     // v1.3.48：搜索入口不再放这里（挪进 .ow-sidebar 顶部做成搜索框），
     //          条高改由 .ow-brand 的 min-height 钉住，见 CSS 同条注释。
     echo '<header class="ow-brand">'
-       . '<img src="assets/img/logo.svg" alt="logo"><span>' . Sec::e(DB::setting('site_name', 'Owlsgo-Chat')) . '</span>'
+       . '<img src="assets/img/logo.svg" alt="logo"><span class="ow-brand-name">' . Sec::e(DB::setting('site_name', 'Owlsgo-Chat')) . '</span>'
+       /* v1.3.142：当前用户头像 + 昵称（样式参考本站 参考文献/forum 的顶栏 user-chip：
+          整块就是「我的主页」入口，**不加 title 悬浮提示** —— 气泡会挡住旁边的元素）。
+          本体由前端 renderMe() 填：头像 URL 的三种来源（上传 / 生成式 / 回落）与昵称
+          都在 cfg 里，服务端再拼一遍就是第二份实现，迟早漂移。
+          它同时是游客的「登录 / 注册」入口（原先侧栏底部那两个按钮的位置）。 */
+       . '<button class="ow-brand-me" id="owBrandMe" type="button" aria-label="个人主页" onclick="OwChat.onBrandMe(event)"></button>'
        . '</header>';
 
     // 三栏主体：rail + 侧栏 + 主区 + 右侧栏（品牌条不在其中，见上）
@@ -1636,12 +1642,8 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
     // v1.3.71：联系人栏的同一个小红点 —— 有待处理好友请求时亮起来（与通知同一轮子 .ow-dot）。
     $friendPending = ($actor['kind'] ?? '') === 'user' ? Chat::friendReqPending((int)($actor['id'] ?? 0)) : 0;
     echo '<nav class="ow-rail" id="owRail">'
-       // v1.3.134：rail 顶部 = 当前身份的头像，取代侧栏底部那条个人栏（#owMe 已撤销）。
-       // 点它：注册用户开自己的资料卡（就是别人点你头像看到的那张卡，换头像/编辑资料都在里面），
-       // 游客开「登录 / 注册」菜单。
-       // ⚠️ 按钮本体是空的，头像由前端 renderMe() 填：cfg.me / cfg.actor 本来就在前端手里，
-       //   服务端再拼一遍头像 URL 生成逻辑，两处必然漂移。
-       . '<button class="ow-rail-btn ow-rail-me" id="owRailMe" type="button" aria-label="个人主页"></button>'
+       // v1.3.142：这里原本有一颗「当前用户头像」（v1.3.134 从侧栏底部搬上来的）。
+       // 站方要求把它移到顶部品牌条右侧、并带上昵称 —— 头像入口现在在 .ow-brand 里。
        . '<button class="ow-rail-btn is-active" data-tab="chat" type="button" title="消息" aria-label="消息">' . ow_icon('chat', 20) . '<span class="ow-rail-lb">消息</span></button>'
        . '<button class="ow-rail-btn" data-tab="friends" type="button" title="联系人"'
          . ' aria-label="联系人' . ($friendPending > 0 ? '（' . $friendPending . ' 个待处理好友请求）' : '') . '">'
@@ -1723,15 +1725,15 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
        // 已被移出成员 / 服务端拒绝发言等异常态的兜底入口。
        . '<div class="ow-join-gate" id="owJoinGate" style="display:none"></div>'
        . '<div class="ow-toolbar">'
-       // 工具栏首位锚点（与 #owAttachTools 同一约定）：核心只留位置、不判断哪个插件在用。
-       // 表情包插件启用时把它的图标注到这里，停用则这里始终是空的 —— 核心零分支。
-       . '<span id="owToolFirst"></span>'
+       // 工具栏首位锚点（v1.3.142 起改成**收集式**）：插件注册 chat.toolbar 钩子返回按钮 HTML，
+       //   核心一次 Plugin::collect 拼好，与 sidebar.rail 同一机制。
+       //   原先是核心留空 span、插件各自 appendChild：全靠插件自觉，谁写 box.innerHTML = …
+       //   就把同锚点上别的插件按钮整个冲掉（表情包被冲掉过），规范见 PLUGIN.md「输入工具栏扩展」。
+       . '<span id="owToolFirst">' . Plugin::collect('chat.toolbar') . '</span>'
        // 工具栏图标统一 16px（比消息区图标小一号，避免抢视觉重心）
        . '<button class="ow-icon-btn" id="owBtnEmoji" title="表情">' . ow_icon('smile', 16) . '</button>'
-       // v1.2.41：图片/文件两个按钮**移入附件上传插件**，这里只留一个空锚点。
-       //   插件启用时由其 chat.js 往这里注入按钮（含 file input）；插件停用则按钮不出现 ——
-       //   核心因此不需要任何「插件是否启用」的判断。
-       . '<span id="owAttachTools"></span>'
+       // v1.2.41：图片/文件两个按钮移入附件上传插件；v1.3.142 起那个专用空锚点 #owAttachTools
+       //   一并取消 —— 插件改走 chat.toolbar，按钮统一出现在上面的收集位里。
        . '<button class="ow-icon-btn" id="owBtnSound" title="提示音" data-on="' . Sec::e(ow_icon('sound', 16)) . '" data-off="' . Sec::e(ow_icon('sound-off', 16)) . '">' . ow_icon('sound', 16) . '</button>'
        . '</div>'
        . '<div class="ow-input-row">'

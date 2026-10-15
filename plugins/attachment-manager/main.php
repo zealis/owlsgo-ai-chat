@@ -16,9 +16,9 @@
  *
  * ## 按钮显隐由插件自己决定
  *
- * 核心在输入栏留了**锚点** `<span id="owAttachTools"></span>`，本插件的 chat.js
- * 加载后往里注入两个按钮。核心因此不需要任何 if 判断 ——
- * 与 v1.2.37 第三方授权（`window.OwOauth` 决定入口是否渲染）是同一思路。
+ * 本插件用 chat.toolbar 钩子产出「图片 / 文件」两个按钮，插件停用 → 钩子不注册 →
+ * 按钮不出现。核心因此不需要任何 if 判断 —— 与 v1.2.37 第三方授权
+ * （`window.OwOauth` 决定入口是否渲染）是同一思路。
  *
  * ## 配置从核心迁来（v1.2.41）
  *
@@ -677,6 +677,20 @@ Plugin::route('plugin_attachment_manager_cfg_save', function (array $ctx) use ($
  */
 Plugin::on('page.head', function () {
     echo '<link rel="stylesheet" href="?action=assets&type=css&am=' . OWLSGO_VERSION . '">';
+});
+
+/**
+ * 图片/文件按钮（v1.4.5 起走 chat.toolbar 钩子）：HTML 由服务端产出，
+ * 核心 Plugin::collect('chat.toolbar') 拼进 #owToolFirst；点击仍绑在 chat.js。
+ * 原先是核心留专用空锚点 #owAttachTools 让本插件往里 innerHTML。
+ */
+Plugin::on('chat.toolbar', function (): string {
+    return '<input type="file" id="owFileInput" accept="image/*" multiple style="display:none">'
+         . '<input type="file" id="owFileAttach" multiple style="display:none">'
+         . '<button class="ow-icon-btn" id="owBtnImage" type="button" title="发送图片" aria-label="发送图片">'
+         . ow_icon('image', 16) . '</button>'
+         . '<button class="ow-icon-btn" id="owBtnFile" type="button" title="发送文件" aria-label="发送文件">'
+         . ow_icon('paperclip', 16) . '</button>';
 });
 
 Plugin::asset('js', 'attachment-manager/chat.js');

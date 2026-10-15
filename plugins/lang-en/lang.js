@@ -107,6 +107,8 @@
         '请求已在待处理中，等待对方回应': 'Your request is still waiting for their answer',
         '对方也向你发过请求，你们已成为联系人': 'They had sent you one too — you are contacts now',
         '已删除联系人': 'Contact removed',
+        /* ---------- input toolbar entries (chat.toolbar hook, server-rendered since v1.3.142) ---------- */
+        '话术': 'Quick replies',
         /* ---------- GIF 表情包插件（v1.3.75） ---------- */
         '表情包': 'GIFs',
         '搜索表情包': 'Search GIFs',

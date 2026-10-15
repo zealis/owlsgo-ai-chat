@@ -1,8 +1,8 @@
 /**
  * chat-scripts · 群聊自动化 · 前台话术面板（v1.1.2）
  *
- * 入口：往核心输入工具栏锚点 #owToolFirst 注入「话术」按钮（与表情包插件同一约定，
- *      核心零分支；插件停用则按钮不出现）。面板挂到 #owEmojiPanel 的父节点上，
+ * 入口：「话术」按钮由 main.php 的 chat.toolbar 钩子在服务端产出（与表情包、附件上传同一
+ *      规范；核心零分支，插件停用则按钮不出现）。面板挂到 #owEmojiPanel 的父节点上，
  *      复用 .ow-emoji-panel 那套绝对定位坐标系（移动端核心已有 92% 宽适配）。
  *
  * ⚠️ 按钮的 title 是「话术」而不是插件名「群聊自动化」：这颗按钮只开话术面板。
@@ -45,27 +45,11 @@
     /** 当前房间 ID（OwChat.room 由核心在切群/私聊时维护；拿不到按 0 处理） */
     function curRoom() { return (OwChat.room || 0) > 0 ? (OwChat.room | 0) : 0; }
 
-    /* ---------- 工具栏按钮 ---------- */
-
-    function icon() {
-        return OwChat.icon('chat', 16);
-    }
+    /* ---------- 工具栏按钮（HTML 由 main.php 的 chat.toolbar 钩子产出，这里只绑事件） ---------- */
 
     function mount() {
-        var box = $('owToolFirst');
-        if (!box) return;                       // 核心没有这个锚点（旧版本）：安静退出
-        if ($('owBtnCs')) return;               // 幂等：重复执行不重复注入
-        var btn = d.createElement('button');
-        btn.className = 'ow-icon-btn';
-        btn.id = 'owBtnCs';
-        btn.type = 'button';
-        btn.title = '话术';
-        btn.setAttribute('aria-label', '话术');
-        btn.innerHTML = icon();
-        // ⚠️ 必须是 appendChild 追加，不能 box.innerHTML 整体覆盖：
-        //    #owToolFirst 是**共享锚点**，表情包等插件也往这里注入按钮，
-        //    覆盖写法下「谁后加载谁赢」，先把表情包按钮整个冲掉过（v1.0.2 修复）。
-        box.appendChild(btn);
+        var btn = $('owBtnCs');
+        if (!btn) return;                       // 本插件未启用（钩子没注册），安静退出
         btn.onclick = function (e) {
             if (e && e.stopPropagation) e.stopPropagation(); else w.event.cancelBubble = true;
             CS.opened ? close() : open();

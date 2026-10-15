@@ -1054,14 +1054,7 @@ input[type=range] {
     align-items: center; -webkit-align-items: center;
     gap: 4px;
 }
-/* v1.3.134：rail 顶部 = 当前身份头像（侧栏底部个人栏搬上来的）。按钮完全沿用
-   .ow-rail-btn 的 40×40 与 hover 灰底（灰底方块 + 圆头像，和下面那组入口同一套语言），
-   头像本身取 .ow-avatar-md（32px）档，四周各留 4px。
-   与「消息」之间在 gap 4px 之上再多 2px —— 它不是切面板的入口，得跟那一组拉开一点。
-   描边用 inset box-shadow 而不是 border：加 border 会改变盒子尺寸（这里没开
-   box-sizing:border-box），32px 的头像会被挤成 30px。 */
-.ow-rail-me { margin-bottom: 2px; }
-.ow-rail-me .ow-avatar { box-shadow: inset 0 0 0 1px var(--ow-border); }
+/* v1.3.142：rail 顶部的头像（.ow-rail-me）已移到品牌条右侧，见下面 .ow-brand-me。 */
 
 /* v1.3.6：三栏主体容器 —— 品牌条之下的全部横向空间。
    min-height:0 与 .ow-main 的 min-height:0 是同一条链上的规矩：
@@ -1140,7 +1133,43 @@ input[type=range] {
    不会把品牌条顶高，
    顶栏与左侧栏的分隔线位置不受影响。
    光学补偿同步按公式重算：26 × 8.8% × 0.75 ≈ 1.7px（22px 时是 1.5px）。 */
-.ow-brand img { width: 26px; height: 26px; transform: translateY(1.7px); -webkit-transform: translateY(1.7px); }
+/* ⚠️ 必须用子选择器 `> img`：v1.3.142 起品牌条右侧多了一颗头像（.ow-brand-me 里的 <img>），
+   后代写法会把那条 26px + 光学下沉一起套到头像上，头像被撑大、还被往下推 1.7px。 */
+.ow-brand > img { width: 26px; height: 26px; transform: translateY(1.7px); -webkit-transform: translateY(1.7px); }
+/* v1.3.142：站点名可以被压缩截断，头像 + 昵称那颗贴在右端（margin-left:auto）。 */
+.ow-brand-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* ---------- 品牌条右侧的「头像 + 昵称」（v1.3.142） ----------
+   样式参考本站 参考文献/forum 的顶栏 user-chip：整块就是「我的主页」入口、
+   胶囊形、窄屏不许被压缩（flex:none，否则头像被挤扁）、**不加 title 悬浮提示**
+   （气泡会挡住旁边的元素）。
+   ⚠️ 高度是承重的：品牌条 content box = 57 - padding 28 - 下边框 1 = 28px，
+     顶栏/侧栏/rail「三线齐平」与窄屏 .ow-sidebar{top:57px} 都按 57 算，
+     所以这颗胶囊必须正好 28px：头像 20(.ow-avatar-xs) + padding 3×2 + border 1×2 = 28。
+     改任何一档都要重算，别把品牌条顶高。
+   ⚠️ 常态**不填底色**：品牌条本身就是 #E4E4E4 那档灰，再涂一张白上去就像浮起来的纸
+     （项目里踩过同款）；hover 用 --ow-brand-hover(#D2D2D2) —— 比底色深一档，
+     通用 --ow-bg-chat-hover(#EBEBEB) 在这里会变成「越悬停越浅」。 */
+.ow-brand-me {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    gap: 8px;
+    margin-left: auto;
+    flex: none; -webkit-flex: none;
+    height: 28px;
+    padding: 3px 10px 3px 3px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background: none;
+    color: var(--ow-text-title);
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background .15s;
+    -webkit-transition: background .15s;
+}
+.ow-brand-me:hover, .ow-brand-me:focus { background: var(--ow-brand-hover); outline: none; }
+/* 长昵称截断，不把胶囊撑出屏幕（头像那侧的 padding 只有 3px，靠这里收） */
+.ow-brand-me-n { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* v1.2.31：站点名右侧的**搜索按钮**（原竖三点菜单已删除）。
    v1.2.32 位置修正：原来用 line-height 顶行 + 继承 .ow-icon-btn 的 padding，
    图标在 28px 方框里偏上、按钮也显得偏左。改为 flex 双向居中 + 加大右间距。

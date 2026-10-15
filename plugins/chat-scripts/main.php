@@ -1,12 +1,12 @@
 <?php
 /**
- * 群聊自动化插件（chat-scripts v1.1.2）
+ * 群聊自动化插件（chat-scripts v1.1.3）
  *
  * 插件显示名 v1.1.0 起为「群聊自动化」（目录名与路由/表名前缀 chat-scripts 保持
  * 不动 —— 那是标识不是文案，改了会丢启用状态、丢数据、断掉已发出去的资源地址）。
  *
  * ── 四个模块 ──────────────────────────────────────────────────
- *   A 快捷话术：输入工具栏 #owToolFirst 注入「话术」按钮（chat.js），面板里
+ *   A 快捷话术：工具栏「话术」按钮由本插件的 chat.toolbar 钩子产出（main.php），面板里
  *     「公共话术」（后台维护，全站只读）+「群话术」（群主前台自管）+「我的话术」。
  *     点击条目 = 插入输入框光标处；点「发」= 经 OwChat.send 直接发出。
  *   B 关键词自动回复：message.after_send 钩子按规则匹配，以机器人账号身份
@@ -1478,6 +1478,18 @@ Plugin::route('plugin_chat_scripts_admin_log_clear', function (array $ctx) use (
     Api::json(['ok' => true, 'msg' => '已清空']);
 });
 Plugin::sensitive('plugin_chat_scripts_admin_log_clear');
+
+/* ============================ 输入工具栏入口 ============================ */
+
+/**
+ * 「话术」按钮（v1.1.3 起走 chat.toolbar 钩子）：HTML 由服务端产出，
+ * 核心 Plugin::collect('chat.toolbar') 拼进 #owToolFirst；点击与面板仍绑在 chat.js。
+ * ow_icon('chat', 16) 与旧版 JS OwChat.icon('chat', 16) 输出逐字相同，外观不变。
+ */
+Plugin::on('chat.toolbar', function (): string {
+    return '<button class="ow-icon-btn" id="owBtnCs" type="button" title="话术" aria-label="话术">'
+         . ow_icon('chat', 16) . '</button>';
+});
 
 /* ============================ 静态资源 ============================ */
 

@@ -1,7 +1,8 @@
 /**
  * gif-stickers · 聊天页表情面板（v1.3.75）
  *
- * 职责：往核心锚点 #owToolFirst 注入图标，点开一个「上方搜索、下方结果」的面板，
+ * 职责：绑定工具栏的表情按钮（按钮 HTML 由 main.php 的 chat.toolbar 钩子产出），
+ * 点开一个「上方搜索、下方结果」的面板，
  * 选中结果 → 发一条图片消息；点★ → 把同一条外链收进自己的贴纸表。
  *
  * 两个源的调用方式不同，这是**内容源条款决定的**，不是实现偏好：
@@ -27,18 +28,6 @@
 
     var cfg = null, cfgDone = false;
     var q = '', page = 1, hasMore = false, loading = false, opened = false;
-
-    /**
-     * 工具栏图标（用户指定的 GIF 字形，path 原样保留）。
-     * 只改了两处呈现：尺寸跟核心工具栏统一成 16px；描边从写死的 #000000 换成
-     * currentColor —— 深色模式下纯黑描边会跟黑底融在一起，图标直接消失。
-     */
-    function icon() {
-        return '<svg class="ow-ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
-            + ' stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-            + '<path d="M12.75 8.25v7.5m6-7.5h-3V12m0 0v3.75m0-3.75H18M9.75 9.348c-1.03-1.464-2.698-1.464-3.728 0c-1.03 1.465-1.03 3.84 0 5.304s2.699 1.464 3.728 0V12h-1.5M4.5 19.5h15a2.25 2.25 0 0 0 2.25-2.25V6.75A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25v10.5A2.25 2.25 0 0 0 4.5 19.5"/>'
-            + '</svg>';
-    }
 
     /* ---------- 面板骨架 ---------- */
 
@@ -391,21 +380,10 @@
 
     /* ---------- 挂载与点外关闭 ---------- */
 
+    /** 按钮 HTML 由 main.php 的 chat.toolbar 钩子服务端产出，这里只绑事件 */
     function mount() {
-        var box = $('owToolFirst');
-        if (!box) return;                       // 核心没有这个锚点（旧版本），安静退出
-        if ($('owBtnGif')) return;              // 幂等：重复执行不重复注入
-        var btn = d.createElement('button');
-        btn.className = 'ow-icon-btn';
-        btn.id = 'owBtnGif';
-        btn.type = 'button';
-        btn.title = '表情包';
-        btn.setAttribute('aria-label', '表情包');
-        btn.innerHTML = icon();
-        // ⚠️ 必须是 appendChild 追加，不能 box.innerHTML 整体覆盖：
-        //    #owToolFirst 是**共享锚点**，群聊自动化等插件也往这里注入按钮，
-        //    覆盖写法下「谁后加载谁赢」——本插件曾被后加载的插件整个冲掉过。
-        box.appendChild(btn);
+        var btn = $('owBtnGif');
+        if (!btn) return;                       // 本插件未启用（钩子没注册），安静退出
         btn.onclick = function (e) {
             if (e && e.stopPropagation) e.stopPropagation(); else w.event.cancelBubble = true;
             toggle();

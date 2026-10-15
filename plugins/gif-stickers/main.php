@@ -416,6 +416,19 @@ Plugin::on('page.head', function (): void {
     echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=gif-stickers&file=style.css&v=' . OWLSGO_VERSION . '">';
 });
 
+/**
+ * 表情包按钮（v1.0.3 起走 chat.toolbar 钩子）：HTML 由服务端产出，
+ * 核心 Plugin::collect('chat.toolbar') 拼进 #owToolFirst；点击与面板仍绑在 chat.js。
+ * SVG 与本插件旧版 icon() 逐字一致（16px、stroke 1.5）。
+ */
+Plugin::on('chat.toolbar', function (): string {
+    return '<button class="ow-icon-btn" id="owBtnGif" type="button" title="表情包" aria-label="表情包">'
+         . '<svg class="ow-ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+         . ' stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+         . '<path d="M12.75 8.25v7.5m6-7.5h-3V12m0 0v3.75m0-3.75H18M9.75 9.348c-1.03-1.464-2.698-1.464-3.728 0c-1.03 1.465-1.03 3.84 0 5.304s2.699 1.464 3.728 0V12h-1.5M4.5 19.5h15a2.25 2.25 0 0 0 2.25-2.25V6.75A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25v10.5A2.25 2.25 0 0 0 4.5 19.5"/>'
+         . '</svg></button>';
+});
+
 /** 登记资源：既是合并包的成员，也是 ?action=assets 的**可服务白名单**（不登记则取不到） */
 Plugin::asset('js', 'gif-stickers/admin.js');
 Plugin::asset('js', 'gif-stickers/chat.js');

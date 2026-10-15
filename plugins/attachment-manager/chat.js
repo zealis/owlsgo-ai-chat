@@ -1,7 +1,7 @@
 /* 附件上传 · 前端（attachment-manager 插件，v1.4.0 图文混排）
  *
  * 四件事：
- *  ① 把「图片 / 文件」两个按钮注入核心锚点 #owAttachTools；
+ *  ① 绑定「图片 / 文件」两个按钮（按钮 HTML 由 main.php 的 chat.toolbar 钩子产出）；
  *  ② 维护输入框上方的**待发区**（最多 9 个图片/视频）：点图片按钮选图、Ctrl+V 粘贴、
  *     拖拽时选「以图片/视频方式发送」—— 三条路都进这里，最后与输入框里的文字一起
  *     发成**一条** rich 消息（图文混排，不是拆成几条）；
@@ -298,33 +298,24 @@
         }, false);
     }
 
-    /* ---------- 注入按钮 ---------- */
+    /* ---------- 绑定按钮（按钮 HTML 由 main.php 的 chat.toolbar 钩子产出） ---------- */
 
     function mount() {
-        var box = d.getElementById('owAttachTools');
-        if (box) {
-            box.innerHTML =
-                '<input type="file" id="owFileInput" accept="image/*" multiple style="display:none">' +
-                '<input type="file" id="owFileAttach" multiple style="display:none">' +
-                '<button class="ow-icon-btn" id="owBtnImage" title="发送图片">' + icon('image') + '</button>' +
-                '<button class="ow-icon-btn" id="owBtnFile" title="发送文件">' + icon('paperclip') + '</button>';
-
-            var bi = $('owBtnImage'), bf = $('owBtnFile');
-            var fi = $('owFileInput'), fa = $('owFileAttach');
-            if (bi) bi.onclick = function () { if (fi) fi.click(); };
-            if (bf) bf.onclick = function () { if (fa) fa.click(); };
-            // 点图片按钮本身就是意图声明 → 直接进待发区，不再弹窗
-            if (fi) fi.onchange = function () {
-                var i, fs = this.files || [];
-                for (i = 0; i < fs.length; i++) addMedia(fs[i], 'image');
-                this.value = '';
-            };
-            if (fa) fa.onchange = function () {
-                var i, fs = this.files || [];
-                for (i = 0; i < fs.length; i++) uploadFile(fs[i]);
-                this.value = '';
-            };
-        }
+        var bi = $('owBtnImage'), bf = $('owBtnFile');
+        var fi = $('owFileInput'), fa = $('owFileAttach');
+        if (bi) bi.onclick = function () { if (fi) fi.click(); };
+        if (bf) bf.onclick = function () { if (fa) fa.click(); };
+        // 点图片按钮本身就是意图声明 → 直接进待发区，不再弹窗
+        if (fi) fi.onchange = function () {
+            var i, fs = this.files || [];
+            for (i = 0; i < fs.length; i++) addMedia(fs[i], 'image');
+            this.value = '';
+        };
+        if (fa) fa.onchange = function () {
+            var i, fs = this.files || [];
+            for (i = 0; i < fs.length; i++) uploadFile(fs[i]);
+            this.value = '';
+        };
         tray();
         bindDrop();
     }

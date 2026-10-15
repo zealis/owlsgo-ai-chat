@@ -427,6 +427,43 @@ OwChat.onRail({
 - 面板容器复用 `#owSidePanels`，核心面板与插件面板互斥显示。
 - 旧名 `Plugin::on('sidebar.tabs', …)` / `OwChat.onSideTabs` 仍可用（内部同一条路径），新代码请用 rail。
 
+### 输入工具栏扩展（chat.toolbar，v1.3.142 起）
+
+输入框上方那条工具栏（`.ow-toolbar`）向插件开放入口，机制与 `sidebar.rail` 相同：
+核心把 `Plugin::collect('chat.toolbar')` 的返回值拼进 `<span id="owToolFirst">`，
+**按钮 HTML 由服务端产出，事件仍由各插件自己的 chat.js 绑定**。
+
+```php
+// main.php：在 plugin.json 的 hooks 里声明 chat.toolbar，否则按需加载不会触发
+Plugin::on('chat.toolbar', function (): string {
+    return '<button class="ow-icon-btn" id="owBtnMy" type="button" title="我的入口" aria-label="我的入口">'
+         . ow_icon('smile', 16) . '</button>';
+});
+```
+
+```js
+// chat.js：只绑已存在的按钮，不要再造 HTML
+function mount() {
+    var btn = d.getElementById('owBtnMy');
+    if (!btn) return;                 // 插件未启用（钩子没注册）：安静退出
+    btn.onclick = function (e) { e.stopPropagation(); toggle(); };
+}
+```
+
+规约（**不要绕过**）：
+
+- 工具栏入口一律注册 `chat.toolbar` 钩子返回按钮 HTML，**禁止直接写锚点 `#owToolFirst` 的
+  `innerHTML` / `appendChild`**。这是 v1.3.142 之前的写法留下的坑：共享锚点上「谁后加载谁赢」，
+  写成 `box.innerHTML = …` 会把同锚点上别的插件的按钮整个冲掉（表情包按钮被冲掉过一次），
+  而且注入时机取决于脚本加载顺序，核心完全看不见。收集式把这件事交给核心统一渲染。
+- 按钮 id 用 `owBtn*` 前缀、`class="ow-icon-btn"`、图标统一 16px 并走 `ow_icon()`
+  （**不要用 Emoji 或位图**；插件自有字形可以内联 `<svg>`，但那份 path 只能存在于 main.php 一处）。
+- `title` 与 `aria-label` 都写上中文原词，语言包按这两个属性翻译（缺 `aria-label` 时读屏只念得出图标）。
+- 按钮出现在 `#owToolFirst` 里，位置在核心「表情」按钮**之前**，多个插件之间按启用顺序排列。
+- 面板本身仍由插件 JS 创建并自行管理开合（参照 `plugins/gif-stickers/chat.js`、
+  `plugins/chat-scripts/chat.js`）—— 本钩子只管按钮。
+- 需要 `<input type="file">` 的（如附件上传）可以一并返回，隐藏用 `style="display:none"`。
+
 ## 安全要点
 
 - 插件路由第一步做权限自查（见上）；涉及写操作的只接受 POST + 核心签名（前端经 `OwApi` 自动携带，无需额外处理）。

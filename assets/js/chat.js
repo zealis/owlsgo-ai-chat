@@ -1687,8 +1687,8 @@
                     }
                 }
             };
-            // v1.2.41：图片/文件按钮及其 file input 移入附件上传插件，
-            // 由插件注入到 #owAttachTools 并自行绑定。插件停用时这两个按钮不存在。
+            // v1.2.41：图片/文件按钮及其 file input 移入附件上传插件（v1.3.142 起该插件改走
+            // chat.toolbar 钩子，按钮由服务端产出、本插件自己绑定）。插件停用时这两个按钮不存在。
             // ⚠️ 下方「粘贴上传图片」仍留在核心，但要走插件暴露的 OwAttach；
             //    插件未启用时静默跳过（不能因为没插件就整个粘贴功能报错）。
             // 表情面板：按钮切换 + 点击外部/Esc 关闭（原来只能靠再点一次按钮）
@@ -2328,11 +2328,9 @@
                 if (tab === self.view) { self.toggleSidebar(); return; }
                 self.switchTab(tab);
             };
-            /* v1.3.134：rail 顶部的头像与底部沉下去的 ☰ **不是切面板的入口**，
-               没有 data-tab，上面的委托对它们是空转，所以各绑一次。
-               #owRailMenu 只对注册用户渲染，游客那条分支本来就取不到。 */
-            var meBtn = $('owRailMe');
-            if (meBtn) meBtn.onclick = function (e) { self.onRailMe(e); };
+            /* v1.3.134：rail 底部沉下去的 ☰ **不是切面板的入口**，没有 data-tab，
+               上面的委托对它是空转，所以单独绑一次。它只对注册用户渲染，游客取不到。
+               （v1.3.142：原先这里还绑了 rail 顶部的头像，那颗已移到品牌条、改走内联 onclick。） */
             var menuBtn = $('owRailMenu');
             if (menuBtn) menuBtn.onclick = function (e) {
                 e = e || w.event;
@@ -5078,27 +5076,28 @@
 
         /* ---------- 我的面板 / 设置 ---------- */
         /**
-         * 画 rail 顶部的当前身份头像（v1.3.134 起取代侧栏底部的个人栏 #owMe）。
-         * 昵称 / ID / 头衔这些文字不再常驻 —— 都在点开的资料卡里。
-         * 仍被 init / 进私聊 / 切群三处调用：切群时要重取的是「本群身份」，
-         * 头像本身不变，但 cfg.me.role 变了，角色描边要跟着换。
+         * 画品牌条右侧的「头像 + 昵称」（v1.3.142 从 rail 顶部搬来，更早是侧栏底部的个人栏）。
+         * 整块就是「我的主页」入口。
+         * ⚠️ 不加 title：悬浮气泡会挡住旁边的元素（参考实现同一取舍）；
+         *    读屏要的信息放 aria-label，且这里是 JS 事后写属性，i18n 的 MutationObserver
+         *    只看新增节点、看不到属性变化，所以必须手动过 owTr。
+         * 仍被 init / 进私聊 / 切群三处调用：头像不变，但角色描边与昵称可能跟着 cfg.me 刷新。
          */
         renderMe: function () {
-            var el = $('owRailMe');
+            var el = $('owBrandMe');
             if (!el) return;
             var me = this.cfg.me, actor = this.cfg.actor || {};
             var nick = me ? me.nickname : (actor.nickname || '');
-            el.innerHTML = avatarHtml(me ? me.avatar : actor.avatar, nick, 'md', me ? me.role : 'guest');
-            // 提示语在这里是**事后写属性**，i18n 的 MutationObserver 只看新增节点、看不到它，
-            // 所以必须手动过 owTr，否则英文界面下 tooltip 仍是中文。
-            el.title = owTr(me ? '个人主页' : '登录') + (me ? ' · ' + nick : ' / ' + owTr('注册'));
+            el.innerHTML = avatarHtml(me ? me.avatar : actor.avatar, nick, 'xs', me ? me.role : 'guest')
+                + '<span class="ow-brand-me-n">' + esc(nick) + '</span>';
+            el.setAttribute('aria-label', owTr(me ? '个人主页' : '登录'));
         },
 
         /**
-         * rail 顶部头像被点：注册用户 → 自己的资料卡（与别人点你头像同一张卡，
+         * 品牌条那块头像被点：注册用户 → 自己的资料卡（与别人点你头像同一张卡，
          * 点头像进头像设置弹窗、底部有「编辑资料」）；游客 → 登录 / 注册菜单。
          */
-        onRailMe: function (e) {
+        onBrandMe: function (e) {
             e = e || w.event;
             // 阻止冒泡：否则 document 级「点菜单外关闭」会立刻把刚打开的菜单关掉
             if (e && e.stopPropagation) e.stopPropagation(); else if (e) e.cancelBubble = true;
@@ -5549,9 +5548,12 @@
         },
 
         /**
-         * 把菜单开在 rail 某个按钮的**右侧**（rail 贴在最左边，只能往右开）。
+         * 把菜单开在某个触发按钮的旁边。
          * align='bottom' 给沉底的 ☰：菜单往上长、底边与按钮底边对齐；
-         * align='top'    给顶部的头像：菜单往下长。两种都夹在视口里，别盖到品牌条上面。
+         * align='top'    给品牌条上的头像：菜单往下长（顶边落在按钮下沿之外，不去盖品牌条）。
+         * 横向默认开在按钮**右侧**（rail 贴最左，只能往右）；触发点在右半边时自动翻到左侧，
+         * 品牌条那颗头像就是这种（v1.3.142）—— 不翻的话整张菜单会掉出视口右沿。
+         * 上下也各自夹在视口里，别盖到品牌条上面。
          */
         _ctxOpenAt: function (items, from, anchor, align) {
             var menu = $('owCtxMenu');
@@ -5561,12 +5563,24 @@
             menu.innerHTML = ctxItemsHtml(items);
             menu.style.display = 'block';
             var r = anchor.getBoundingClientRect();
+            var vw = w.innerWidth || document.documentElement.clientWidth;
             var vh = w.innerHeight || document.documentElement.clientHeight;
             var mh = menu.offsetHeight || items.length * 34;
-            var top = align === 'top' ? r.top : r.bottom - mh;
+            var mw = menu.offsetWidth || 160;
+            var top = align === 'top' ? r.bottom + 8 : r.bottom - mh;
+            if (align === 'top') {
+                // 芯片在 57px 的条里居中，它的下沿比条的下沿高 ~14px → 落到条的外面才不盖条
+                var bar = anchor.parentNode;
+                if (bar && (' ' + bar.className + ' ').indexOf(' ow-brand ') >= 0) {
+                    var bb = bar.getBoundingClientRect().bottom + 8;
+                    if (top < bb) top = bb;
+                }
+            }
             if (top < 8) top = 8;
             if (top + mh > vh - 8) top = Math.max(8, vh - 8 - mh);
-            menu.style.left = (r.right + 8) + 'px';
+            var left = r.right + 8;
+            if (left + mw > vw - 8) left = Math.max(8, r.left - mw - 8);
+            menu.style.left = left + 'px';
             menu.style.top = top + 'px';
         },
 
@@ -5578,7 +5592,7 @@
             this._ctxOpenAt([
                 { t: '登录', icon: 'user', run: function () { location.href = '?page=login'; } },
                 { t: '注册', icon: 'plus', run: function () { location.href = '?page=register'; } },
-            ], 'auth', $('owRailMe'), 'top');
+            ], 'auth', $('owBrandMe'), 'top');
         },
 
         /**
