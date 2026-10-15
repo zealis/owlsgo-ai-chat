@@ -1,0 +1,765 @@
+{
+  "schema": "birdview.constraint-catalog/v1",
+  "project": {
+    "name": "Owlsgo-Chat (OChat) 即时通讯聊天室",
+    "revision": "3f0e154cbd514eb1730590ebe2a9fb9db4f20761"
+  },
+  "coverage": {
+    "checkedAt": "2026-10-15T15:19:47.406Z",
+    "snapshot": "committed-HEAD + untracked workspace docs",
+    "shallow": false,
+    "entries": [],
+    "checkedPaths": [
+      "README.md",
+      "设计文档/开发文档.md",
+      "设计文档/前后端代码安全审核AI提示词.md"
+    ],
+    "excluded": [],
+    "unresolved": [],
+    "uninspectedPaths": [],
+    "semanticReview": "scoped（仅覆盖 ruleReview.scope 声明的「WS 实时层改造相关规则」；全量章节未逐条审阅）",
+    "limitations": [
+      "Only tracked entry files and their local Markdown references are collected.",
+      "Uncommitted files, external references, implicit contracts and host/user instructions need separate inspection.",
+      "Sections are source material, not automatically effective or verified rules.",
+      "History counts use current file paths; rename ancestry is not followed.",
+      "仓库无标准指令文件（AGENTS/CLAUDE/SKILL/CONTRIBUTING 等，脚本采集 0 源）；本 catalog 按非标准说明文档位置人工补采：README.md、设计文档/开发文档.md、设计文档/前后端代码安全审核AI提示词.md。",
+      "人工补采未跟随文档内的 Markdown 链接（如 设计文档/CHANGELOG.md、色彩搭配方案.md 等未纳入本次来源）。",
+      "设计文档/ 目录在 .gitignore 中未跟踪：该目录来源按工作区文件读取、无 Git 行历史；快照修订号只对跟踪文件（README.md）成立。 未跟踪：设计文档/开发文档.md（未跟踪，按工作区读取，无 Git 行历史）；设计文档/前后端代码安全审核AI提示词.md（未跟踪，按工作区读取，无 Git 行历史）"
+    ]
+  },
+  "references": [],
+  "sources": [
+    {
+      "id": "source-b335630551682c19",
+      "path": "README.md",
+      "kind": "instruction",
+      "scope": null,
+      "discoveredFrom": null,
+      "applicability": "unreviewed",
+      "text": "# Owlsgo-Chat\n\n纯原生 PHP 8.1+ 即时通讯聊天室 —— **零框架、零 Composer 依赖**，单入口 `index.php`，开箱即用。\n支持 SQLite / MySQL / PostgreSQL，适合 Web 在线聊天、低成本部署与 AI 二次开发。\n\n当前版本：**v1.2.0**（版本以根目录 `VERSION` 文件为准，完整更新记录见 `设计文档/CHANGELOG.md`）。\n\n## 快速开始\n\n1. 将代码放到站点根目录（虚拟主机 / 宝塔 / phpStudy 均可，PHP ≥ 8.1，需 pdo、mbstring、curl、openssl、fileinfo 扩展）。\n2. 浏览器访问 `index.php`，按安装向导创建管理员（默认 SQLite 零配置）。\n3. 完成后进入聊天室；管理员可从聊天室左下角进入「管理后台」。\n\n切换 MySQL / PostgreSQL：编辑 `core/config.php` 的 `db` 段，删除 `data/install.lock` 后重新访问安装向导。\n\n> **php-cgi 进程数建议调大**：本项目实时通道是 AJAX 长轮询，每个挂起的轮询会占住一个 php-cgi 进程。\n> 默认只有 1~2 个进程，多标签页/多人在线时会出现请求排队（表现为发消息、加载历史变慢）。\n> 建议在 PHP 设置 → 对应 PHP 版本设置里把 **php-cgi 进程数调到 5 个以上**（实测调大后：一个 20 秒挂起的轮询期间，其他请求仍能在 3 秒内返回，不会互相阻塞）。\n\n## 架构\n\n鸟瞰图：`.birdview/architecture.html`\n\n核心分层：`index.php`（页面 + AJAX API + 安装向导统一分发）→ `core/`（配置 / DB / 安全 / 认证 / 聊天 / 后台 / 上传 / 插件）→ `plugins/`（可选功能）→ `assets/`（ow- 前缀自研扁平 UI）。\n\n## 功能\n\n- **聊天核心**：多聊天室（公开 / 密码私密 / 限定角色）、AJAX 长轮询实时推送 + 心跳 + 断线降级短轮询、普通 / @提及 / 私信 / 系统消息、3 分钟撤回（管理员与房主不限）、滚动加载历史、图片消息（粘贴 / 上传 / 大图预览）、Emoji 面板 + 自定义贴纸收藏、新消息提示音、聊天室背景自定义\n- **群公告**（`announcements` 插件）：群主/超管发布，类型支持「聊天室上方公告条」与「进群弹窗通知」，可置顶；公告条只展示置顶或最新一条，点击进群公告页（群名 + 卡片列表 + 展开收起 + 置顶标）\n- **用户系统**：邮箱注册（无用户名，账号一律以数字用户 ID 标识，显示名为昵称）、邮箱验证码、密码找回、游客模式（随机昵称、每日限额、可配置浏览 / 发言）、资料卡（昵称 / 头像）、角色标签与自定义称号、可选两步验证插件\n- **在线状态**：实时在线列表（默认收起，点顶栏成员图标展开）、心跳同步\n- **管理后台**（通用列表轮子：服务端分页 + 数字页码/跳转 + 多选框批量）：群聊审核与回收站（可撤销）、用户管理、禁言管理、群聊公告、敏感词过滤、安全日志、站点设置、插件管理\n- **安全机制**：API 签名验证（按会话密钥）、**敏感操作一次性票据**（POST + ticket 用后即焚）、**会话指纹守卫**（UA + IP 段绑定，换环境重放即失效）、数据库频率限制、登录保护（验证码 + 锁定）、邮件频率限制、SVG 图形验证码、附件上传多重校验（真实 MIME + 扩展名白名单 + 随机名）、Nginx 层屏蔽敏感目录与上传目录执行、**全输入点敏感词过滤**（`text.filter` 钩子：发言 / 昵称 / 群名 / 群简介 / 群公告）\n- **插件机制**：Hook、API 路由（`plugin_<name>_` 前缀）、后台页面、资源合并与按需加载、zip 在线安装、统一计划任务（长轮询驱动或 `?action=cron`）\n\n### 内置插件（`plugins/`）\n\n| 插件 | 说明 |\n|---|---|\n| `announcements` | 群公告体系（公告条 / 弹窗通知 / 置顶 / 公告页） |\n| `sensitive-words` | 敏感词过滤（词库维护 + 全输入点生效） |\n| `attachment-manager` | 附件管理（按群聊检索、下载、删除） |\n| `user-manager` | 用户管理（后台页面） |\n| `ban-manager` | 禁言管理（用户 / 游客昵称 / IP，房间隔离 + 过期时间） |\n| `nickname-guard` | 昵称规则守卫（共用 `Auth::checkNickname`） |\n| `twofa` | 两步验证（可启用 / 停用） |\n\n## 目录结构\n\n```\nindex.php              统一入口（页面 + AJAX API + 安装向导）\ncore/                  配置 / 数据层 / 安全 / 邮件 / 认证 / 聊天 / 后台 / 上传 / 插件\nassets/                ha 前缀自研扁平 UI（CSS + ES5 JS + SVG Logo）\nplugins/               插件目录（plugin.json + main.php）\ndata/                  SQLite 数据库、安装锁、缓存（运行时生成）\nuploads/               头像 / 贴纸 / 图片 / 文件附件（运行时生成）\nnginx-server.conf      随程序走的 Nginx 站点配置（含安全屏蔽规则，由 nginx.conf include）\n.tools/                运维脚本（sync-www.sh 同步到 WWW、gen_changelog.py 生成更新日志）\n设计文档/              开发文档、约定与 CHANGELOG.md\n```\n\n## 二次开发\n\n- 所有 API 走 `index.php?action=<动作>`，POST 携带 `ts` + `sign=md5(key|ts|action)`；敏感操作另需先取 `?action=ticket` 的票据并随请求提交（`OwApi.secure` 已封装）。\n- 插件示例：在 `plugins/<name>/` 放 `plugin.json` 与 `main.php`，用 `Plugin::on('message.after_send', fn)` 挂载钩子、`Plugin::route('plugin_<name>_xxx', fn, ['sensitive' => true])` 注册路由、`Plugin::adminPage('<slug>', '标题', fn)` 挂后台页、`Plugin::asset('js'|'css', '<name>/file')` 注入资源。\n- 前端扩展钩子：`OwChat.onRoomSwitch(fn)`（切群/进群）、`OwChat.onRoomEdit(fn)`（群聊设置弹窗，往 `#owREExtras` 加入口）。\n- 发版流程：只改根目录 `VERSION` → 提交 → 合并主仓 → 运行 `.tools/sync-www.sh`；随后执行 `python .tools/gen_changelog.py` 更新 `设计文档/CHANGELOG.md`。",
+      "sections": [
+        {
+          "id": "source-b335630551682c19-s1",
+          "title": "Owlsgo-Chat",
+          "level": 1,
+          "line": 1,
+          "endLine": 7,
+          "text": "# Owlsgo-Chat\n\n纯原生 PHP 8.1+ 即时通讯聊天室 —— **零框架、零 Composer 依赖**，单入口 `index.php`，开箱即用。\n支持 SQLite / MySQL / PostgreSQL，适合 Web 在线聊天、低成本部署与 AI 二次开发。\n\n当前版本：**v1.2.0**（版本以根目录 `VERSION` 文件为准，完整更新记录见 `设计文档/CHANGELOG.md`）。\n"
+        },
+        {
+          "id": "source-b335630551682c19-s2",
+          "title": "快速开始",
+          "level": 2,
+          "line": 8,
+          "endLine": 19,
+          "text": "## 快速开始\n\n1. 将代码放到站点根目录（虚拟主机 / 宝塔 / phpStudy 均可，PHP ≥ 8.1，需 pdo、mbstring、curl、openssl、fileinfo 扩展）。\n2. 浏览器访问 `index.php`，按安装向导创建管理员（默认 SQLite 零配置）。\n3. 完成后进入聊天室；管理员可从聊天室左下角进入「管理后台」。\n\n切换 MySQL / PostgreSQL：编辑 `core/config.php` 的 `db` 段，删除 `data/install.lock` 后重新访问安装向导。\n\n> **php-cgi 进程数建议调大**：本项目实时通道是 AJAX 长轮询，每个挂起的轮询会占住一个 php-cgi 进程。\n> 默认只有 1~2 个进程，多标签页/多人在线时会出现请求排队（表现为发消息、加载历史变慢）。\n> 建议在 PHP 设置 → 对应 PHP 版本设置里把 **php-cgi 进程数调到 5 个以上**（实测调大后：一个 20 秒挂起的轮询期间，其他请求仍能在 3 秒内返回，不会互相阻塞）。\n"
+        },
+        {
+          "id": "source-b335630551682c19-s3",
+          "title": "架构",
+          "level": 2,
+          "line": 20,
+          "endLine": 25,
+          "text": "## 架构\n\n鸟瞰图：`.birdview/architecture.html`\n\n核心分层：`index.php`（页面 + AJAX API + 安装向导统一分发）→ `core/`（配置 / DB / 安全 / 认证 / 聊天 / 后台 / 上传 / 插件）→ `plugins/`（可选功能）→ `assets/`（ow- 前缀自研扁平 UI）。\n"
+        },
+        {
+          "id": "source-b335630551682c19-s4",
+          "title": "功能",
+          "level": 2,
+          "line": 26,
+          "endLine": 35,
+          "text": "## 功能\n\n- **聊天核心**：多聊天室（公开 / 密码私密 / 限定角色）、AJAX 长轮询实时推送 + 心跳 + 断线降级短轮询、普通 / @提及 / 私信 / 系统消息、3 分钟撤回（管理员与房主不限）、滚动加载历史、图片消息（粘贴 / 上传 / 大图预览）、Emoji 面板 + 自定义贴纸收藏、新消息提示音、聊天室背景自定义\n- **群公告**（`announcements` 插件）：群主/超管发布，类型支持「聊天室上方公告条」与「进群弹窗通知」，可置顶；公告条只展示置顶或最新一条，点击进群公告页（群名 + 卡片列表 + 展开收起 + 置顶标）\n- **用户系统**：邮箱注册（无用户名，账号一律以数字用户 ID 标识，显示名为昵称）、邮箱验证码、密码找回、游客模式（随机昵称、每日限额、可配置浏览 / 发言）、资料卡（昵称 / 头像）、角色标签与自定义称号、可选两步验证插件\n- **在线状态**：实时在线列表（默认收起，点顶栏成员图标展开）、心跳同步\n- **管理后台**（通用列表轮子：服务端分页 + 数字页码/跳转 + 多选框批量）：群聊审核与回收站（可撤销）、用户管理、禁言管理、群聊公告、敏感词过滤、安全日志、站点设置、插件管理\n- **安全机制**：API 签名验证（按会话密钥）、**敏感操作一次性票据**（POST + ticket 用后即焚）、**会话指纹守卫**（UA + IP 段绑定，换环境重放即失效）、数据库频率限制、登录保护（验证码 + 锁定）、邮件频率限制、SVG 图形验证码、附件上传多重校验（真实 MIME + 扩展名白名单 + 随机名）、Nginx 层屏蔽敏感目录与上传目录执行、**全输入点敏感词过滤**（`text.filter` 钩子：发言 / 昵称 / 群名 / 群简介 / 群公告）\n- **插件机制**：Hook、API 路由（`plugin_<name>_` 前缀）、后台页面、资源合并与按需加载、zip 在线安装、统一计划任务（长轮询驱动或 `?action=cron`）\n"
+        },
+        {
+          "id": "source-b335630551682c19-s5",
+          "title": "内置插件（`plugins/`）",
+          "level": 3,
+          "line": 36,
+          "endLine": 47,
+          "text": "### 内置插件（`plugins/`）\n\n| 插件 | 说明 |\n|---|---|\n| `announcements` | 群公告体系（公告条 / 弹窗通知 / 置顶 / 公告页） |\n| `sensitive-words` | 敏感词过滤（词库维护 + 全输入点生效） |\n| `attachment-manager` | 附件管理（按群聊检索、下载、删除） |\n| `user-manager` | 用户管理（后台页面） |\n| `ban-manager` | 禁言管理（用户 / 游客昵称 / IP，房间隔离 + 过期时间） |\n| `nickname-guard` | 昵称规则守卫（共用 `Auth::checkNickname`） |\n| `twofa` | 两步验证（可启用 / 停用） |\n"
+        },
+        {
+          "id": "source-b335630551682c19-s6",
+          "title": "目录结构",
+          "level": 2,
+          "line": 48,
+          "endLine": 61,
+          "text": "## 目录结构\n\n```\nindex.php              统一入口（页面 + AJAX API + 安装向导）\ncore/                  配置 / 数据层 / 安全 / 邮件 / 认证 / 聊天 / 后台 / 上传 / 插件\nassets/                ha 前缀自研扁平 UI（CSS + ES5 JS + SVG Logo）\nplugins/               插件目录（plugin.json + main.php）\ndata/                  SQLite 数据库、安装锁、缓存（运行时生成）\nuploads/               头像 / 贴纸 / 图片 / 文件附件（运行时生成）\nnginx-server.conf      随程序走的 Nginx 站点配置（含安全屏蔽规则，由 nginx.conf include）\n.tools/                运维脚本（sync-www.sh 同步到 WWW、gen_changelog.py 生成更新日志）\n设计文档/              开发文档、约定与 CHANGELOG.md\n```\n"
+        },
+        {
+          "id": "source-b335630551682c19-s7",
+          "title": "二次开发",
+          "level": 2,
+          "line": 62,
+          "endLine": 67,
+          "text": "## 二次开发\n\n- 所有 API 走 `index.php?action=<动作>`，POST 携带 `ts` + `sign=md5(key|ts|action)`；敏感操作另需先取 `?action=ticket` 的票据并随请求提交（`OwApi.secure` 已封装）。\n- 插件示例：在 `plugins/<name>/` 放 `plugin.json` 与 `main.php`，用 `Plugin::on('message.after_send', fn)` 挂载钩子、`Plugin::route('plugin_<name>_xxx', fn, ['sensitive' => true])` 注册路由、`Plugin::adminPage('<slug>', '标题', fn)` 挂后台页、`Plugin::asset('js'|'css', '<name>/file')` 注入资源。\n- 前端扩展钩子：`OwChat.onRoomSwitch(fn)`（切群/进群）、`OwChat.onRoomEdit(fn)`（群聊设置弹窗，往 `#owREExtras` 加入口）。\n- 发版流程：只改根目录 `VERSION` → 提交 → 合并主仓 → 运行 `.tools/sync-www.sh`；随后执行 `python .tools/gen_changelog.py` 更新 `设计文档/CHANGELOG.md`。"
+        }
+      ],
+      "history": {
+        "complete": true,
+        "version": 10,
+        "lastEdited": "2026-10-09T01:19:20+08:00",
+        "commit": "864dcb8b2916ce4a9a5ff47424abfc66252dbb7a"
+      }
+    },
+    {
+      "id": "source-6b885fe9017c44b3",
+      "path": "设计文档/开发文档.md",
+      "kind": "instruction",
+      "scope": "设计文档",
+      "discoveredFrom": null,
+      "applicability": "unreviewed",
+      "text": "## 前言\n开发一个即时通讯系统，取名叫Owlsgo-Chat，也可以叫OChat。这是一个基于原生 PHP 8.1+ + SQLite、MySQL 和 PostgreSQL+ Workerman WebSocket 构建的现代化实时聊天室，无需框架依赖，开箱即用。采用自研扁平化 UI 设计（类名为ow开头），支持插件机制。适合web在线聊天、低成本部署和 AI 二次开发，完整适配移动端的系统。\n\n\n## 特点\n\n- 纯原生 PHP，单核心代码文件，无框架和 Composer 依赖，部署与维护简单\n- 支持 SQLite、MySQL 和 PostgreSQL，数据库结构和搜索能力保持跨引擎兼容\n- 支持用户角色、聊天室权限、站点设置、注册控制、发言限制和附件管理\n- 插件机制支持 Hook、路由、后台页面、资源合并、在线安装更新和统一计划任务\n- 站点设置、聊天附件和用户按需懒加载，数据库结构简单，负载能力强\n- 支持 AJAX 交互和响应式布局，兼顾 PC 与移动端使用体验\n\n\n## 功能介绍：\n\n### 聊天核心\n\n- **多聊天室** — 支持创建公开、私密（密码）、限定角色三种类型的聊天室 \n- **实时消息** — WebSocket 实时推送，心跳保活，断线自动降级轮询 \n- **消息类型** — 普通消息、@ 提及（全员可见）、私信（仅双方可见）、系统消息 \n- **消息撤回** — 发送者 3 分钟内可撤回，管理员与房主可撤回任意消息 \n- **历史消息** — 滚动到顶部自动加载更早消息，无限翻页 \n- **图片消息** — 支持上传图片、粘贴发送，点击大图预览 \n- **自定义表情** — 内置 Emoji 面板 + 用户可上传收藏贴纸表情 \n- **消息提示音** — 新消息到达时播放提示音 \n\n### 用户系统\n\n- **独立注册登录** — 昵称 + 邮箱注册，登录支持「邮箱」或「用户 ID」 1\n- **邮箱验证码校验** 4\n- **密码找回** — 通过邮箱验证码重置密码 5\n- **游客模式** — 可配置是否允许游客浏览 / 发言，游客自动分配随机昵称 2\n- **游客限额** — 游客每日发言数量限制，可在配置中调整 3\n- **个人资料** — 点击昵称弹出资料卡，支持修改昵称、上传头像；资料卡以用户 ID 作为唯一标识 2\n- **身份角色** — 管理员、VIP、普通成员、游客，各角色显示不同颜色标签 2\n- **用户称号** — 管理员可为用户设置自定义称号 3\n\n\n以下为 web 参考图\n![[Pasted image 20260908155620.png]]\n\n### 在线状态\n\n- **实时在线列表** — 右侧栏显示当前房间在线成员，圆形头像 + 身份标签 3\n- **WebSocket 心跳同步** — 精确的在线 / 离线状态追踪 2\n- **IP 归属地** — 核心不再内置（原依赖第三方 ip-api.com 已移除），改由插件通过\n  `ip.location` 钩子 + `ip_loc` 接口提供，管理员可用 2\n\n### 管理后台 2\n\n- **用户管理** — 按用户 ID 精确查询用户，修改角色、称号与积分 2\n- **禁言系统** — 支持按用户 / 游客昵称 / IP 禁言，可按房间隔离，支持设置过期时间3\n- **敏感词过滤** — 后台添加敏感词及替换词，支持启用 / 停用 3\n- **聊天室管理** — 创建 / 编辑 / 删除聊天室，设置访问权限和发言权限 2\n- **房主机制** — 可指定聊天室房主，房主拥有该房间的消息撤回权限 2\n- **公告系统** — 支持创建公告和欢迎消息，可绑定到指定聊天室，支持优先级排序和轮播展示 2\n- **安全日志** — 记录登录、注册等关键操作的 IP 和请求数据 2\n\n以下为管理系统参考图：\n![[Pasted image 20260908160038.png]]\n### 安全机制\n\nAPI 签名验证 — 前后端通信使用签名，密钥混淆传输\n频率限制 — 基于 Redis 的消息发送频率限制\n登录保护 — 连续失败后触发验证码，超过阈值自动锁定\n邮件频率限制— 防止邮件接口被滥用\n\n### 其他\n⚠️ 硬性规则：本项目禁止使用其他任何第三方框架和 Composer 包。 如果你认为某个功能需要引入依赖，请先提出建议并等待我确认， 不要自行引入。违反此规则的回答将被拒绝。\n\n## 开发约束\n\n### 图片上传：一律原图直存，不压缩、不转码、不走图床（v1.0.35 起）\n\n⚠️ 硬性规则：头像 / 贴纸 / 图片消息全部走 `Upload::local()` 原样保存，客户端不做 canvas 压缩，\n服务端不转发图床。曾经的 `compressImage()`（客户端缩放 + JPEG 0.85 重编码）与 `Upload::imgbed()`\n及 `image_mode` 设置项已全部移除，**不要重新引入任何压缩或第三方图床链路**。\n体积控制只靠 `upload.max_size`（服务端兜底 10MB）与后台「单文件大小上限」。\n\n### 用户标识：只有用户 ID，没有用户名（v1.0.33 起）\n\n⚠️ 硬性规则：本项目已于 v1.0.33 取消「用户名」（`users.username` 列随迁移物理删除）。\n任何时候不得重新引入 `username` 字段，也不得用昵称、邮箱作为用户的身份标识。\n\n1. **代表用户一律用 `user_id`**\n   资料卡跳转（`OwChat.userCard(uid)`）、私信目标（`to_user_id`）、前台 `boot.me`、\n   后台用户管理、房主归属（`rooms.owner_id`）、插件 getUser 类实现——\n   凡是「指向某个用户」的参数、字段、外键、缓存键，必须是数字用户 ID。\n\n2. **昵称 `users.nickname` 只是显示名**\n   - 允许重名，**不做唯一性校验**（这是\"取消用户名\"的实质含义，勿回滚）；\n   - 规则：2-20 个字符，字符集 `[\\p{L}\\p{N}_-]`（中英文 / 数字 / 下划线 / 短横线）；\n   - **禁止空格与 `@`**：服务端 @提及 按 `(^|\\s)@[^\\s@]+` 切词，含空格会导致该用户无法被提及；\n   - 规则统一走 `Auth::checkNickname()`，注册、安装、个人设置三处共用，勿各自写正则。\n\n3. **登录标识只有两种：注册邮箱 / 用户 ID**（见 `Auth::login()`），不允许再增加第三种。\n\n4. **后台用户搜索只支持数字用户 ID 精确查询**（见 `Admin::handle()` 的 `admin_users`）。\n   昵称 / 邮箱因可重名或不唯一，不可作为检索依据，只能作为结果展示。\n\n5. **新增表若需关联用户，列名用 `user_id`**，并在文档与代码中注明它是身份键。\n\n6. **迁移约定**：老库升级时执行 `UPDATE users SET nickname=username` 后删除该列；\n   SQLite 不允许删除带 UNIQUE 约束的列，由 `DB::dropColumn()` 退化为重建表处理，勿改为手动绕过。\n### 私聊会话：虚拟空间 + 仅双方可见 + 轮询互斥（v1.1.0 起）\n\n⚠️ 硬性规则：私聊已从「群内发一条私信」升级为独立会话，任何新代码都不得再把私聊当作群聊消息处理。\n\n1. **私聊落在虚拟空间 `room_id=0`**，不隶属任何群聊。\n   `Chat::send()` 据此跳过群校验与群禁言；`Chat::room(0)` 不存在是正常的。\n   1.0.x 的存量私信（`room_id>0`）由 `DB::migrate()` 幂等搬入 `room_id=0`，勿重复手写迁移。\n\n   ⚠️ **v1.2.1 起：私聊身份的判据是「`room_id=0` 且指定了接收方」，不是 `type`。\n   一律走 `Chat::isDmRow($row)`，禁止再写 `type='private'`。**\n\n   背景：`type` 一列曾同时兼表「这是私聊」与「消息形态」两个正交维度，\n   导致私聊里发图片/文件时 `type` 变成 `image`/`file`，身份判定随之失效\n   （发不出去，历史也查不出）。现已分离：`type` 只表达形态\n   （text / mention / image / file），私聊与群聊共用同一套富消息能力。\n\n   随之而来的硬性约束：\n   - **所有私聊 SQL 条件都要写 `room_id=0` + 接收方列**（`to_user_id > 0`），\n     不能只靠 `room_id=0`——`room_id=0` 也可能是异常数据（无接收方）。\n   - **前端一律用服务端下发的 `m.dm` 判断是否私聊**，不要写 `m.type === 'private'`，\n     否则私聊里的图片 / 文件气泡会丢掉紫色气泡与「[私信]」角标。\n\n2. **对象标识沿用「只有用户 ID」规则**：私聊 peer 统一为 `user:<数字id>`，\n   解析与校验一律走 `Chat::dmPeerKey()`（拒绝自我私聊、非法格式与注入式输入）。\n   昵称仅作展示快照，**不得**用它做身份标识或反查。\n\n   ⚠️ **`guest:` 形态已于 v1.1.2 整体下线**（跨身份私聊关闭，详见下文「跨身份私聊已彻底关闭」一节）。\n   协议格式仍接受 `guest:<id>` 但 `dmPeerKey()` 一律返回 `null`；\n   新代码**不得**再新增任何 `guest:` 分支，也不要试图「兼容」旧链接。\n\n3. **私聊仅双方可见，管理员亦不例外**\n   `Chat::visible()` 只放行发送方与接收方；超级管理员与后台管理同样不可查看或代读他人私聊。\n   新增任何私聊查询（历史 / 轮询 / 导出 / 后台）都必须经 `visible()` 或 `dmPairConds()` 收口。\n\n   ⚠️ **唯一例外**（v1.1.0 起）：法定合规调取走 `Chat::dmComplianceRead()`，\n   这是**唯一**允许非当事人读取私聊内容的入口，详见下文「私聊合规查阅」一节。\n   除它之外，任何代码都不得绕过 `visible()`。\n\n4. **两条长轮询必须互斥**\n   群聊 `poll` 与私聊 `dm_poll` 共用同一消息区与输入栏。切换视图时自增世代号\n   （`OwChat.pollGen` / `OwChat.dmGen`）让旧循环自毁，禁止两个 in-flight 请求同时\n   刷新 `#owMessages` 或互相覆盖 `since`（会导致消息重复、since 回退、串会话）。\n\n5. **写私聊 SQL 的两个硬性陷阱**（都已实际踩过，务必记住）：\n   - 每个分支必须写成「发送方列 = ? AND 接收方列 = ?」，**发送方列在前**。\n     写成 `to_user_id=? AND user_id=?`（接收方在前）时，SQLite 在\n     `ATTR_EMULATE_PREPARES=false` 下会复用错位的绑定值 → 只查得到自己发出的那条。\n   - 「对方 → 我」那一支的发送方列必须换成对方的列，否则该支永不成立。\n     （v1.1.2 起只剩 user↔user 一种组合，两个方向的列恰好同名；\n     保留双列结构是防御性兜底，不是为了支持跨身份。）\n   统一用 `Chat::dmPairConds()` / `dmPairSql()` 拼条件与参数，不要手写。\n\n6. **列表与标题**\n   左侧栏为「群聊 + 私聊」聚合列表（`Chat::conversations()`，按最后活跃时间倒序），\n   渲染统一走 `ChatList` 轮子（`.ow-cl-*`），**勿再调用已删除的 `renderRooms()`**。\n   私聊页标题依赖 `dm_history` 回传的 `peer.name`；会话列表尚未包含该项时也能显示真实昵称。\n   侧栏标题为「**聊天**」（不是「群聊」），徽标数字是**会话总数**（群聊数 + 私聊会话数），\n   由 `conversations` 路由回传的 `total` 填充，勿再用 `count($rooms)` 之类只算群聊。\n\n7. **地址路由**：`?dm=user:12`，冒号**不得**编码（`encodeURIComponent` 会变成 `%3A`，\n   导致应用自己写出的链接自己解析不出来）。`dmFromUrl()` 兼容编码形式。\n\n8. **`dm` 与 `room` 在 URL 上严格互斥**（v1.1.0 起，踩过「刷新跳第一个群聊」的坑）\n   - `setRoomUrl()` 必须**同时**清掉 `dm=` 与 `room=` 再写 `room=`；\n     只删 `room=` 会残留 `?page=chat&dm=user:20&room=2`，刷新时 `dmFromUrl()` 优先解析\n     → 明明在群聊里却被强制拽回私聊（表现为「100% 跳到第一个群聊」）。\n   - `onpopstate` 以 URL 实际内容为准，**先认 `room` 再认 `dm`**（历史遗留 / 外部链接\n     可能两者并存，此时优先群聊，避免莫名跳进私聊）。\n\n9. **会话列表必须收发双向匹配，且未使用身份列用 `> 0` 判定**（v1.1.0 起）\n   `Chat::conversations()` 聚合私聊时，条件要同时覆盖「我发的」与「发给我的」：\n   ```php\n   $conds = ['(user_id > 0 AND user_id = ?)', '(to_user_id > 0 AND to_user_id = ?)'];\n   $args  = [$mineUser ?: 0, $mineUser ?: 0];\n   if ($mineGuest > 0) {           // 游客分支只在确有游客身份时才加入\n       $conds[] = '(guest_id > 0 AND guest_id = ?)';       $args[] = $mineGuest;\n       $conds[] = '(to_guest_id > 0 AND to_guest_id = ?)'; $args[] = $mineGuest;\n   }\n   ```\n   两个要点：\n   - **只写发送方列**（「对方发给我」的私聊在接收方列表里完全不出现，用户反馈「接收不到别人的私聊」）。\n   - **必须用 `> 0` 而不是 `IS NOT NULL`**：未使用的身份列存的是 `0` 而不是 `NULL`，\n     `to_guest_id = 0`（用户身份时 `mineGuest=0`）会匹配到**全站所有人**的私聊，\n     任何用户都能看到别人的会话 —— 这是越权泄漏，不是漏数据。\n\n10. **群级装饰只属于群聊视图**（v1.1.0 起）\n    群公告条、群设置入口这类东西在 `room_id=0` 的私聊视图里语义上不成立。\n    核心**不直接操作插件 DOM**，而是提供 `OwChat.onViewChange(fn)` 钩子，\n    `ctx = { view: 'room'|'dm', roomId, peer, ownerId, isAdmin }`，\n    在 `openDm()` 与 `switchRoom()` 末尾触发；注册时立即补发当前视图（插件脚本晚于 init 加载）。\n    插件自己判断 `ctx.view` 决定清理还是复原。\n    ⚠️ `init()` 的私聊分支**不得**触发 `_fireRoomSwitch()`——此时 `this.room=0`，\n    插件按 `room_id=0` 取数据是错的，这正是「公告被带进私聊区」的根因。\n\n11. **会话列表需要独立于消息长轮询的轻量轮询**（v1.1.0 起）\n    群聊 `poll` 只监听**当前所在群**，私聊 `dm_poll` 只监听**当前所在私聊**——\n    停在群聊 2 时收不到群聊 1 的消息，靠它们无法让「有新消息的会话自动前置」。\n    `OwChat.startConvPoll()` 单独开一路 10s 低频轮询，只重渲染左侧栏，\n    **不碰消息区 / 输入栏 / 当前会话**，因此不会打断正在进行的聊天或输入草稿。\n    当前所在会话有消息时由 `poll` / `dmPollLoop` 立即 `loadConversations()` 做秒级补充。\n\n### 消息删除：全量软删除 + 可调保留期（v1.1.0 起）\n\n⚠️ 硬性规则：**任何人**（含超级管理员）删除消息都只做软删除，不做物理 DELETE。\n\n1. **软删除语义**（`Chat::deleteMessage()`）\n   - `deleted = 1`、**`content` 与 `quote` 一并清空**（原文不可恢复）\n   - `deleted_at` 记删除时刻、`deleted_by` 记操作者昵称（截断 64 字符）\n   - 昵称 / 时间 / IP 等元数据**留存**，供审计「谁在何时删了谁的消息」\n   - 删除动作写 `Sec::log('msg_delete', …)`\n\n2. **与撤回（recall）严格区分**\n   - 撤回：用户对自己消息的 3 分钟内操作，不涉及合规，前台显示「此消息已撤回」\n   - 删除：管理动作，进安全日志，前台显示「该消息已删除」\n   - 两者在 `Chat::pack()` 里都返回空 `content`，但 `recalled` / `deleted` 标记不同，\n     前端据此选择文案与样式（`.ow-msg.recalled` / `.ow-msg.deleted`，同为虚线弱化）\n\n3. **`quote` 列是 `NOT NULL`（历史建表约束）**\n   清空时必须写**空串**而不是 `NULL`，否则 `SQLSTATE[23000] … messages.quote` 直接崩。\n\n4. **物理清理由保留期统一执行**\n   v1.2.3 起**只有一个保留期设置项** `msg_retain_days`（天，默认 90，**0 = 永久保留**）：\n\n   | 消息状态 | 由谁清理 | 依据 |\n   | --- | --- | --- |\n   | 正常（`deleted=0`） | `Chat::purgeExpired()` | `created_at` 超过 `msg_retain_days` |\n   | 已删除（`deleted=1`） | `Chat::purgeExpired()` | 同上（**不再有独立保留期**） |\n   | 群主/超管撤回（`keep_forever=1`） | **不清理** | 豁免标记 |\n\n   - ⚠️ **`purgeDeleted()` 已于 v1.2.3 删除**，cron `purge_deleted_messages` 同步下线，\n     设置项 `msg_deleted_retain_days` 也已从 `DB::defaults()` 与后台移除。\n     勿再引用 `purgeDeleted()` / `msg_deleted_retain_days`（会直接报未定义）\n   - 清理挂在 `Chat::history()` 顺带触发（**小时级节流**），另有每小时 cron\n     `purge_expired_messages` 兜底\n   - 清理失败**静默**（`catch (Throwable)`），绝不能影响正常读消息\n   - ⚠️ **不设「超管绕过保留期」的旁路**。这是刻意的：任何人都无法提前物理清除，\n     否则合规审计链条会在超管一次误操作后断裂\n\n   `purgeExpired()` 额外注意：\n   - 站点**没有聊天记录导出功能**，故到期即物理清除、**无法恢复**。这是有意为之：\n     保留期是站点对「留多久」的明确承诺，留着超期数据等于承诺落空\n   - ⚠️ WHERE 条件**必须带 `keep_forever=0`**，漏了这条豁免标记就形同虚设\n   - 删行**前**必须先取出 file 消息的 `path`（删行后 content 就没了）\n   - 附件只删 `uploads/file/` 下且经 `Upload::fileAbs()` 二次校验的路径；\n     **图片 / 头像 / 贴纸不动** —— 它们可能被收藏贴纸引用，生命周期与消息不同\n   - 逐条 `DELETE` + `LIMIT 500` 分批，避免一次锁表；单条失败只跳过该条\n\n5. **撤回 = 真正的删除（全局生效、不可恢复）**\n   v1.2.4 起语义彻底对调，**这是最容易搞混的一处，务必分清**：\n\n   | 操作 | 作用范围 | 谁可以 | 实现 |\n   | --- | --- | --- | --- |\n   | **删除** | **仅本机隐藏**，别人照常看得到，换设备不生效 | **任何身份**（含超管、群主） | 写 `message_hides` |\n   | **撤回** | **全局生效**，所有人都不再看到 | 自己 5 分钟内 / 群主 / 超管 | **物理 DELETE** 行 + 删附件 |\n\n   - 撤回走真正的 `DELETE FROM messages`，**没有审计留痕**（谁撤的、何时查不到）。\n     这是刻意取舍：撤回语义就是「这段话不该存在过」，留行反而是负担。\n     关键操作仍在 `security_logs` 留 `msg_recall` 一条供事后追溯\n   - `keep_forever` 免清理标记已随之下线（撤回的消息根本不进库），\n     `purgeExpired()` 的 WHERE 不再有该条件。存量列保留不删，**勿重新启用**\n   - `messages.deleted` 软删除列也不再写入新数据（软删除路径已移除）；\n     `pack()` 仍读它以兼容**存量** `deleted=1` 的行显示「该消息已删除」\n\n   为什么这样切分：撤回是**有节制**的 —— 有时间窗、有角色限制、内容对称（你也撤不了我的）；\n   删除是**无节制**的，任何人都能点。若让删除也全局生效，等于把「清空群聊」的决定权\n   交给每个用户。**超管在前台同样不例外** —— 前台只有撤回一条路能清除他人内容。\n\n6. **删除权限**：v1.2.4 起**无任何权限区分** —— 一律写 `message_hides`。\n   钩子 `msg.before_delete` 可拦截（语义是「阻止本机隐藏」，不是权限判定）。\n   表名 / 函数名仍叫 hide —— 它们准确描述内部机制，不要为对齐用户文案去改表名。\n   ⚠️ 提示语必须带「仅本机」否则就是欺骗（用户会以为所有人都看不到了）。\n\n\n\n### 私聊合规查阅：默认关闭 + 显式例外 + 强制留痕（v1.1.0 起）\n\n⚠️ 硬性规则：合规调取私聊**只能**经 `Chat::dmComplianceRead()`，不得为此放开 `visible()`。\n\n背景：上文第 3 条「私聊仅双方可见，管理员亦不例外」与部分司法辖区的法定义务冲突——\n《个人信息保护法》第 35 条（国家机关依法查询须严格授权审批）、GDPR 合法利益例外，\n都要求「有合法权限时能调取」，且「调取行为本身需可审计」。两者的正确共存方式是：\n\n1. **默认关闭**：核心在 `dmComplianceRead()` 里 `fire('dm.read', [&$allow, …])`，\n   `$allow` 初始为 `false`。**只有插件注册 `dm.read` 钩子并显式置 true 才放行**。\n   → 插件未安装 / 未启用时，路由根本不存在，**物理上无法查阅**。\n   ⚠️ 必须写 `class_exists('Plugin')` 防御：某些精简部署（仅 CLI 批处理）不加载 `Plugin` 类，\n   此时合规能力应「不可用」而不是 fatal error。\n\n2. **仅超级管理员**：`$actor['role']` 必须为 `admin`，`member` 与游客一律拒绝。\n\n3. **强制留痕**：**无论是否查到内容**都写 `Sec::log('dm_compliance_read', …)`，\n   含查询条件（`target_id` / `from` / `to`）与命中条数。\n   合规场景下「没查到」本身也是需要举证的答复。\n\n4. **只读**：本方法不提供任何写路径，插件也拿不到 DB 句柄以外的东西。\n\n5. **纵深防御**：核心校验 `role==='admin'`，插件路由\n   `plugin_dm_compliance_read` 额外校验 `kind==='user'` 并 `Plugin::sensitive()`\n   接入一次性票据（CSRF / 防重放）。\n\n6. **日期参数必须校验格式**：`/^\\d{4}-\\d{2}-\\d{2}$/`，否则直接拒绝（防注入 + 防误查）。\n   `limit` 收敛到 `max(1, min(1000, …))`。\n\n### 游客发言限制：间隔秒数，不是每日条数（v1.1.0 起）\n\n⚠️ 硬性规则：`guest_daily_limit` 已下线，禁止重新引入。\n\n1. **间隔语义**：`guest_msg_interval`（秒，默认 30，**0 = 不限制**）——\n   两条游客消息之间的最小间隔。天级粒度过粗，30 秒既能防洪又不卡死正常聊天。\n2. **不新增表结构**：复用 `Sec::rateLimit()` + `rate_limits` 表，`bucket = 'guest_gap'`，\n   `ident = 'g' . $actor['id']`，窗口 = 间隔秒数，上限 1 条。\n3. **只有游客受限**：判定在 `if ($actor['kind'] === 'guest')` 分支内，登录用户完全不受影响。\n4. **返回剩余秒数**：拒绝时把间隔秒数写进提示（「游客发言间隔为 30 秒，请稍后再试」），\n   便于前端直接展示，不必二次查询。\n5. **`guests` 表的 `daily_count` / `daily_date` 列保留不动**，只是不再写入——\n   SQLite 删列需重建表（见「用户标识」节的 `rebuildTableWithout()`），收益不抵风险。\n\n### 消息历史懒加载：向上滚动自动加载（v1.2.6 起）\n\n⚠️ 硬性规则：**没有「加载更早消息…」这个节点了**。消息区初始为空（`<div class=\"ow-messages\" id=\"owMessages\"></div>`），\n更早的消息靠**向上滚动**自动加载。CSS 里的 `.ow-load-more` 样式已一并移除。\n\n| 关注点 | 约定 |\n| --- | --- |\n| 触发 | 消息区 `scrollTop <= 120`（**不是 0**）。触屏惯性滑动很容易冲到 0，贴着 0 才触发会出现「已经到底却没反应」的错觉 |\n| 并发闸门 | `loadingHistory` —— 一次请求未回前不再发第二次。**切会话（`switchRoom`）时必须重置**，否则锁卡在 `true` 会让新会话的懒加载彻底不响应（`onscroll` 与 `fillIfShort` 都被它挡住） |\n| 位置保持 | 插入前记下 `scrollHeight`，插完按差值回推 `scrollTop`；否则浏览器会保持 `scrollTop` 不变，视口猛跳到新加载内容的位置 |\n| 填不满 | 首屏渲染完调 `fillIfShort()`：若 `scrollHeight <= clientHeight` 自动续拉。少了手动入口后不补，消息少的会话上方会一直留白 |\n| 结束判定 | 返回不足 30 条（不足一页）即置 `historyDone = true`，之后滚动不再发请求 |\n| 引用跳转 | `jumpToQuote` 在原消息未加载时**自动往前拉**最多 10 页。此前只能 toast「请加载更早的消息」，入口移除后那是死路 |\n\n⚠️ **`this.dm` 在群聊首次进入时是 `undefined` 而不是 `false`**。\n凡是比较 `isDm` 的地方（如 `self.dm !== isDm`）必须**两边先 `!!` 归一**再比。\n否则 `undefined !== false` 恒为 true，会把每次响应都当成「已切走」丢弃 ——\n表现为「懒加载永远不生效、往上滚没反应」，且**不产生任何报错**，极难定位。\n\n⚠️ 消息容器里现在混着 `.ow-time-divider` 时间戳节点（v1.2.5 引入），\n**所有按 `children.length` 计数的地方都要复核** —— 用 `getElementsByClassName('ow-msg').length`。\n\n### 消息时间交互：悬停满 2 秒（v1.1.0 起）\n\n⚠️ 硬性规则：消息时间**只在悬停气泡满 2 秒后显示**，位置**紧跟昵称右侧**。\n\n1. **为什么不用 CSS `:hover`**\n   CSS 无法表达「持续满 N 秒」。一 hover 就出现会与快速扫读打架，也让昵称行一直跳。\n\n2. **事件委托而非逐条绑定**\n   绑定在 `#owMessages` 容器的 `onmouseover` / `onmouseout` 上。\n   消息频繁重渲染（`innerHTML` 重建），逐条绑定会随重建丢失。\n\n3. **计时器状态集中在 `OwChat`**\n   `_timeMsg`（当前计时中的消息节点）+ `_timeTimer`。\n   `hideMsgTime()` 统一清理；**`openDm()` 与 `switchRoom()` 重渲染消息区之前必须先调**\n   —— 否则「鼠标已移开但定时器还在跑」会导致时间凭空出现，且引用的节点已不存在。\n\n4. **自己消息的时间在昵称左边，不要用 `order` 拉回来**（v1.1.1 修正）\n   自己的消息整行 `flex-direction: row-reverse`（头像在右），meta 行同理。\n   DOM 顺序是 `[角色标签, 昵称, 时间]`，被 `row-reverse` 反向渲染成\n   「时间 ← 昵称 ← 标签」——即右侧消息的时间落在昵称**左边**，这是它的原有观感。\n   ⚠️ v1.0.x 曾用 `.ow-msg.mine .ow-msg-meta .ow-msg-time { order: -1 }` 把时间拉到昵称右边，\n   那是对需求的误解（用户只要求改**左侧他人消息**的时间）。该覆盖已删除，别再加回来。\n\n5. **`onmouseout` 要排除移到子元素的情况**：用 `relatedTarget` 判断\n   `node.contains(to)`，否则鼠标在气泡内部移动会被误判为「离开」而闪掉。\n\n### 私聊视觉与群聊统一（v1.1.0 起）\n\n⚠️ 硬性规则：`.ow-msg.private` **不得**有任何配色覆盖。\n\n1. 私聊气泡完全由 `.mine` / 非 `.mine` 两个维度决定，与群聊逐字节一致。\n   此前私聊用独立紫色气泡 + `::after` 追加「[私信]」，在私聊会话页里纯属噪音\n   （页面本身就是私聊，「这是私信」是废话）。\n2. 昵称后的「→ 昵称」文字标签一并移除；群聊内 @提及 已足够定位发给人。\n3. 回归验证必须**同位置口径**双向比对（私聊 mine vs 群聊 mine、私聊 other vs 群聊 other）。\n   跨维度比对必然假失败——气泡配色本就随身份变化。\n\n### 游客不得看到管理类菜单项（v1.1.0 起）\n\n⚠️ 硬性规则：管理类菜单项（禁言等）对游客**必须**完全不可见，且服务端不可达。\n\n1. **显式判身份，不靠副作用**\n   `ban-manager` 的 `BM.canBan()` 开头：`if (!actor || actor.kind !== 'user' || !me) return false;`\n   ⚠️ 原来靠「游客时 `cfg.me` 为 `null`，`me.id` 抛异常被外层 `try/catch` 吞掉」\n   而侥幸正确——行为对但机制脆，插件重构后极易失效。\n\n2. **前端管可见性，服务端管可达性，两层都要有**\n   服务端 `ban-manager/main.php`：`if (($actor['kind'] ?? '') !== 'user') Api::json(…, 403);`\n   只做前端隐藏等于没做——任何人改个前端就能调接口。\n\n### 群聊信息：单一右侧边栏（v1.1.1 起）\n\n⚠️ 硬性规则：群聊的「设置」与「成员」**共用一个右侧边栏**，入口只有顶栏**竖三点**一个。\n\n1. **DOM 结构**：`#owOnline` 分为两区块——\n   - `#owRoomPanel`（上）：群聊设置区\n   - `#owOnlineList`（下）：成员列表\n\n   顶栏入口 `id=\"owTogglePanel\"`（图标 `ow_icon('more-v')`）。\n   ⚠️ 已删除：列表行内的 `.ow-cl-more` 三点按钮、`#owToggleOnline` 在线成员人形图标、\n   `OwChat.openRoomEdit()` 弹窗（改侧栏后无调用者）。\n   若日后要恢复弹窗式群设置，**不要**复活这两个入口，否则又回到「两个入口语义割裂」。\n\n2. **设置区按 `room.can_edit` 分双形态**\n   - 群主 / 超管：可编辑表单（头像、群名称、群简介、`#owREExtras` 插件入口、保存按钮）\n   - 其他身份（含游客）：只读版（简介 + 群主 + 「仅群主与超级管理员可修改」提示）\n\n   `#owREExtras` 在**两种形态下都存在**，插件按 `ctx.isOwner || ctx.isAdmin` 自行决定是否填充。\n\n3. **五处必须刷新设置区**：`init` / `switchRoom` / `openDm` / 打开侧栏 / `reloadRooms`。\n   私聊（`room_id = 0`）时显示占位提示，不渲染表单。\n   `_roomAvatar`（待保存头像）按 `_roomAvatarRoom` 判断是否重置——否则切群会把上一个群的头像带过来。\n\n4. **`onRoomEdit` 钩子契约**：`fn({ roomId, ownerId, isAdmin, isOwner })`，往 `#owREExtras` 追加。\n   触发时机从「打开群聊设置弹窗」改为「设置区渲染」。⚠️ 旧注释里漏写了 `isOwner`（实参一直有），已补。\n\n### 权限可见性一律由服务端下发，前端不自行判身份（v1.1.1 起）\n\n⚠️ 硬性规则：凡是「谁能看见什么」的判定，**必须**由服务端算出布尔随响应下发，\n前端只按标志渲染，不在前端重算身份。\n\n1. **在线状态**：`Chat::canSeeOnlineStatus($actor, $roomId)` → `poll` 下发 `online_status`，\n   前端 `renderOnline(list, canStatus)` 只按它决定画不画绿点。\n   成员**名字对所有人可见**（含游客），只有在线点受限。\n\n2. **群管理入口**：`Chat::rooms()` 的 `can_edit` 必须与插件服务端 `$oaCanManage` **同口径**\n   （`role === 'admin'` 直接放行，否则 `owner_id` 命中本人）。\n   ⚠️ 踩过的坑：原注释写「超管走后台审核，不在此列」，`can_edit` 只判群主；\n   而 announcements 服务端允许超管 → **非群主的超管**拿不到群公告入口，\n   表现为「服务端允许删除但前台没有删除按钮」，用户反馈「一些群聊公告在前台删除不了」。\n\n3. **通用教训**：任何有服务端校验的插件能力，前端可见性判定必须与之逐条对齐。\n   两处各写一套，迟早漂移——而且漂移方向一定是「服务端允许、前台没入口」，\n   因为前端判定写得比服务端更保守时不会有任何报错。\n\n4. **反向的漂移同样致命**（v1.1.2 踩到）：前端留着一个**服务端已关闭**的入口，\n   用户点下去只会看到一句报错。`showUserMenu` 长期只判「我自己是不是注册用户」\n   而不判「对方是不是游客」，而 v1.1.2 服务端关闭了跨身份私聊 →\n   入口没跟着收，就变成了「必然报错的死按钮」。\n   **凡是在服务端新增一条拒绝规则，必须同时把对应的前端入口一并收掉。**\n\n### 跨身份私聊已彻底关闭（v1.1.2 起）\n\n⚠️ 硬性规则：**私聊只在注册用户之间**。用户↔游客（`guest:` 形态）已全线关闭，任何代码不得复活。\n\n1. **协议层**：`Chat::dmPeerKey()` 对一切跨身份 peer 返回 `null`\n   （`$kind !== 'user' || $actor['kind'] !== 'user'` 即拒）。\n   `dm_history` / `dm_poll` 都在调 `dmPeerKey()` 之前先过这一关，自动覆盖。\n\n2. **发送层另设一道**：`Chat::send()` 里 `type === 'private'` 时独立校验\n   ——`to_guest_id` 非空即拒、发起方必须是注册用户、不能给自己发。\n   ⚠️ 不能只靠 `dmPeerKey()`：构造请求可以绕过前端入口直接打 `send`。\n\n3. **前端五处入口同步收口**（缺一处就留下一条死路）：\n   `showUserMenu`（头像右键菜单）、`openDmWith`（从消息进入）、\n   `pm`（旧调用点，插件可能仍调）、`openDm`（含 URL 恢复 `?dm=guest:xx`）、\n   `send`（私聊视图内发消息）、`dmFromUrl`（地址栏解析直接丢弃 `guest:` 形态）。\n\n4. **会话列表**：`Chat::conversations()` 的游客分支**整体跳过**\n   ——游客没有任何私聊会话，v1.1.0 时期的跨身份存量消息由 `dmPeerKey()` 兜底过滤。\n   `dmPairConds()` 保留 `guest_id` 分支纯属防御性兜底，**不是**为了支持跨身份。\n\n5. **为什么关**：游客身份随浏览器会话消亡，同一个「游客昵称」背后可能是任意多个人；\n   允许注册用户去私聊一个「随时可能是另一个人」的对象既不可靠也无法审计。\n\n### 群公告只隶属具体群聊，没有「系统公告 / 全站公告」（v1.1.2 起）\n\n⚠️ 硬性规则：`announcements` 插件里 **`room_id=0` 不再有任何含义**（旧的「全站公告」标记已删除）。\n`room_id=0` 只是私聊的虚拟空间，公告绝不能借用它。\n\n1. **为什么删**：`room_id=0` 同时被「全站公告」和「私聊虚拟空间」占用，语义打架；\n   更要命的是它直接制造了一个必然假成功的删除路径（见下条）。\n\n2. **删除必须检查 `rowCount`——这是本项目的血泪教训**。\n   原实现 `DELETE FROM plugin_announcements WHERE id=? AND room_id=?`，而 `room_id` 来自\n   **当前群**；目标公告不属于当前群时就匹配 0 行，可代码**无条件返回 `ok:true`**。\n   表现是：接口说「公告已删除」、前端弹 toast 关弹窗，刷新后公告纹丝不动，\n   **用户完全无从判断真假**。现在服务端先取公告自身 `room_id` 判权限、\n   再仅以 `id` 删除、并以 `rowCount` 作为唯一成功判据。\n   ⚠️ **凡是 DELETE 类操作，一律不允许无条件返回成功**。\n\n3. **权限按「公告自身归属」判，不按调用方传的 room_id 判**。\n   前端只传 `id`；`$oaCanManage($ctx, $row['room_id'])` 用查出来的真实归属。\n   前后台必须同口径（此前后台批量删除只按 `id`、无 `room_id` 过滤，\n   于是「后台能删、前台删不掉」）。\n\n4. **`add` 必须拒绝 `room_id <= 0`**，`list` 同样拒绝。\n   建表时 `room_id` 去掉 `DEFAULT 0`，让「非正数」在库层面就不合法。\n\n5. **一次性清理**：`$oa_boot` 里 `DELETE FROM plugin_announcements WHERE room_id<=0`\n   清掉旧版遗留的全站公告，幂等。旧 `announcements` 表**保留不删**（含迁移源数据），\n   只是不再被任何代码读取。\n\n## 设计备忘录\n\n> 本节记录跨版本长期有效的架构约定，**新功能一律遵守**；与既有条目冲突时以本节为准。\n\n### 敏感操作安全校验（v1.0.91 起）\n\n⚠️ 硬性规则：凡是「不可逆 / 影响他人 / 影响账号安全」的操作，必须接入敏感操作校验，\n不得只靠普通签名提交。\n\n1. **敏感操作范围**（当前已覆盖，新增同类功能必须照做）：\n   - 退出登录（`logout`）；\n   - 删除内容：撤回 / 删除消息（`recall`、`msg_delete`）、贴纸删除（`sticker_del`）、\n     公告删除（`admin_ann_del`）、敏感词删除（`admin_word_del`）、附件删除（插件）；\n   - 管理员删 / 恢复数据：群聊删除（`admin_room_del`）、审核撤销（`admin_room_trash_undo`）、\n     批量处置（`admin_room_batch`）、插件卸载（`admin_plugin_uninstall`）；\n   - 账号与权限类：用户禁用 / 用户组修改（user-manager 插件）、禁言（ban-manager 插件）、\n     关闭两步验证 / 重置恢复码（twofa 插件）；\n   - 今后任何「清理缓存、批量清理、重置、导出后删除源」类接口，**上线前必须**按下述机制标记。\n\n2. **服务端机制**（index.php API 入口统一拦截）：\n   - 核心敏感 action 列表维护在 `$SENSITIVE`；插件路由用\n     `Plugin::route($action, $fn, ['sensitive' => true])` 或注册后追加\n     `Plugin::sensitive($action)` 声明（清单随插件缓存持久化）；\n   - 校验内容：仅接受 **POST** + **一次性操作票据**（`Sec::ticketVerify()`）；\n   - 票据由 `?action=ticket` 签发（需签名，写入会话），**校验通过立即作废**，5 分钟有效；\n     即使签名被截获也无法重放（票据一次性），跨站请求因拿不到票据而被拒；\n   - 校验失败写安全日志（`Sec::log('sensitive_reject', ...)`）。\n\n3. **前端机制**：统一用 `OwApi.secure(action, data, cb)` 调用（自动先取票再提交），\n   不要直接 `OwApi.post` 敏感接口；`OwApi.secure` 同时被 OwAdmin / 插件 JS 使用。\n   敏感操作在 UI 层保留二次确认弹窗（`confirmModal` / `OwAdmin.confirm`），两层防护缺一不可。\n\n4. **会话锁注意**：ticket 签发与敏感操作必须保持会话可写（index.php `$keepSession`），\n   新增敏感 action 时无需改这里（由 `$SENSITIVE` / 插件清单自动覆盖）。\n\n### 插件代码按需加载（v1.0.90 起）\n\n1. `Plugin::init()` 不再在每个请求 require 全部 `main.php`；改为读取\n   `data/cache/plugins.json`（元数据 + 注册清单：钩子 / 路由 / 后台页 / 敏感标记 / 资源），\n   请求周期内只在实际用到时才加载对应插件代码。\n\n2. **对插件的硬性契约**：`main.php` 顶层只做 `Plugin::*` 注册（on / route / adminPage /\n   asset / sensitive），不做输出、不依赖加载顺序、不产生其它副作用——清单缓存与后台探测\n   机制都依赖此约定。\n\n3. 新增钩子 / 路由无需手工更新缓存：插件文件 mtime 变化后，首个相关请求会自动重建清单。\n\n4. 资源合并（`?action=assets`）走清单 + 合并缓存；插件新增 JS/CSS 后刷新页面即自动生效。\n\n### 登录会话与 Cookie 安全（v1.0.94 起）\n\n1. **会话指纹绑定**：会话创建时记录 `sec_fp`（User-Agent + IP 前两段/IPv6 前三组的 SHA-256），\n   每个请求在 `Sec::fingerprintGuard()`（DB::init 之后、Auth::user 之前）比对，\n   不匹配即销毁会话并写安全日志 `session_fingerprint_mismatch`——\n   登录 Cookie 被跨站窃取 / 本地读取后，换浏览器或换网络重放无效。\n   注意：必须在 `DB::init` 之后调用（守卫拒绝时要写日志），否则 PDO 未初始化直接 fatal。\n2. **Cookie 参数基线**：会话与身份 Cookie 一律 `httponly + samesite=Lax`，\n   `secure` 由 `Sec::isHttps()` 动态决定（https 部署自动开启；本地 http 不开启）；\n   匿名签名密钥 `owl_akey` 有效期 7 天（与会话一致），游客令牌 `owl_guest` 1 年。\n3. **会话固定防护**：登录成功时 `session_regenerate_id(true)`（Auth::login 已有，勿删）。\n4. 敏感操作另有 v1.0.91 一次性票据（见上节），两层互不替代。\n\n### 访客 IP 获取规范（v1.0.98 起）\n\n⚠️ 硬性规则：全项目获取访客 IP **只能通过 `Sec::ip()`，且其唯一数据源是\n`$_SERVER['REMOTE_ADDR']`**（服务器原始地址，取自 TCP 连接对端，客户端无法伪造）。\n\n1. **禁止读取任何可伪造头**：`X-Forwarded-For`、`X-Real-IP`、`CF-Connecting-IP`、\n   `Client-IP` 等——攻击者可直接构造这些头冒充任意 IP，污染安全日志、绕过 IP 禁言\n   （ban-manager）与登录/发言限频。全项目 12 处 IP 消费点（日志、禁言、限频、指纹等）\n   均已收敛到 `Sec::ip()`，不得旁路。\n2. **反代部署的正规做法**：如站点置于可信反向代理之后，应在代理层把真实客户端 IP\n   写入 `REMOTE_ADDR` 传递（`fastcgi_param REMOTE_ADDR $真实IP变量`），\n   PHP 代码永远只读 REMOTE_ADDR，一行都不改。\n3. **`ow_site_url()` 例外说明**：该函数读 `X-Forwarded-Host/Proto` 仅用于\n   **生成资源链接**（站点地址自动识别，反代场景必需），不参与鉴权与重定向决策；\n   管理员在后台手动配置 site_url 后自动识别分支即被完全关闭。\n\n### ⚠️ 禁止浏览器原生弹窗（v1.0.112 起硬性约束，历次违反重点）\n\n前台与插件 **一律使用自研弹窗**，**禁止 `confirm()` / `alert()` / `prompt()`**：\n- 确认类 → `OwChat.confirm(text, onOk)`（前台，v1.0.112 新增前台版）/ `OwAdmin.confirm`（后台）；\n- 消息提示 → `toast(msg)`；\n- 输入类 → `OwChat.openModal(html)` 自建表单弹窗（参照私信弹窗 pm 实现）。\n\n**每次发版前必须执行检查**（出现任何一行即违规）：\n```\ngrep -rn \"w\\.confirm(\\|window\\.confirm(\\|[^.a-zA-Z]alert(\\|w\\.prompt(\" assets/js/chat.js plugins/*/*.js\n```\n已知违规历史：v1.0.112 前公告删除用 w.confirm、私信用 w.prompt、twofa 两处降级 alert——全部已修复。\n\n### 本地回归的测试口径陷阱（v1.1.0 踩过，务必按此写脚本）\n\n浏览器端到端回归（Playwright + 系统 Chrome `channel:'chrome'`）极易得到**假阴性**，\n以下两点是本项目的硬性口径：\n\n1. **注入会话必须走 `Sec::sessionStart($CFG)`**\n   项目会话名是 `OWLSESSID`，且装了自定义 `SessionHandlerInterface`（会话审计 + 7 天存活，\n   见 `core/security.php`）。临时注入脚本若图省事直接写：\n   ```php\n   if (session_status() === PHP_SESSION_NONE) @session_start();   // ❌ 错\n   $_SESSION['uid'] = 20;\n   ```\n   只会写出 `PHPSESSID`，`index.php` 根本读不到 → 页面**退化成游客身份**\n   （`OwChat.init({actor:{kind:'guest', id:297,...}})`），\n   表现为「接收方看不到私聊」「游客能发言」等一堆并不存在的 bug。\n   正确写法：\n   ```php\n   define('OWLSGO_VERSION', '1.1.0');\n   $CFG = require __DIR__.'/core/config.php';\n   require_once __DIR__.'/core/db.php';\n   require_once __DIR__.'/core/security.php';\n   DB::init($CFG);\n   Sec::sessionStart($CFG);          // ✅ 关键\n   $_SESSION['uid'] = (int)$_GET['uid'];\n   ```\n   验证身份是否真的生效：`curl -sk -c jar \"…/_smoke_session.php?uid=20\" -o /dev/null`，\n   再 `curl -sk -b jar \"…/?page=chat\"` 检查 `OwChat.init({…,\"actor\":{\"kind\":\"user\",\"id\":20}`。\n\n2. **驱动发消息必须走真实输入框路径**\n   ⚠️ **v1.2.1 起此限制已解除**：私聊路由不再依赖 `!opt.type`，\n   `OwChat.send({ type: 'image'|'file'|'text', content })` 在私聊视图下也会正确走私聊通道\n   （这正是本次修复的点——此前图片/文件因为绕过了私聊分支而必然失败）。\n   不过回归测试仍建议走真实输入框路径，最贴近用户实际操作：\n   ```js\n   document.getElementById('owInput').value = '内容';\n   OwChat.send();                    // ✅ 等价于点发送按钮 / 按回车\n   ```\n   同理，**切换会话要模拟点击侧栏 `<li>`**（会走 `room_join` 鉴权与密码房流程），\n   直接调 `OwChat.switchRoom()` 会跳过 `room_join`，出现列表项缺失等假象。\n\n3. **`position:fixed` 元素不能用 `offsetParent` 判可见性**（v1.1.0 踩过）\n   `offsetParent` 对 `position:fixed` 元素**恒为 `null`**。右键菜单 `#owCtxMenu`\n   正是 `position:fixed`，用它判断会得到「菜单没弹出」的假阴性。\n   正确口径：`getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().width > 0`。\n\n4. **消息 DOM 用 `id=\"owMsg<数字>\"`，没有 `data-mid`**\n   `document.querySelector('.ow-msg').getAttribute('data-mid')` 返回 `null`，\n   `+null` 得 `0` → 后续删除接口拿着 `id=0` 去调，**删掉了别人的消息还断言成功**。\n   正确写法：`/^owMsg(\\d+)$/.exec(el.id)`。\n\n5. **敏感路由票据一次性，脚本里不能「直调 + 点按钮」混用**\n   `OwApi.secure()` 先取 `ticket` 再带票据提交，服务端 `ticketVerify()` 用后即焚。\n   若测试先直调接口再点 UI 按钮，两者会互相抢票据 → 后者报\n   「安全校验失败，请刷新页面后重试」，是**脚本编排问题而非产品缺陷**。\n   `security_logs` 里的 `sensitive_reject` 记录是这类假失败的铁证。\n\n6. **气泡配色比对必须「同位置口径」**\n   气泡颜色由 `.mine` / 非 `.mine` 决定，跨维度比必然失败\n   （拿私聊的「自己消息」比群聊的「他人消息」→ 一个 `#e6f7ff` 一个 `#f5f7fa」）。\n   正确口径：私聊 mine vs 群聊 mine、私聊 other vs 群聊 other，双向都比。\n\n7. **测「默认隐藏」的元素要临时加类再量几何**\n   `display:none` 元素 `getBoundingClientRect()` 全为 0，量出的间距无意义。\n   正确口径：先 `el.className += ' ow-time-show'` 量完再摘掉。\n\n8. **数据库文件名是 `owlsgo.db` 不是 `owlsgo.sqlite`**\n   连错库时 PDO 会静默建一个**空库**——不报错、无输出，只有「查不到任何行」。\n   核查数据前先 `ls data/` 确认真实文件名。\n\n9. **站点是 HTTPS，用 `curl -k` / `ignoreHTTPSErrors: true`**\n   HTTP 端口（8099）上没有 server 块，会返回 **502 `upstream connect failed`**，\n   看起来像 PHP 挂了，实际是协议用错。Nginx 报错日志里的真实请求 `host: localhost` 可佐证。\n\n10. **`?action=assets&type=js` 只合并插件资源，不含核心 `chat.js`**（v1.1.1 踩过）\n    `Plugin::renderAssets()` 只遍历插件清单，核心脚本是独立\n    `<script src=\"assets/js/chat.js?v=版本\">` 引入的。\n    拿合并输出 `grep openDmWith` 得到 0，会误判成「线上跑的是旧版 JS」。\n    正确口径：`curl -sk \"https://localhost/assets/js/chat.js\"` 直接拉静态文件，\n    再 `md5sum` 与源文件对照。\n\n11. **`poll` 的返回是扁平合并，不在 `r.data` 里**（v1.1.1 踩过）\n    `Api::json(['ok' => true] + Chat::poll(...))` → `online` / `online_status` / `since`\n    都在**顶层**。写成 `r.data.online_status` 恒为 `undefined`，\n    会把「权限判定写错了」误报成「功能没实现」。\n\n12. **后台是纯前端切页，插件页内容不进首屏**（v1.1.1 踩过）\n    `?page=admin` 只渲染菜单骨架，插件页由 `data-apage=\"plugin:<slug>\"` 点击后异步拉取。\n    直接 `goto('?page=admin&p=xxx')` 找不到任何表单。\n    正确口径：`page.click('#owAdminMenu li[data-apage=\"plugin:xxx\"]')` 再等 1.5s。\n\n13. **切群后不要立刻断言长轮询带回来的数据**（v1.1.1 踩过）\n    长轮询最长挂起 20s，`switchRoom()` 后立刻读成员列表会读到**上一轮**的结果\n    （或空列表），是假阴性。正确口径：切群后等 ≥2.5s，或直调 `poll`（`timeout: 5`）验证字段。\n    ⚠️ 注意这不只是测试问题——真实缺陷也长这样：群聊↔群聊切换时若不作废在途轮询世代，\n    旧循环醒来会用**上一个群**的 online 列表刷侧栏，表现为「切了群但成员列表延迟二十秒」。\n    `switchRoom()` 现已统一自增 `pollGen` 作废在途请求（v1.1.1 修）。\n\n14. **`OwApi.secure(act, data, cb)` 的第一个参数是 action 名，别把方法名当 action 传进去**（v1.1.2 踩过）\n    写辅助函数时若图省事写成 `post('secure', data)` 内部再拼 `'secure'`，\n    实际发出的是 `OwApi.secure('secure', …)` → 服务端回 `{\"ok\":false,\"msg\":\"未知操作\"}`。\n    这个失败**长得像产品缺陷**（所有敏感操作全部失效），\n    极易让人跑去改服务端。识别口径：`未知操作` = action 名拼错了，不是权限或路由问题。\n\n15. **判定「游客消息」不要臆造 CSS 类**（v1.1.2 踩过）\n    `roleTag()` 只输出 `ow-tag-owner` / `ow-tag-vip` / `ow-tag-member` / `ow-tag-title`，\n    **没有** `ow-role-guest`。`querySelector('.ow-role-guest')` 恒为 `null`，\n    会让「游客样本数为 0」的过滤条件把整组断言变成空数组恒真/恒假。\n    正确口径：游客无头像图（`avatarHtml` 走纯色底 + 内联 `style`），\n    所以 `isGuest = !av.querySelector('img')`。\n\n16. **改完代码先在**源码目录**外的地方确认数据库位置**（v1.1.2 踩过）\n    真实库在 WWW 目录（`D:/Program Files (x86)/phpstudy_pro/WWW/Owlsgo-Chat/data/owlsgo.db`），\n    源码目录的 `data/` 只有 `.gitkeep`。在源码目录用 PDO 直连会**静默建出一个空库**\n    （`no such table: plugin_announcements`），排查时看起来像「插件表根本没建」。\n    正确口径：诊断脚本写到临时文件，`cp` 进 WWW 目录跑，跑完即删。\n17. **CLI 调试脚本必须先 `define('OWLSGO_VERSION', ...)`**（v1.1.12 踩过）\n    否则 `Plugin::init()` require 插件 `main.php` 时，会被每个插件开头的\n    `if (!defined('OWLSGO_VERSION')) exit;` **静默终止整个脚本**——\n    表现为无任何输出、无 stderr、退出码 0（`exit` 是正常终止，PHP 不报 Fatal）。\n    定位手段：`register_shutdown_function` + `error_get_last()` 逐行往文件打点看断点。\n    另注：`mkdir(): File exists` 这类被 `@` 抑制的警告**不是**根因，别被带偏。\n18. **插件里加列只能用 `DB::ensureColumn()`，不能用 `DB::addColumn()`**（v1.1.12 踩过）\n    `addColumn/hasColumn/dropColumn` 都是 private，插件调用抛\n    `Call to private method ... from global scope`，而 `Plugin::loadPlugin()` 的\n    `try/catch` 会吞掉插件异常只记 `plugin_error` → **该行之后所有 `Plugin::on()`\n    都不注册，但 `data/cache/plugins.json` 里的 hooks 列表仍是旧的**。\n    识别指纹：清单里 `sig` 是新的（mtime 已刷新）但 `hooks` 是旧的。\n    表现极像「钩子没触发」，实际是「插件只加载了一半」。`$default` 传**带引号的字面量**。\n19. **`OwApi.post` 是回调式，没有 Promise**（v1.1.12 踩过）\n    `await page.evaluate(() => OwApi.post(...))` 恒得 `{}`，所有字段 `undefined`，\n    看起来像「接口返回空」。要包一层：\n    `page.evaluate(([a,d]) => new Promise(res => OwApi.post(a,d,r=>res(r))), [action, data])`。\n    顺带：插件路由列表的键是 **`data`**（不是 `rows`）；`stats` 是**扁平顶层字段**\n    （`fail`/`logout`/`fp_mismatch` 直接在顶层，不在 `stats` 子对象里）；\n    「当前用户」不是独立 action，而是页面内嵌的 `OwChat.cfg.me`。\n\n其他既有纪律：临时文件用完必删（尤其 `_smoke_session.php` 在 WWW 目录、\nPlaywright 脚本在 node workspace 目录）；opcache `revalidate_freq=60`，\n改完 PHP 至少等一次重校验窗口再复查，勿凭一次 curl 就下结论。\n**清理临时文件时只删自己本轮创建的** —— 目录里可能有用户自己的未跟踪文件，\n`git checkout` 恢复不了（v1.1.0 误删过用户的 `debug_check.php`）。\n",
+      "sections": [
+        {
+          "id": "source-6b885fe9017c44b3-s1",
+          "title": "前言",
+          "level": 2,
+          "line": 1,
+          "endLine": 4,
+          "text": "## 前言\n开发一个即时通讯系统，取名叫Owlsgo-Chat，也可以叫OChat。这是一个基于原生 PHP 8.1+ + SQLite、MySQL 和 PostgreSQL+ Workerman WebSocket 构建的现代化实时聊天室，无需框架依赖，开箱即用。采用自研扁平化 UI 设计（类名为ow开头），支持插件机制。适合web在线聊天、低成本部署和 AI 二次开发，完整适配移动端的系统。\n\n"
+        },
+        {
+          "id": "source-6b885fe9017c44b3-s2",
+          "title": "特点",
+          "level": 2,
+          "line": 5,
+          "endLine": 14,
+          "text": "## 特点\n\n- 纯原生 PHP，单核心代码文件，无框架和 Composer 依赖，部署与维护简单\n- 支持 SQLite、MySQL 和 PostgreSQL，数据库结构和搜索能力保持跨引擎兼容\n- 支持用户角色、聊天室权限、站点设置、注册控制、发言限制和附件管理\n- 插件机制支持 Hook、路由、后台页面、资源合并、在线安装更新和统一计划任务\n- 站点设置、聊天附件和用户按需懒加载，数据库结构简单，负载能力强\n- 支持 AJAX 交互和响应式布局，兼顾 PC 与移动端使用体验\n\n"
+        },
+        {
+          "id": "source-6b885fe9017c44b3-s3",
+          "title": "功能介绍：",
+          "level": 2,
+          "line": 15,
+          "endLine": 16,
+          "text": "## 功能介绍：\n"
+        },
+        {
+          "id": "source-6b885fe9017c44b3-s4",
+          "title": "聊天核心",
+          "level": 3,
+          "line": 17,
+          "endLine": 27,
+          "text": "### 聊天核心\n\n- **多聊天室** — 支持创建公开、私密（密码）、限定角色三种类型的聊天室 \n- **实时消息** — WebSocket 实时推送，心跳保活，断线自动降级轮询 \n- **消息类型** — 普通消息、@ 提及（全员可见）、私信（仅双方可见）、系统消息 \n- **消息撤回** — 发送者 3 分钟内可撤回，管理员与房主可撤回任意消息 \n- **历史消息** — 滚动到顶部自动加载更早消息，无限翻页 \n- **图片消息** — 支持上传图片、粘贴发送，点击大图预览 \n- **自定义表情** — 内置 Emoji 面板 + 用户可上传收藏贴纸表情 \n- **消息提示音** — 新消息到达时播放提示音 \n"
+        },
+        {
+          "id": "source-6b885fe9017c44b3-s5",
+          "title": "用户系统",
+          "level": 3,
+          "line": 28,
+          "endLine": 42,
+          "text": "### 用户系统\n\n- **独立注册登录** — 昵称 + 邮箱注册，登录支持「邮箱」或「用户 ID」 1\n- **邮箱验证码校验** 4\n- **密码找回** — 通过邮箱验证码重置密码 5\n- **游客模式** — 可配置是否允许游客浏览 / 发言，游客自动分配随机昵称 2\n- **游客限额** — 游客每日发言数量限制，可在配置中调整 3\n- **个人资料** — 点击昵称弹出资料卡，支持修改昵称、上传头像；资料卡以用户 ID 作为唯一标识 2\n- **身份角色** — 管理员、VIP、普通成员、游客，各角色显示不同颜色标签 2\n- **用户称号** — 管理员可为用户设置自定义称号 3\n\n\n以下为 web 参考图\n![[Pasted image 20260908155620.png]]\n"
+        },
+        {
+          "id": "source-6b885fe9017c44b3-s6",
+          "title": "在线状态",
+          "level": 3,
+          "line": 43,
+          "endLine": 49,
+          "text": "### 在线状态\n\n- **实时在线列表** — 右侧栏显示当前房间在线成员，圆形头像 + 身份标签 3\n- **WebSocket 心跳同步** — 精确的在线 / 离线状态追踪 2\n- **IP 归属地** — 核心不再内置（原依赖第三方 ip-api.com 已移除），改由插件通过\n  `ip.location` 钩子 + `ip_loc` 接口提供，管理员可用 2\n"
+        },
+        {
+          "id": "source-6b885fe9017c44b3-s7",
+          "title": "管理后台 2",
+          "level": 3,
+          "line": 50,
+          "endLine": 61,
+          "text": "### 管理后台 2\n\n- **用户管理** — 按用户 ID 精确查询用户，修改角色、称号与积分 2\n- **禁言系统** — 支持按用户 / 游客昵称 / IP 禁言，可按房间隔离，支持设置过期时间3\n- **敏感词过滤** — 后台添加敏感词及替换词，支持启用 / 停用 3\n- **聊天室管理** — 创建 / 编辑 / 删除聊天室，设置访问权限和发言权限 2\n- **房主机制** — 可指定聊天室房主，房主拥有该房间的消息撤回权限 2\n- **公告系统** — 支持创建公告和欢迎消息，可绑定到指定聊天室，支持优先级排序和轮播展示 2\n- **安全日志** — 记录登录、注册等关键操作的 IP 和请求数据 2\n\n以下为管理系统参考图：\n![[Pasted image 20260908160038.png]]"
+        },
+        {
+          "id": "source-6b885fe9017c44b3-s8",
+          "title": "安全机制",
+          "level": 3,
+          "line": 62,
+          "endLine": 68,
+          "text": "### 安全机制\n\nAPI 签名验证 — 前后端通信使用签名，密钥混淆传输\n频率限制 — 基于 Redis 的消息发送频率限制\n登录保护 — 连续失败后触发验证码，超过阈值自动锁定\n邮件频率限制— 防止邮件接口被滥用\n"
+        },
+        {
+          "id": "source-6b885fe9017c44b3-s9",
+          "title": "其他",
+          "level": 3,
+          "line": 69,
+          "endLine": 71,
+          "text": "### 其他\n⚠️ 硬性规则：本项目禁止使用其他任何第三方框架和 Composer 包。 如果你认为某个功能需要引入依赖，请先提出建议并等待我确认， 不要自行引入。违反此规则的回答将被拒绝。\n"
+        },
+        {
+          "id": "source-6b885fe9017c44b3-s10",
+          "title": "开发约束",
+          "level": 2,
+          "line": 72,
+          "endLine": 73,
+          "text": "## 开发约束\n"
+        },
+        {
+          "id": "source-6b885fe9017c44b3-s11",
+          "title": "图片上传：一律原图直存，不压缩、不转码、不走图床（v1.0.35 起）",
+          "level": 3,
+          "line": 74,
+          "endLine": 80,
+          "text": "### 图片上传：一律原图直存，不压缩、不转码、不走图床（v1.0.35 起）\n\n⚠️ 硬性规则：头像 / 贴纸 / 图片消息全部走 `Upload::local()` 原样保存，客户端不做 canvas 压缩，\n服务端不转发图床。曾经的 `compressImage()`（客户端缩放 + JPEG 0.85 重编码）与 `Upload::imgbed()`\n及 `image_mode` 设置项已全部移除，**不要重新引入任何压缩或第三方图床链路**。\n体积控制只靠 `upload.max_size`（服务端兜底 10MB）与后台「单文件大小上限」。\n"
+        },
+        {
+          "id": "source-6b885fe9017c44b3-s12",
+          "title": "用户标识：只有用户 ID，没有用户名（v1.0.33 起）",
+          "level": 3,
+          "line": 81,
+          "endLine": 105,
+          "text": "### 用户标识：只有用户 ID，没有用户名（v1.0.33 起）\n\n⚠️ 硬性规则：本项目已于 v1.0.33 取消「用户名」（`users.username` 列随迁移物理删除）。\n任何时候不得重新引入 `username` 字段，也不得用昵称、邮箱作为用户的身份标识。\n\n1. **代表用户一律用 `user_id`**\n   资料卡跳转（`OwChat.userCard(uid)`）、私信目标（`to_user_id`）、前台 `boot.me`、\n   后台用户管理、房主归属（`rooms.owner_id`）、插件 getUser 类实现——\n   凡是「指向某个用户」的参数、字段、外键、缓存键，必须是数字用户 ID。\n\n2. **昵称 `users.nickname` 只是显示名**\n   - 允许重名，**不做唯一性校验**（这是\"取消用户名\"的实质含义，勿回滚）；\n   - 规则：2-20 个字符，字符集 `[\\p{L}\\p{N}_-]`（中英文 / 数字 / 下划线 / 短横线）；\n   - **禁止空格与 `@`**：服务端 @提及 按 `(^|\\s)@[^\\s@]+` 切词，含空格会导致该用户无法被提及；\n   - 规则统一走 `Auth::checkNickname()`，注册、安装、个人设置三处共用，勿各自写正则。\n\n3. **登录标识只有两种：注册邮箱 / 用户 ID**（见 `Auth::login()`），不允许再增加第三种。\n\n4. **后台用户搜索只支持数字用户 ID 精确查询**（见 `Admin::handle()` 的 `admin_users`）。\n   昵称 / 邮箱因可重名或不唯一，不可作为检索依据，只能作为结果展示。\n\n5. **新增表若需关联用户，列名用 `user_id`**，并在文档与代码中注明它是身份键。\n\n6. **迁移约定**：老库升级时执行 `UPDATE users SET nickname=username` 后删除该列；\n   SQLite 不允许删除带 UNIQUE 约束的列，由 `DB::dropColumn()` 退化为重建表处理，勿改为手动绕过。"
+        },
+        {
+          "id": "source-6b885fe9017c44b3-s13",
+          "title": "私聊会话：虚拟空间 + 仅双方可见 + 轮询互斥（v1.1.0 起）",
+          "level": 3,
+          "line": 106,
+          "endLine": 206,
+          "text": "### 私聊会话：虚拟空间 + 仅双方可见 + 轮询互斥（v1.1.0 起）\n\n⚠️ 硬性规则：私聊已从「群内发一条私信」升级为独立会话，任何新代码都不得再把私聊当作群聊消息处理。\n\n1. **私聊落在虚拟空间 `room_id=0`**，不隶属任何群聊。\n   `Chat::send()` 据此跳过群校验与群禁言；`Chat::room(0)` 不存在是正常的。\n   1.0.x 的存量私信（`room_id>0`）由 `DB::migrate()` 幂等搬入 `room_id=0`，勿重复手写迁移。\n\n   ⚠️ **v1.2.1 起：私聊身份的判据是「`room_id=0` 且指定了接收方」，不是 `type`。\n   一律走 `Chat::isDmRow($row)`，禁止再写 `type='private'`。**\n\n   背景：`type` 一列曾同时兼表「这是私聊」与「消息形态」两个正交维度，\n   导致私聊里发图片/文件时 `type` 变成 `image`/`file`，身份判定随之失效\n   （发不出去，历史也查不出）。现已分离：`type` 只表达形态\n   （text / mention / image / file），私聊与群聊共用同一套富消息能力。\n\n   随之而来的硬性约束：\n   - **所有私聊 SQL 条件都要写 `room_id=0` + 接收方列**（`to_user_id > 0`），\n     不能只靠 `room_id=0`——`room_id=0` 也可能是异常数据（无接收方）。\n   - **前端一律用服务端下发的 `m.dm` 判断是否私聊**，不要写 `m.type === 'private'`，\n     否则私聊里的图片 / 文件气泡会丢掉紫色气泡与「[私信]」角标。\n\n2. **对象标识沿用「只有用户 ID」规则**：私聊 peer 统一为 `user:<数字id>`，\n   解析与校验一律走 `Chat::dmPeerKey()`（拒绝自我私聊、非法格式与注入式输入）。\n   昵称仅作展示快照，**不得**用它做身份标识或反查。\n\n   ⚠️ **`guest:` 形态已于 v1.1.2 整体下线**（跨身份私聊关闭，详见下文「跨身份私聊已彻底关闭」一节）。\n   协议格式仍接受 `guest:<id>` 但 `dmPeerKey()` 一律返回 `null`；\n   新代码**不得**再新增任何 `guest:` 分支，也不要试图「兼容」旧链接。\n\n3. **私聊仅双方可见，管理员亦不例外**\n   `Chat::visible()` 只放行发送方与接收方；超级管理员与后台管理同样不可查看或代读他人私聊。\n   新增任何私聊查询（历史 / 轮询 / 导出 / 后台）都必须经 `visible()` 或 `dmPairConds()` 收口。\n\n   ⚠️ **唯一例外**（v1.1.0 起）：法定合规调取走 `Chat::dmComplianceRead()`，\n   这是**唯一**允许非当事人读取私聊内容的入口，详见下文「私聊合规查阅」一节。\n   除它之外，任何代码都不得绕过 `visible()`。\n\n4. **两条长轮询必须互斥**\n   群聊 `poll` 与私聊 `dm_poll` 共用同一消息区与输入栏。切换视图时自增世代号\n   （`OwChat.pollGen` / `OwChat.dmGen`）让旧循环自毁，禁止两个 in-flight 请求同时\n   刷新 `#owMessages` 或互相覆盖 `since`（会导致消息重复、since 回退、串会话）。\n\n5. **写私聊 SQL 的两个硬性陷阱**（都已实际踩过，务必记住）：\n   - 每个分支必须写成「发送方列 = ? AND 接收方列 = ?」，**发送方列在前**。\n     写成 `to_user_id=? AND user_id=?`（接收方在前）时，SQLite 在\n     `ATTR_EMULATE_PREPARES=false` 下会复用错位的绑定值 → 只查得到自己发出的那条。\n   - 「对方 → 我」那一支的发送方列必须换成对方的列，否则该支永不成立。\n     （v1.1.2 起只剩 user↔user 一种组合，两个方向的列恰好同名；\n     保留双列结构是防御性兜底，不是为了支持跨身份。）\n   统一用 `Chat::dmPairConds()` / `dmPairSql()` 拼条件与参数，不要手写。\n\n6. **列表与标题**\n   左侧栏为「群聊 + 私聊」聚合列表（`Chat::conversations()`，按最后活跃时间倒序），\n   渲染统一走 `ChatList` 轮子（`.ow-cl-*`），**勿再调用已删除的 `renderRooms()`**。\n   私聊页标题依赖 `dm_history` 回传的 `peer.name`；会话列表尚未包含该项时也能显示真实昵称。\n   侧栏标题为「**聊天**」（不是「群聊」），徽标数字是**会话总数**（群聊数 + 私聊会话数），\n   由 `conversations` 路由回传的 `total` 填充，勿再用 `count($rooms)` 之类只算群聊。\n\n7. **地址路由**：`?dm=user:12`，冒号**不得**编码（`encodeURIComponent` 会变成 `%3A`，\n   导致应用自己写出的链接自己解析不出来）。`dmFromUrl()` 兼容编码形式。\n\n8. **`dm` 与 `room` 在 URL 上严格互斥**（v1.1.0 起，踩过「刷新跳第一个群聊」的坑）\n   - `setRoomUrl()` 必须**同时**清掉 `dm=` 与 `room=` 再写 `room=`；\n     只删 `room=` 会残留 `?page=chat&dm=user:20&room=2`，刷新时 `dmFromUrl()` 优先解析\n     → 明明在群聊里却被强制拽回私聊（表现为「100% 跳到第一个群聊」）。\n   - `onpopstate` 以 URL 实际内容为准，**先认 `room` 再认 `dm`**（历史遗留 / 外部链接\n     可能两者并存，此时优先群聊，避免莫名跳进私聊）。\n\n9. **会话列表必须收发双向匹配，且未使用身份列用 `> 0` 判定**（v1.1.0 起）\n   `Chat::conversations()` 聚合私聊时，条件要同时覆盖「我发的」与「发给我的」：\n   ```php\n   $conds = ['(user_id > 0 AND user_id = ?)', '(to_user_id > 0 AND to_user_id = ?)'];\n   $args  = [$mineUser ?: 0, $mineUser ?: 0];\n   if ($mineGuest > 0) {           // 游客分支只在确有游客身份时才加入\n       $conds[] = '(guest_id > 0 AND guest_id = ?)';       $args[] = $mineGuest;\n       $conds[] = '(to_guest_id > 0 AND to_guest_id = ?)'; $args[] = $mineGuest;\n   }\n   ```\n   两个要点：\n   - **只写发送方列**（「对方发给我」的私聊在接收方列表里完全不出现，用户反馈「接收不到别人的私聊」）。\n   - **必须用 `> 0` 而不是 `IS NOT NULL`**：未使用的身份列存的是 `0` 而不是 `NULL`，\n     `to_guest_id = 0`（用户身份时 `mineGuest=0`）会匹配到**全站所有人**的私聊，\n     任何用户都能看到别人的会话 —— 这是越权泄漏，不是漏数据。\n\n10. **群级装饰只属于群聊视图**（v1.1.0 起）\n    群公告条、群设置入口这类东西在 `room_id=0` 的私聊视图里语义上不成立。\n    核心**不直接操作插件 DOM**，而是提供 `OwChat.onViewChange(fn)` 钩子，\n    `ctx = { view: 'room'|'dm', roomId, peer, ownerId, isAdmin }`，\n    在 `openDm()` 与 `switchRoom()` 末尾触发；注册时立即补发当前视图（插件脚本晚于 init 加载）。\n    插件自己判断 `ctx.view` 决定清理还是复原。\n    ⚠️ `init()` 的私聊分支**不得**触发 `_fireRoomSwitch()`——此时 `this.room=0`，\n    插件按 `room_id=0` 取数据是错的，这正是「公告被带进私聊区」的根因。\n\n11. **会话列表需要独立于消息长轮询的轻量轮询**（v1.1.0 起）\n    群聊 `poll` 只监听**当前所在群**，私聊 `dm_poll` 只监听**当前所在私聊**——\n    停在群聊 2 时收不到群聊 1 的消息，靠它们无法让「有新消息的会话自动前置」。\n    `OwChat.startConvPoll()` 单独开一路 10s 低频轮询，只重渲染左侧栏，\n    **不碰消息区 / 输入栏 / 当前会话**，因此不会打断正在进行的聊天或输入草稿。\n    当前所在会话有消息时由 `poll` / `dmPollLoop` 立即 `loadConversations()` 做秒级补充。\n"
+        },
+        {
+          "id": "source-6b885fe9017c44b3-s14",
+          "title": "消息删除：全量软删除 + 可调保留期（v1.1.0 起）",
+          "level": 3,
+          "line": 207,
+          "endLine": 279,
+          "text": "### 消息删除：全量软删除 + 可调保留期（v1.1.0 起）\n\n⚠️ 硬性规则：**任何人**（含超级管理员）删除消息都只做软删除，不做物理 DELETE。\n\n1. **软删除语义**（`Chat::deleteMessage()`）\n   - `deleted = 1`、**`content` 与 `quote` 一并清空**（原文不可恢复）\n   - `deleted_at` 记删除时刻、`deleted_by` 记操作者昵称（截断 64 字符）\n   - 昵称 / 时间 / IP 等元数据**留存**，供审计「谁在何时删了谁的消息」\n   - 删除动作写 `Sec::log('msg_delete', …)`\n\n2. **与撤回（recall）严格区分**\n   - 撤回：用户对自己消息的 3 分钟内操作，不涉及合规，前台显示「此消息已撤回」\n   - 删除：管理动作，进安全日志，前台显示「该消息已删除」\n   - 两者在 `Chat::pack()` 里都返回空 `content`，但 `recalled` / `deleted` 标记不同，\n     前端据此选择文案与样式（`.ow-msg.recalled` / `.ow-msg.deleted`，同为虚线弱化）\n\n3. **`quote` 列是 `NOT NULL`（历史建表约束）**\n   清空时必须写**空串**而不是 `NULL`，否则 `SQLSTATE[23000] … messages.quote` 直接崩。\n\n4. **物理清理由保留期统一执行**\n   v1.2.3 起**只有一个保留期设置项** `msg_retain_days`（天，默认 90，**0 = 永久保留**）：\n\n   | 消息状态 | 由谁清理 | 依据 |\n   | --- | --- | --- |\n   | 正常（`deleted=0`） | `Chat::purgeExpired()` | `created_at` 超过 `msg_retain_days` |\n   | 已删除（`deleted=1`） | `Chat::purgeExpired()` | 同上（**不再有独立保留期**） |\n   | 群主/超管撤回（`keep_forever=1`） | **不清理** | 豁免标记 |\n\n   - ⚠️ **`purgeDeleted()` 已于 v1.2.3 删除**，cron `purge_deleted_messages` 同步下线，\n     设置项 `msg_deleted_retain_days` 也已从 `DB::defaults()` 与后台移除。\n     勿再引用 `purgeDeleted()` / `msg_deleted_retain_days`（会直接报未定义）\n   - 清理挂在 `Chat::history()` 顺带触发（**小时级节流**），另有每小时 cron\n     `purge_expired_messages` 兜底\n   - 清理失败**静默**（`catch (Throwable)`），绝不能影响正常读消息\n   - ⚠️ **不设「超管绕过保留期」的旁路**。这是刻意的：任何人都无法提前物理清除，\n     否则合规审计链条会在超管一次误操作后断裂\n\n   `purgeExpired()` 额外注意：\n   - 站点**没有聊天记录导出功能**，故到期即物理清除、**无法恢复**。这是有意为之：\n     保留期是站点对「留多久」的明确承诺，留着超期数据等于承诺落空\n   - ⚠️ WHERE 条件**必须带 `keep_forever=0`**，漏了这条豁免标记就形同虚设\n   - 删行**前**必须先取出 file 消息的 `path`（删行后 content 就没了）\n   - 附件只删 `uploads/file/` 下且经 `Upload::fileAbs()` 二次校验的路径；\n     **图片 / 头像 / 贴纸不动** —— 它们可能被收藏贴纸引用，生命周期与消息不同\n   - 逐条 `DELETE` + `LIMIT 500` 分批，避免一次锁表；单条失败只跳过该条\n\n5. **撤回 = 真正的删除（全局生效、不可恢复）**\n   v1.2.4 起语义彻底对调，**这是最容易搞混的一处，务必分清**：\n\n   | 操作 | 作用范围 | 谁可以 | 实现 |\n   | --- | --- | --- | --- |\n   | **删除** | **仅本机隐藏**，别人照常看得到，换设备不生效 | **任何身份**（含超管、群主） | 写 `message_hides` |\n   | **撤回** | **全局生效**，所有人都不再看到 | 自己 5 分钟内 / 群主 / 超管 | **物理 DELETE** 行 + 删附件 |\n\n   - 撤回走真正的 `DELETE FROM messages`，**没有审计留痕**（谁撤的、何时查不到）。\n     这是刻意取舍：撤回语义就是「这段话不该存在过」，留行反而是负担。\n     关键操作仍在 `security_logs` 留 `msg_recall` 一条供事后追溯\n   - `keep_forever` 免清理标记已随之下线（撤回的消息根本不进库），\n     `purgeExpired()` 的 WHERE 不再有该条件。存量列保留不删，**勿重新启用**\n   - `messages.deleted` 软删除列也不再写入新数据（软删除路径已移除）；\n     `pack()` 仍读它以兼容**存量** `deleted=1` 的行显示「该消息已删除」\n\n   为什么这样切分：撤回是**有节制**的 —— 有时间窗、有角色限制、内容对称（你也撤不了我的）；\n   删除是**无节制**的，任何人都能点。若让删除也全局生效，等于把「清空群聊」的决定权\n   交给每个用户。**超管在前台同样不例外** —— 前台只有撤回一条路能清除他人内容。\n\n6. **删除权限**：v1.2.4 起**无任何权限区分** —— 一律写 `message_hides`。\n   钩子 `msg.before_delete` 可拦截（语义是「阻止本机隐藏」，不是权限判定）。\n   表名 / 函数名仍叫 hide —— 它们准确描述内部机制，不要为对齐用户文案去改表名。\n   ⚠️ 提示语必须带「仅本机」否则就是欺骗（用户会以为所有人都看不到了）。\n\n\n"
+        },
+        {
+          "id": "source-6b885fe9017c44b3-s15",
+          "title": "私聊合规查阅：默认关闭 + 显式例外 + 强制留痕（v1.1.0 起）",
+          "level": 3,
+          "line": 280,
+          "endLine": 308,
+          "text": "### 私聊合规查阅：默认关闭 + 显式例外 + 强制留痕（v1.1.0 起）\n\n⚠️ 硬性规则：合规调取私聊**只能**经 `Chat::dmComplianceRead()`，不得为此放开 `visible()`。\n\n背景：上文第 3 条「私聊仅双方可见，管理员亦不例外」与部分司法辖区的法定义务冲突——\n《个人信息保护法》第 35 条（国家机关依法查询须严格授权审批）、GDPR 合法利益例外，\n都要求「有合法权限时能调取」，且「调取行为本身需可审计」。两者的正确共存方式是：\n\n1. **默认关闭**：核心在 `dmComplianceRead()` 里 `fire('dm.read', [&$allow, …])`，\n   `$allow` 初始为 `false`。**只有插件注册 `dm.read` 钩子并显式置 true 才放行**。\n   → 插件未安装 / 未启用时，路由根本不存在，**物理上无法查阅**。\n   ⚠️ 必须写 `class_exists('Plugin')` 防御：某些精简部署（仅 CLI 批处理）不加载 `Plugin` 类，\n   此时合规能力应「不可用」而不是 fatal error。\n\n2. **仅超级管理员**：`$actor['role']` 必须为 `admin`，`member` 与游客一律拒绝。\n\n3. **强制留痕**：**无论是否查到内容**都写 `Sec::log('dm_compliance_read', …)`，\n   含查询条件（`target_id` / `from` / `to`）与命中条数。\n   合规场景下「没查到」本身也是需要举证的答复。\n\n4. **只读**：本方法不提供任何写路径，插件也拿不到 DB 句柄以外的东西。\n\n5. **纵深防御**：核心校验 `role==='admin'`，插件路由\n   `plugin_dm_compliance_read` 额外校验 `kind==='user'` 并 `Plugin::sensitive()`\n   接入一次性票据（CSRF / 防重放）。\n\n6. **日期参数必须校验格式**：`/^\\d{4}-\\d{2}-\\d{2}$/`，否则直接拒绝（防注入 + 防误查）。\n   `limit` 收敛到 `max(1, min(1000, …))`。\n"
+        },
+        {
+          "id": "source-6b885fe9017c44b3-s16",
+          "title": "游客发言限制：间隔秒数，不是每日条数（v1.1.0 起）",
+          "level": 3,
+          "line": 309,
+          "endLine": 322,
+          "text": "### 游客发言限制：间隔秒数，不是每日条数（v1.1.0 起）\n\n⚠️ 硬性规则：`guest_daily_limit` 已下线，禁止重新引入。\n\n1. **间隔语义**：`guest_msg_interval`（秒，默认 30，**0 = 不限制**）——\n   两条游客消息之间的最小间隔。天级粒度过粗，30 秒既能防洪又不卡死正常聊天。\n2. **不新增表结构**：复用 `Sec::rateLimit()` + `rate_limits` 表，`bucket = 'guest_gap'`，\n   `ident = 'g' . $actor['id']`，窗口 = 间隔秒数，上限 1 条。\n3. **只有游客受限**：判定在 `if ($actor['kind'] === 'guest')` 分支内，登录用户完全不受影响。\n4. **返回剩余秒数**：拒绝时把间隔秒数写进提示（「游客发言间隔为 30 秒，请稍后再试」），\n   便于前端直接展示，不必二次查询。\n5. **`guests` 表的 `daily_count` / `daily_date` 列保留不动**，只是不再写入——\n   SQLite 删列需重建表（见「用户标识」节的 `rebuildTableWithout()`），收益不抵风险。\n"
+        },
+        {
+          "id": "source-6b885fe9017c44b3-s17",
+          "title": "消息历史懒加载：向上滚动自动加载（v1.2.6 起）",
+          "level": 3,
+          "line": 323,
+          "endLine": 344,
+          "text": "### 消息历史懒加载：向上滚动自动加载（v1.2.6 起）\n\n⚠️ 硬性规则：**没有「加载更早消息…」这个节点了**。消息区初始为空（`<div class=\"ow-messages\" id=\"owMessages\"></div>`），\n更早的消息靠**向上滚动**自动加载。CSS 里的 `.ow-load-more` 样式已一并移除。\n\n| 关注点 | 约定 |\n| --- | --- |\n| 触发 | 消息区 `scrollTop <= 120`（**不是 0**）。触屏惯性滑动很容易冲到 0，贴着 0 才触发会出现「已经到底却没反应」的错觉 |\n| 并发闸门 | `loadingHistory` —— 一次请求未回前不再发第二次。**切会话（`switchRoom`）时必须重置**，否则锁卡在 `true` 会让新会话的懒加载彻底不响应（`onscroll` 与 `fillIfShort` 都被它挡住） |\n| 位置保持 | 插入前记下 `scrollHeight`，插完按差值回推 `scrollTop`；否则浏览器会保持 `scrollTop` 不变，视口猛跳到新加载内容的位置 |\n| 填不满 | 首屏渲染完调 `fillIfShort()`：若 `scrollHeight <= clientHeight` 自动续拉。少了手动入口后不补，消息少的会话上方会一直留白 |\n| 结束判定 | 返回不足 30 条（不足一页）即置 `historyDone = true`，之后滚动不再发请求 |\n| 引用跳转 | `jumpToQuote` 在原消息未加载时**自动往前拉**最多 10 页。此前只能 toast「请加载更早的消息」，入口移除后那是死路 |\n\n⚠️ **`this.dm` 在群聊首次进入时是 `undefined` 而不是 `false`**。\n凡是比较 `isDm` 的地方（如 `self.dm !== isDm`）必须**两边先 `!!` 归一**再比。\n否则 `undefined !== false` 恒为 true，会把每次响应都当成「已切走」丢弃 ——\n表现为「懒加载永远不生效、往上滚没反应」，且**不产生任何报错**，极难定位。\n\n⚠️ 消息容器里现在混着 `.ow-time-divider` 时间戳节点（v1.2.5 引入），\n**所有按 `children.length` 计数的地方都要复核** —— 用 `getElementsByClassName('ow-msg').length`。\n"
+        },
+        {
+          "id": "source-6b885fe9017c44b3-s18",
+          "title": "消息时间交互：悬停满 2 秒（v1.1.0 起）",
+          "level": 3,
+          "line": 345,
+          "endLine": 370,
+          "text": "### 消息时间交互：悬停满 2 秒（v1.1.0 起）\n\n⚠️ 硬性规则：消息时间**只在悬停气泡满 2 秒后显示**，位置**紧跟昵称右侧**。\n\n1. **为什么不用 CSS `:hover`**\n   CSS 无法表达「持续满 N 秒」。一 hover 就出现会与快速扫读打架，也让昵称行一直跳。\n\n2. **事件委托而非逐条绑定**\n   绑定在 `#owMessages` 容器的 `onmouseover` / `onmouseout` 上。\n   消息频繁重渲染（`innerHTML` 重建），逐条绑定会随重建丢失。\n\n3. **计时器状态集中在 `OwChat`**\n   `_timeMsg`（当前计时中的消息节点）+ `_timeTimer`。\n   `hideMsgTime()` 统一清理；**`openDm()` 与 `switchRoom()` 重渲染消息区之前必须先调**\n   —— 否则「鼠标已移开但定时器还在跑」会导致时间凭空出现，且引用的节点已不存在。\n\n4. **自己消息的时间在昵称左边，不要用 `order` 拉回来**（v1.1.1 修正）\n   自己的消息整行 `flex-direction: row-reverse`（头像在右），meta 行同理。\n   DOM 顺序是 `[角色标签, 昵称, 时间]`，被 `row-reverse` 反向渲染成\n   「时间 ← 昵称 ← 标签」——即右侧消息的时间落在昵称**左边**，这是它的原有观感。\n   ⚠️ v1.0.x 曾用 `.ow-msg.mine .ow-msg-meta .ow-msg-time { order: -1 }` 把时间拉到昵称右边，\n   那是对需求的误解（用户只要求改**左侧他人消息**的时间）。该覆盖已删除，别再加回来。\n\n5. **`onmouseout` 要排除移到子元素的情况**：用 `relatedTarget` 判断\n   `node.contains(to)`，否则鼠标在气泡内部移动会被误判为「离开」而闪掉。\n"
+        },
+        {
+          "id": "source-6b885fe9017c44b3-s19",
+          "title": "私聊视觉与群聊统一（v1.1.0 起）",
+          "level": 3,
+          "line": 371,
+          "endLine": 381,
+          "text": "### 私聊视觉与群聊统一（v1.1.0 起）\n\n⚠️ 硬性规则：`.ow-msg.private` **不得**有任何配色覆盖。\n\n1. 私聊气泡完全由 `.mine` / 非 `.mine` 两个维度决定，与群聊逐字节一致。\n   此前私聊用独立紫色气泡 + `::after` 追加「[私信]」，在私聊会话页里纯属噪音\n   （页面本身就是私聊，「这是私信」是废话）。\n2. 昵称后的「→ 昵称」文字标签一并移除；群聊内 @提及 已足够定位发给人。\n3. 回归验证必须**同位置口径**双向比对（私聊 mine vs 群聊 mine、私聊 other vs 群聊 other）。\n   跨维度比对必然假失败——气泡配色本就随身份变化。\n"
+        },
+        {
+          "id": "source-6b885fe9017c44b3-s20",
+          "title": "游客不得看到管理类菜单项（v1.1.0 起）",
+          "level": 3,
+          "line": 382,
+          "endLine": 394,
+          "text": "### 游客不得看到管理类菜单项（v1.1.0 起）\n\n⚠️ 硬性规则：管理类菜单项（禁言等）对游客**必须**完全不可见，且服务端不可达。\n\n1. **显式判身份，不靠副作用**\n   `ban-manager` 的 `BM.canBan()` 开头：`if (!actor || actor.kind !== 'user' || !me) return false;`\n   ⚠️ 原来靠「游客时 `cfg.me` 为 `null`，`me.id` 抛异常被外层 `try/catch` 吞掉」\n   而侥幸正确——行为对但机制脆，插件重构后极易失效。\n\n2. **前端管可见性，服务端管可达性，两层都要有**\n   服务端 `ban-manager/main.php`：`if (($actor['kind'] ?? '') !== 'user') Api::json(…, 403);`\n   只做前端隐藏等于没做——任何人改个前端就能调接口。\n"
+        },
+        {
+          "id": "source-6b885fe9017c44b3-s21",
+          "title": "群聊信息：单一右侧边栏（v1.1.1 起）",
+          "level": 3,
+          "line": 395,
+          "endLine": 420,
+          "text": "### 群聊信息：单一右侧边栏（v1.1.1 起）\n\n⚠️ 硬性规则：群聊的「设置」与「成员」**共用一个右侧边栏**，入口只有顶栏**竖三点**一个。\n\n1. **DOM 结构**：`#owOnline` 分为两区块——\n   - `#owRoomPanel`（上）：群聊设置区\n   - `#owOnlineList`（下）：成员列表\n\n   顶栏入口 `id=\"owTogglePanel\"`（图标 `ow_icon('more-v')`）。\n   ⚠️ 已删除：列表行内的 `.ow-cl-more` 三点按钮、`#owToggleOnline` 在线成员人形图标、\n   `OwChat.openRoomEdit()` 弹窗（改侧栏后无调用者）。\n   若日后要恢复弹窗式群设置，**不要**复活这两个入口，否则又回到「两个入口语义割裂」。\n\n2. **设置区按 `room.can_edit` 分双形态**\n   - 群主 / 超管：可编辑表单（头像、群名称、群简介、`#owREExtras` 插件入口、保存按钮）\n   - 其他身份（含游客）：只读版（简介 + 群主 + 「仅群主与超级管理员可修改」提示）\n\n   `#owREExtras` 在**两种形态下都存在**，插件按 `ctx.isOwner || ctx.isAdmin` 自行决定是否填充。\n\n3. **五处必须刷新设置区**：`init` / `switchRoom` / `openDm` / 打开侧栏 / `reloadRooms`。\n   私聊（`room_id = 0`）时显示占位提示，不渲染表单。\n   `_roomAvatar`（待保存头像）按 `_roomAvatarRoom` 判断是否重置——否则切群会把上一个群的头像带过来。\n\n4. **`onRoomEdit` 钩子契约**：`fn({ roomId, ownerId, isAdmin, isOwner })`，往 `#owREExtras` 追加。\n   触发时机从「打开群聊设置弹窗」改为「设置区渲染」。⚠️ 旧注释里漏写了 `isOwner`（实参一直有），已补。\n"
+        },
+        {
+          "id": "source-6b885fe9017c44b3-s22",
+          "title": "权限可见性一律由服务端下发，前端不自行判身份（v1.1.1 起）",
+          "level": 3,
+          "line": 421,
+          "endLine": 445,
+          "text": "### 权限可见性一律由服务端下发，前端不自行判身份（v1.1.1 起）\n\n⚠️ 硬性规则：凡是「谁能看见什么」的判定，**必须**由服务端算出布尔随响应下发，\n前端只按标志渲染，不在前端重算身份。\n\n1. **在线状态**：`Chat::canSeeOnlineStatus($actor, $roomId)` → `poll` 下发 `online_status`，\n   前端 `renderOnline(list, canStatus)` 只按它决定画不画绿点。\n   成员**名字对所有人可见**（含游客），只有在线点受限。\n\n2. **群管理入口**：`Chat::rooms()` 的 `can_edit` 必须与插件服务端 `$oaCanManage` **同口径**\n   （`role === 'admin'` 直接放行，否则 `owner_id` 命中本人）。\n   ⚠️ 踩过的坑：原注释写「超管走后台审核，不在此列」，`can_edit` 只判群主；\n   而 announcements 服务端允许超管 → **非群主的超管**拿不到群公告入口，\n   表现为「服务端允许删除但前台没有删除按钮」，用户反馈「一些群聊公告在前台删除不了」。\n\n3. **通用教训**：任何有服务端校验的插件能力，前端可见性判定必须与之逐条对齐。\n   两处各写一套，迟早漂移——而且漂移方向一定是「服务端允许、前台没入口」，\n   因为前端判定写得比服务端更保守时不会有任何报错。\n\n4. **反向的漂移同样致命**（v1.1.2 踩到）：前端留着一个**服务端已关闭**的入口，\n   用户点下去只会看到一句报错。`showUserMenu` 长期只判「我自己是不是注册用户」\n   而不判「对方是不是游客」，而 v1.1.2 服务端关闭了跨身份私聊 →\n   入口没跟着收，就变成了「必然报错的死按钮」。\n   **凡是在服务端新增一条拒绝规则，必须同时把对应的前端入口一并收掉。**\n"
+        },
+        {
+          "id": "source-6b885fe9017c44b3-s23",
+          "title": "跨身份私聊已彻底关闭（v1.1.2 起）",
+          "level": 3,
+          "line": 446,
+          "endLine": 469,
+          "text": "### 跨身份私聊已彻底关闭（v1.1.2 起）\n\n⚠️ 硬性规则：**私聊只在注册用户之间**。用户↔游客（`guest:` 形态）已全线关闭，任何代码不得复活。\n\n1. **协议层**：`Chat::dmPeerKey()` 对一切跨身份 peer 返回 `null`\n   （`$kind !== 'user' || $actor['kind'] !== 'user'` 即拒）。\n   `dm_history` / `dm_poll` 都在调 `dmPeerKey()` 之前先过这一关，自动覆盖。\n\n2. **发送层另设一道**：`Chat::send()` 里 `type === 'private'` 时独立校验\n   ——`to_guest_id` 非空即拒、发起方必须是注册用户、不能给自己发。\n   ⚠️ 不能只靠 `dmPeerKey()`：构造请求可以绕过前端入口直接打 `send`。\n\n3. **前端五处入口同步收口**（缺一处就留下一条死路）：\n   `showUserMenu`（头像右键菜单）、`openDmWith`（从消息进入）、\n   `pm`（旧调用点，插件可能仍调）、`openDm`（含 URL 恢复 `?dm=guest:xx`）、\n   `send`（私聊视图内发消息）、`dmFromUrl`（地址栏解析直接丢弃 `guest:` 形态）。\n\n4. **会话列表**：`Chat::conversations()` 的游客分支**整体跳过**\n   ——游客没有任何私聊会话，v1.1.0 时期的跨身份存量消息由 `dmPeerKey()` 兜底过滤。\n   `dmPairConds()` 保留 `guest_id` 分支纯属防御性兜底，**不是**为了支持跨身份。\n\n5. **为什么关**：游客身份随浏览器会话消亡，同一个「游客昵称」背后可能是任意多个人；\n   允许注册用户去私聊一个「随时可能是另一个人」的对象既不可靠也无法审计。\n"
+        },
+        {
+          "id": "source-6b885fe9017c44b3-s24",
+          "title": "群公告只隶属具体群聊，没有「系统公告 / 全站公告」（v1.1.2 起）",
+          "level": 3,
+          "line": 470,
+          "endLine": 497,
+          "text": "### 群公告只隶属具体群聊，没有「系统公告 / 全站公告」（v1.1.2 起）\n\n⚠️ 硬性规则：`announcements` 插件里 **`room_id=0` 不再有任何含义**（旧的「全站公告」标记已删除）。\n`room_id=0` 只是私聊的虚拟空间，公告绝不能借用它。\n\n1. **为什么删**：`room_id=0` 同时被「全站公告」和「私聊虚拟空间」占用，语义打架；\n   更要命的是它直接制造了一个必然假成功的删除路径（见下条）。\n\n2. **删除必须检查 `rowCount`——这是本项目的血泪教训**。\n   原实现 `DELETE FROM plugin_announcements WHERE id=? AND room_id=?`，而 `room_id` 来自\n   **当前群**；目标公告不属于当前群时就匹配 0 行，可代码**无条件返回 `ok:true`**。\n   表现是：接口说「公告已删除」、前端弹 toast 关弹窗，刷新后公告纹丝不动，\n   **用户完全无从判断真假**。现在服务端先取公告自身 `room_id` 判权限、\n   再仅以 `id` 删除、并以 `rowCount` 作为唯一成功判据。\n   ⚠️ **凡是 DELETE 类操作，一律不允许无条件返回成功**。\n\n3. **权限按「公告自身归属」判，不按调用方传的 room_id 判**。\n   前端只传 `id`；`$oaCanManage($ctx, $row['room_id'])` 用查出来的真实归属。\n   前后台必须同口径（此前后台批量删除只按 `id`、无 `room_id` 过滤，\n   于是「后台能删、前台删不掉」）。\n\n4. **`add` 必须拒绝 `room_id <= 0`**，`list` 同样拒绝。\n   建表时 `room_id` 去掉 `DEFAULT 0`，让「非正数」在库层面就不合法。\n\n5. **一次性清理**：`$oa_boot` 里 `DELETE FROM plugin_announcements WHERE room_id<=0`\n   清掉旧版遗留的全站公告，幂等。旧 `announcements` 表**保留不删**（含迁移源数据），\n   只是不再被任何代码读取。\n"
+        },
+        {
+          "id": "source-6b885fe9017c44b3-s25",
+          "title": "设计备忘录",
+          "level": 2,
+          "line": 498,
+          "endLine": 501,
+          "text": "## 设计备忘录\n\n> 本节记录跨版本长期有效的架构约定，**新功能一律遵守**；与既有条目冲突时以本节为准。\n"
+        },
+        {
+          "id": "source-6b885fe9017c44b3-s26",
+          "title": "敏感操作安全校验（v1.0.91 起）",
+          "level": 3,
+          "line": 502,
+          "endLine": 532,
+          "text": "### 敏感操作安全校验（v1.0.91 起）\n\n⚠️ 硬性规则：凡是「不可逆 / 影响他人 / 影响账号安全」的操作，必须接入敏感操作校验，\n不得只靠普通签名提交。\n\n1. **敏感操作范围**（当前已覆盖，新增同类功能必须照做）：\n   - 退出登录（`logout`）；\n   - 删除内容：撤回 / 删除消息（`recall`、`msg_delete`）、贴纸删除（`sticker_del`）、\n     公告删除（`admin_ann_del`）、敏感词删除（`admin_word_del`）、附件删除（插件）；\n   - 管理员删 / 恢复数据：群聊删除（`admin_room_del`）、审核撤销（`admin_room_trash_undo`）、\n     批量处置（`admin_room_batch`）、插件卸载（`admin_plugin_uninstall`）；\n   - 账号与权限类：用户禁用 / 用户组修改（user-manager 插件）、禁言（ban-manager 插件）、\n     关闭两步验证 / 重置恢复码（twofa 插件）；\n   - 今后任何「清理缓存、批量清理、重置、导出后删除源」类接口，**上线前必须**按下述机制标记。\n\n2. **服务端机制**（index.php API 入口统一拦截）：\n   - 核心敏感 action 列表维护在 `$SENSITIVE`；插件路由用\n     `Plugin::route($action, $fn, ['sensitive' => true])` 或注册后追加\n     `Plugin::sensitive($action)` 声明（清单随插件缓存持久化）；\n   - 校验内容：仅接受 **POST** + **一次性操作票据**（`Sec::ticketVerify()`）；\n   - 票据由 `?action=ticket` 签发（需签名，写入会话），**校验通过立即作废**，5 分钟有效；\n     即使签名被截获也无法重放（票据一次性），跨站请求因拿不到票据而被拒；\n   - 校验失败写安全日志（`Sec::log('sensitive_reject', ...)`）。\n\n3. **前端机制**：统一用 `OwApi.secure(action, data, cb)` 调用（自动先取票再提交），\n   不要直接 `OwApi.post` 敏感接口；`OwApi.secure` 同时被 OwAdmin / 插件 JS 使用。\n   敏感操作在 UI 层保留二次确认弹窗（`confirmModal` / `OwAdmin.confirm`），两层防护缺一不可。\n\n4. **会话锁注意**：ticket 签发与敏感操作必须保持会话可写（index.php `$keepSession`），\n   新增敏感 action 时无需改这里（由 `$SENSITIVE` / 插件清单自动覆盖）。\n"
+        },
+        {
+          "id": "source-6b885fe9017c44b3-s27",
+          "title": "插件代码按需加载（v1.0.90 起）",
+          "level": 3,
+          "line": 533,
+          "endLine": 546,
+          "text": "### 插件代码按需加载（v1.0.90 起）\n\n1. `Plugin::init()` 不再在每个请求 require 全部 `main.php`；改为读取\n   `data/cache/plugins.json`（元数据 + 注册清单：钩子 / 路由 / 后台页 / 敏感标记 / 资源），\n   请求周期内只在实际用到时才加载对应插件代码。\n\n2. **对插件的硬性契约**：`main.php` 顶层只做 `Plugin::*` 注册（on / route / adminPage /\n   asset / sensitive），不做输出、不依赖加载顺序、不产生其它副作用——清单缓存与后台探测\n   机制都依赖此约定。\n\n3. 新增钩子 / 路由无需手工更新缓存：插件文件 mtime 变化后，首个相关请求会自动重建清单。\n\n4. 资源合并（`?action=assets`）走清单 + 合并缓存；插件新增 JS/CSS 后刷新页面即自动生效。\n"
+        },
+        {
+          "id": "source-6b885fe9017c44b3-s28",
+          "title": "登录会话与 Cookie 安全（v1.0.94 起）",
+          "level": 3,
+          "line": 547,
+          "endLine": 559,
+          "text": "### 登录会话与 Cookie 安全（v1.0.94 起）\n\n1. **会话指纹绑定**：会话创建时记录 `sec_fp`（User-Agent + IP 前两段/IPv6 前三组的 SHA-256），\n   每个请求在 `Sec::fingerprintGuard()`（DB::init 之后、Auth::user 之前）比对，\n   不匹配即销毁会话并写安全日志 `session_fingerprint_mismatch`——\n   登录 Cookie 被跨站窃取 / 本地读取后，换浏览器或换网络重放无效。\n   注意：必须在 `DB::init` 之后调用（守卫拒绝时要写日志），否则 PDO 未初始化直接 fatal。\n2. **Cookie 参数基线**：会话与身份 Cookie 一律 `httponly + samesite=Lax`，\n   `secure` 由 `Sec::isHttps()` 动态决定（https 部署自动开启；本地 http 不开启）；\n   匿名签名密钥 `owl_akey` 有效期 7 天（与会话一致），游客令牌 `owl_guest` 1 年。\n3. **会话固定防护**：登录成功时 `session_regenerate_id(true)`（Auth::login 已有，勿删）。\n4. 敏感操作另有 v1.0.91 一次性票据（见上节），两层互不替代。\n"
+        },
+        {
+          "id": "source-6b885fe9017c44b3-s29",
+          "title": "访客 IP 获取规范（v1.0.98 起）",
+          "level": 3,
+          "line": 560,
+          "endLine": 575,
+          "text": "### 访客 IP 获取规范（v1.0.98 起）\n\n⚠️ 硬性规则：全项目获取访客 IP **只能通过 `Sec::ip()`，且其唯一数据源是\n`$_SERVER['REMOTE_ADDR']`**（服务器原始地址，取自 TCP 连接对端，客户端无法伪造）。\n\n1. **禁止读取任何可伪造头**：`X-Forwarded-For`、`X-Real-IP`、`CF-Connecting-IP`、\n   `Client-IP` 等——攻击者可直接构造这些头冒充任意 IP，污染安全日志、绕过 IP 禁言\n   （ban-manager）与登录/发言限频。全项目 12 处 IP 消费点（日志、禁言、限频、指纹等）\n   均已收敛到 `Sec::ip()`，不得旁路。\n2. **反代部署的正规做法**：如站点置于可信反向代理之后，应在代理层把真实客户端 IP\n   写入 `REMOTE_ADDR` 传递（`fastcgi_param REMOTE_ADDR $真实IP变量`），\n   PHP 代码永远只读 REMOTE_ADDR，一行都不改。\n3. **`ow_site_url()` 例外说明**：该函数读 `X-Forwarded-Host/Proto` 仅用于\n   **生成资源链接**（站点地址自动识别，反代场景必需），不参与鉴权与重定向决策；\n   管理员在后台手动配置 site_url 后自动识别分支即被完全关闭。\n"
+        },
+        {
+          "id": "source-6b885fe9017c44b3-s30",
+          "title": "⚠️ 禁止浏览器原生弹窗（v1.0.112 起硬性约束，历次违反重点）",
+          "level": 3,
+          "line": 576,
+          "endLine": 588,
+          "text": "### ⚠️ 禁止浏览器原生弹窗（v1.0.112 起硬性约束，历次违反重点）\n\n前台与插件 **一律使用自研弹窗**，**禁止 `confirm()` / `alert()` / `prompt()`**：\n- 确认类 → `OwChat.confirm(text, onOk)`（前台，v1.0.112 新增前台版）/ `OwAdmin.confirm`（后台）；\n- 消息提示 → `toast(msg)`；\n- 输入类 → `OwChat.openModal(html)` 自建表单弹窗（参照私信弹窗 pm 实现）。\n\n**每次发版前必须执行检查**（出现任何一行即违规）：\n```\ngrep -rn \"w\\.confirm(\\|window\\.confirm(\\|[^.a-zA-Z]alert(\\|w\\.prompt(\" assets/js/chat.js plugins/*/*.js\n```\n已知违规历史：v1.0.112 前公告删除用 w.confirm、私信用 w.prompt、twofa 两处降级 alert——全部已修复。\n"
+        },
+        {
+          "id": "source-6b885fe9017c44b3-s31",
+          "title": "本地回归的测试口径陷阱（v1.1.0 踩过，务必按此写脚本）",
+          "level": 3,
+          "line": 589,
+          "endLine": 730,
+          "text": "### 本地回归的测试口径陷阱（v1.1.0 踩过，务必按此写脚本）\n\n浏览器端到端回归（Playwright + 系统 Chrome `channel:'chrome'`）极易得到**假阴性**，\n以下两点是本项目的硬性口径：\n\n1. **注入会话必须走 `Sec::sessionStart($CFG)`**\n   项目会话名是 `OWLSESSID`，且装了自定义 `SessionHandlerInterface`（会话审计 + 7 天存活，\n   见 `core/security.php`）。临时注入脚本若图省事直接写：\n   ```php\n   if (session_status() === PHP_SESSION_NONE) @session_start();   // ❌ 错\n   $_SESSION['uid'] = 20;\n   ```\n   只会写出 `PHPSESSID`，`index.php` 根本读不到 → 页面**退化成游客身份**\n   （`OwChat.init({actor:{kind:'guest', id:297,...}})`），\n   表现为「接收方看不到私聊」「游客能发言」等一堆并不存在的 bug。\n   正确写法：\n   ```php\n   define('OWLSGO_VERSION', '1.1.0');\n   $CFG = require __DIR__.'/core/config.php';\n   require_once __DIR__.'/core/db.php';\n   require_once __DIR__.'/core/security.php';\n   DB::init($CFG);\n   Sec::sessionStart($CFG);          // ✅ 关键\n   $_SESSION['uid'] = (int)$_GET['uid'];\n   ```\n   验证身份是否真的生效：`curl -sk -c jar \"…/_smoke_session.php?uid=20\" -o /dev/null`，\n   再 `curl -sk -b jar \"…/?page=chat\"` 检查 `OwChat.init({…,\"actor\":{\"kind\":\"user\",\"id\":20}`。\n\n2. **驱动发消息必须走真实输入框路径**\n   ⚠️ **v1.2.1 起此限制已解除**：私聊路由不再依赖 `!opt.type`，\n   `OwChat.send({ type: 'image'|'file'|'text', content })` 在私聊视图下也会正确走私聊通道\n   （这正是本次修复的点——此前图片/文件因为绕过了私聊分支而必然失败）。\n   不过回归测试仍建议走真实输入框路径，最贴近用户实际操作：\n   ```js\n   document.getElementById('owInput').value = '内容';\n   OwChat.send();                    // ✅ 等价于点发送按钮 / 按回车\n   ```\n   同理，**切换会话要模拟点击侧栏 `<li>`**（会走 `room_join` 鉴权与密码房流程），\n   直接调 `OwChat.switchRoom()` 会跳过 `room_join`，出现列表项缺失等假象。\n\n3. **`position:fixed` 元素不能用 `offsetParent` 判可见性**（v1.1.0 踩过）\n   `offsetParent` 对 `position:fixed` 元素**恒为 `null`**。右键菜单 `#owCtxMenu`\n   正是 `position:fixed`，用它判断会得到「菜单没弹出」的假阴性。\n   正确口径：`getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().width > 0`。\n\n4. **消息 DOM 用 `id=\"owMsg<数字>\"`，没有 `data-mid`**\n   `document.querySelector('.ow-msg').getAttribute('data-mid')` 返回 `null`，\n   `+null` 得 `0` → 后续删除接口拿着 `id=0` 去调，**删掉了别人的消息还断言成功**。\n   正确写法：`/^owMsg(\\d+)$/.exec(el.id)`。\n\n5. **敏感路由票据一次性，脚本里不能「直调 + 点按钮」混用**\n   `OwApi.secure()` 先取 `ticket` 再带票据提交，服务端 `ticketVerify()` 用后即焚。\n   若测试先直调接口再点 UI 按钮，两者会互相抢票据 → 后者报\n   「安全校验失败，请刷新页面后重试」，是**脚本编排问题而非产品缺陷**。\n   `security_logs` 里的 `sensitive_reject` 记录是这类假失败的铁证。\n\n6. **气泡配色比对必须「同位置口径」**\n   气泡颜色由 `.mine` / 非 `.mine` 决定，跨维度比必然失败\n   （拿私聊的「自己消息」比群聊的「他人消息」→ 一个 `#e6f7ff` 一个 `#f5f7fa」）。\n   正确口径：私聊 mine vs 群聊 mine、私聊 other vs 群聊 other，双向都比。\n\n7. **测「默认隐藏」的元素要临时加类再量几何**\n   `display:none` 元素 `getBoundingClientRect()` 全为 0，量出的间距无意义。\n   正确口径：先 `el.className += ' ow-time-show'` 量完再摘掉。\n\n8. **数据库文件名是 `owlsgo.db` 不是 `owlsgo.sqlite`**\n   连错库时 PDO 会静默建一个**空库**——不报错、无输出，只有「查不到任何行」。\n   核查数据前先 `ls data/` 确认真实文件名。\n\n9. **站点是 HTTPS，用 `curl -k` / `ignoreHTTPSErrors: true`**\n   HTTP 端口（8099）上没有 server 块，会返回 **502 `upstream connect failed`**，\n   看起来像 PHP 挂了，实际是协议用错。Nginx 报错日志里的真实请求 `host: localhost` 可佐证。\n\n10. **`?action=assets&type=js` 只合并插件资源，不含核心 `chat.js`**（v1.1.1 踩过）\n    `Plugin::renderAssets()` 只遍历插件清单，核心脚本是独立\n    `<script src=\"assets/js/chat.js?v=版本\">` 引入的。\n    拿合并输出 `grep openDmWith` 得到 0，会误判成「线上跑的是旧版 JS」。\n    正确口径：`curl -sk \"https://localhost/assets/js/chat.js\"` 直接拉静态文件，\n    再 `md5sum` 与源文件对照。\n\n11. **`poll` 的返回是扁平合并，不在 `r.data` 里**（v1.1.1 踩过）\n    `Api::json(['ok' => true] + Chat::poll(...))` → `online` / `online_status` / `since`\n    都在**顶层**。写成 `r.data.online_status` 恒为 `undefined`，\n    会把「权限判定写错了」误报成「功能没实现」。\n\n12. **后台是纯前端切页，插件页内容不进首屏**（v1.1.1 踩过）\n    `?page=admin` 只渲染菜单骨架，插件页由 `data-apage=\"plugin:<slug>\"` 点击后异步拉取。\n    直接 `goto('?page=admin&p=xxx')` 找不到任何表单。\n    正确口径：`page.click('#owAdminMenu li[data-apage=\"plugin:xxx\"]')` 再等 1.5s。\n\n13. **切群后不要立刻断言长轮询带回来的数据**（v1.1.1 踩过）\n    长轮询最长挂起 20s，`switchRoom()` 后立刻读成员列表会读到**上一轮**的结果\n    （或空列表），是假阴性。正确口径：切群后等 ≥2.5s，或直调 `poll`（`timeout: 5`）验证字段。\n    ⚠️ 注意这不只是测试问题——真实缺陷也长这样：群聊↔群聊切换时若不作废在途轮询世代，\n    旧循环醒来会用**上一个群**的 online 列表刷侧栏，表现为「切了群但成员列表延迟二十秒」。\n    `switchRoom()` 现已统一自增 `pollGen` 作废在途请求（v1.1.1 修）。\n\n14. **`OwApi.secure(act, data, cb)` 的第一个参数是 action 名，别把方法名当 action 传进去**（v1.1.2 踩过）\n    写辅助函数时若图省事写成 `post('secure', data)` 内部再拼 `'secure'`，\n    实际发出的是 `OwApi.secure('secure', …)` → 服务端回 `{\"ok\":false,\"msg\":\"未知操作\"}`。\n    这个失败**长得像产品缺陷**（所有敏感操作全部失效），\n    极易让人跑去改服务端。识别口径：`未知操作` = action 名拼错了，不是权限或路由问题。\n\n15. **判定「游客消息」不要臆造 CSS 类**（v1.1.2 踩过）\n    `roleTag()` 只输出 `ow-tag-owner` / `ow-tag-vip` / `ow-tag-member` / `ow-tag-title`，\n    **没有** `ow-role-guest`。`querySelector('.ow-role-guest')` 恒为 `null`，\n    会让「游客样本数为 0」的过滤条件把整组断言变成空数组恒真/恒假。\n    正确口径：游客无头像图（`avatarHtml` 走纯色底 + 内联 `style`），\n    所以 `isGuest = !av.querySelector('img')`。\n\n16. **改完代码先在**源码目录**外的地方确认数据库位置**（v1.1.2 踩过）\n    真实库在 WWW 目录（`D:/Program Files (x86)/phpstudy_pro/WWW/Owlsgo-Chat/data/owlsgo.db`），\n    源码目录的 `data/` 只有 `.gitkeep`。在源码目录用 PDO 直连会**静默建出一个空库**\n    （`no such table: plugin_announcements`），排查时看起来像「插件表根本没建」。\n    正确口径：诊断脚本写到临时文件，`cp` 进 WWW 目录跑，跑完即删。\n17. **CLI 调试脚本必须先 `define('OWLSGO_VERSION', ...)`**（v1.1.12 踩过）\n    否则 `Plugin::init()` require 插件 `main.php` 时，会被每个插件开头的\n    `if (!defined('OWLSGO_VERSION')) exit;` **静默终止整个脚本**——\n    表现为无任何输出、无 stderr、退出码 0（`exit` 是正常终止，PHP 不报 Fatal）。\n    定位手段：`register_shutdown_function` + `error_get_last()` 逐行往文件打点看断点。\n    另注：`mkdir(): File exists` 这类被 `@` 抑制的警告**不是**根因，别被带偏。\n18. **插件里加列只能用 `DB::ensureColumn()`，不能用 `DB::addColumn()`**（v1.1.12 踩过）\n    `addColumn/hasColumn/dropColumn` 都是 private，插件调用抛\n    `Call to private method ... from global scope`，而 `Plugin::loadPlugin()` 的\n    `try/catch` 会吞掉插件异常只记 `plugin_error` → **该行之后所有 `Plugin::on()`\n    都不注册，但 `data/cache/plugins.json` 里的 hooks 列表仍是旧的**。\n    识别指纹：清单里 `sig` 是新的（mtime 已刷新）但 `hooks` 是旧的。\n    表现极像「钩子没触发」，实际是「插件只加载了一半」。`$default` 传**带引号的字面量**。\n19. **`OwApi.post` 是回调式，没有 Promise**（v1.1.12 踩过）\n    `await page.evaluate(() => OwApi.post(...))` 恒得 `{}`，所有字段 `undefined`，\n    看起来像「接口返回空」。要包一层：\n    `page.evaluate(([a,d]) => new Promise(res => OwApi.post(a,d,r=>res(r))), [action, data])`。\n    顺带：插件路由列表的键是 **`data`**（不是 `rows`）；`stats` 是**扁平顶层字段**\n    （`fail`/`logout`/`fp_mismatch` 直接在顶层，不在 `stats` 子对象里）；\n    「当前用户」不是独立 action，而是页面内嵌的 `OwChat.cfg.me`。\n\n其他既有纪律：临时文件用完必删（尤其 `_smoke_session.php` 在 WWW 目录、\nPlaywright 脚本在 node workspace 目录）；opcache `revalidate_freq=60`，\n改完 PHP 至少等一次重校验窗口再复查，勿凭一次 curl 就下结论。\n**清理临时文件时只删自己本轮创建的** —— 目录里可能有用户自己的未跟踪文件，\n`git checkout` 恢复不了（v1.1.0 误删过用户的 `debug_check.php`）。\n"
+        }
+      ],
+      "history": {
+        "complete": false,
+        "version": null,
+        "lastEdited": "2026-10-08T17:05:07.594Z",
+        "commit": null
+      }
+    },
+    {
+      "id": "source-eb61d3969825dc76",
+      "path": "设计文档/前后端代码安全审核AI提示词.md",
+      "kind": "instruction",
+      "scope": "设计文档",
+      "discoveredFrom": null,
+      "applicability": "unreviewed",
+      "text": "“你现在是一位拥有10年经验的资深 Web 安全专家和全栈架构师。在我将以下网站代码提交到生产环境之前，请进行全面的审查和重构。请严格按照以下 Web 专属维度进行分析：\nWeb 安全漏洞 (Web Security)：\n检查是否存在 SQL 注入、XSS（跨站脚本）、CSRF（跨站请求伪造）漏洞。\n检查接口是否缺少权限校验（越权访问）和频率限制（防刷/防爬虫）。\n检查是否有敏感数据（如密码、Token、用户隐私）明文存储或在前端暴露的风险。\nWeb 性能与并发 (Web Performance)：\n数据库层面：是否存在 N+1 查询问题？是否缺少必要的索引？是否有慢查询风险？\n缓存层面：高频读取的数据是否使用了缓存（如 Redis）？是否存在缓存穿透/雪崩风险？\n并发层面：是否存在线程安全问题？接口是否支持水平扩展？\n前后端交互与接口规范 (API & Frontend)：\n接口是否遵循 RESTful 规范？入参校验是否严格？\n是否处理了跨域（CORS）问题？\n前端代码（如有）是否存在内存泄漏、不必要的重复渲染或打包体积过大的问题？\n容错与异常处理 (Resilience)：\n第三方服务（如支付、短信、OSS）调用是否有超时设置和重试机制？\n异常是否被优雅捕获并返回标准的 HTTP 状态码，而不是把后端报错堆栈直接暴露给前端？\n输出要求：\n首先，按严重程度（致命/严重/建议）列出问题清单，并解释潜在的业务影响。\n其次，提供重构后的代码，并用注释标明修改点。\n最后，给出针对该接口的 Postman/curl 测试用例或自动化测试建议。",
+      "sections": [
+        {
+          "id": "source-eb61d3969825dc76-s1",
+          "title": "前后端代码安全审核AI提示词.md",
+          "level": 1,
+          "line": 1,
+          "endLine": 20,
+          "text": "“你现在是一位拥有10年经验的资深 Web 安全专家和全栈架构师。在我将以下网站代码提交到生产环境之前，请进行全面的审查和重构。请严格按照以下 Web 专属维度进行分析：\nWeb 安全漏洞 (Web Security)：\n检查是否存在 SQL 注入、XSS（跨站脚本）、CSRF（跨站请求伪造）漏洞。\n检查接口是否缺少权限校验（越权访问）和频率限制（防刷/防爬虫）。\n检查是否有敏感数据（如密码、Token、用户隐私）明文存储或在前端暴露的风险。\nWeb 性能与并发 (Web Performance)：\n数据库层面：是否存在 N+1 查询问题？是否缺少必要的索引？是否有慢查询风险？\n缓存层面：高频读取的数据是否使用了缓存（如 Redis）？是否存在缓存穿透/雪崩风险？\n并发层面：是否存在线程安全问题？接口是否支持水平扩展？\n前后端交互与接口规范 (API & Frontend)：\n接口是否遵循 RESTful 规范？入参校验是否严格？\n是否处理了跨域（CORS）问题？\n前端代码（如有）是否存在内存泄漏、不必要的重复渲染或打包体积过大的问题？\n容错与异常处理 (Resilience)：\n第三方服务（如支付、短信、OSS）调用是否有超时设置和重试机制？\n异常是否被优雅捕获并返回标准的 HTTP 状态码，而不是把后端报错堆栈直接暴露给前端？\n输出要求：\n首先，按严重程度（致命/严重/建议）列出问题清单，并解释潜在的业务影响。\n其次，提供重构后的代码，并用注释标明修改点。\n最后，给出针对该接口的 Postman/curl 测试用例或自动化测试建议。"
+        }
+      ],
+      "history": {
+        "complete": false,
+        "version": null,
+        "lastEdited": "2026-09-08T08:51:54.207Z",
+        "commit": null
+      }
+    }
+  ],
+  "architectureBinding": {
+    "mapId": "owlsgo-chat",
+    "mapRevision": 11,
+    "sourceRevision": "3f0e154cbd514eb1730590ebe2a9fb9db4f20761"
+  },
+  "rules": [
+    {
+      "id": "rule-phpcgi-limit",
+      "name": "长轮询占进程是容量上限现实（WS 的动因）",
+      "condition": "评估实时通道容量与选择传输层时",
+      "explanation": "README 明确：长轮询每个挂起连接占一个 php-cgi 进程，默认 1~2 个进程就会排队。用户基数增长后这是硬墙，也是 WS 改造的目标之一：把连接集中到一个常驻进程。",
+      "verification": "对比启用 WS 前后的 php-cgi 占用与请求排队情况。",
+      "applicability": "applicable",
+      "modules": [
+        "realtime",
+        "nginx-site",
+        "ws-gateway"
+      ],
+      "sourcePath": "README.md",
+      "line": 16,
+      "endLine": 18,
+      "category": "interfaces",
+      "topic": {
+        "id": "capacity",
+        "name": "容量与运行"
+      }
+    },
+    {
+      "id": "rule-cron-driver",
+      "name": "计划任务需要长轮询之外的驱动承接",
+      "condition": "长轮询流量被 WS 取代后",
+      "explanation": "插件计划任务目前由长轮询的 cronTick 驱动；全站切到 WS 后必须有承接（WS 进程驱动 cronTick 或系统任务打 ?action=cron），否则日常任务会饿死。",
+      "verification": "全站仅 WS 在线时，插件计划任务在预期周期内执行。",
+      "applicability": "applicable",
+      "modules": [
+        "plugin-system",
+        "ws-gateway"
+      ],
+      "sourcePath": "README.md",
+      "line": 34,
+      "endLine": 34,
+      "category": "lifecycle",
+      "topic": {
+        "id": "cron",
+        "name": "计划任务"
+      }
+    },
+    {
+      "id": "rule-api-sign",
+      "name": "HTTP 签名口径；WS 握手用等价防重放机制",
+      "condition": "设计 WS 握手鉴权时",
+      "explanation": "现有 HTTP API 统一以 ts+sign 签名；WS 握手应使用一次性票据（时效 + 用后即焚）达到等价防重放强度，帧内不再重复签名，审计与 HTTP 侧同源。",
+      "verification": "伪造/重放握手被拒；票据一次性生效并有审计记录。",
+      "applicability": "applicable",
+      "modules": [
+        "security",
+        "ws-gateway",
+        "app-entry"
+      ],
+      "sourcePath": "README.md",
+      "line": 64,
+      "endLine": 64,
+      "category": "security",
+      "topic": {
+        "id": "api-auth",
+        "name": "接口与鉴权"
+      }
+    },
+    {
+      "id": "rule-ws-degrade",
+      "name": "实时通道保留降级路径",
+      "condition": "改造实时消息通道时",
+      "explanation": "原设计明确 WebSocket 实时推送 + 心跳保活 + 断线自动降级轮询。WS 落地必须保留「降级到长轮询」的兜底与自动重连，任一时刻通道不可用都不能让聊天停摆。",
+      "verification": "断线/服务停止场景验证自动回落长轮询、恢复后自动重连。",
+      "applicability": "applicable",
+      "modules": [
+        "realtime",
+        "ws-gateway",
+        "web-ui"
+      ],
+      "sourcePath": "设计文档/开发文档.md",
+      "line": 20,
+      "endLine": 20,
+      "category": "interfaces",
+      "topic": {
+        "id": "realtime",
+        "name": "实时通道"
+      }
+    },
+    {
+      "id": "rule-heartbeat-presence",
+      "name": "心跳维持精确在线状态",
+      "condition": "实现心跳与在线状态时",
+      "explanation": "在线/离线要「精确」：WS 连接即在线、断开即离线；同时保留心跳窗口剔除半死连接（TCP 假活）。",
+      "verification": "挂起/断网场景下 45 秒窗口内从在线列表剔除。",
+      "applicability": "applicable",
+      "modules": [
+        "ws-gateway",
+        "realtime"
+      ],
+      "sourcePath": "设计文档/开发文档.md",
+      "line": 46,
+      "endLine": 46,
+      "category": "interfaces",
+      "topic": {
+        "id": "realtime",
+        "name": "实时通道"
+      }
+    },
+    {
+      "id": "rule-poll-exclusive",
+      "name": "消息区刷新通道互斥（世代号语义）",
+      "condition": "改动消息区刷新通道时",
+      "explanation": "群聊 poll 与私聊 dm_poll 共用消息区与输入栏，切换视图必须让旧循环自毁；WS 替换传输层时必须继承互斥语义，禁止两个在途通道同时刷新 #owMessages 或覆盖 since。",
+      "verification": "私聊↔群聊往返与 WS/长轮询模式切换：无串房、无重复、since 不回退。",
+      "applicability": "applicable",
+      "modules": [
+        "web-ui",
+        "realtime"
+      ],
+      "sourcePath": "设计文档/开发文档.md",
+      "line": 144,
+      "endLine": 147,
+      "category": "interfaces",
+      "topic": {
+        "id": "realtime",
+        "name": "实时通道"
+      }
+    },
+    {
+      "id": "rule-conv-list-channel",
+      "name": "会话列表独立通道、不打断当前会话",
+      "condition": "让会话列表接收实时更新时",
+      "explanation": "会话列表更新必须独立于当前会话通道，且重排只碰侧栏：不切会话、不重渲染消息区、不丢输入草稿；WS 推送前置/未读沿用同一条纪律。",
+      "verification": "其他会话来消息时列表前置，而当前会话高亮、消息区与输入草稿不受影响。",
+      "applicability": "applicable",
+      "modules": [
+        "web-ui",
+        "chat-list-widget"
+      ],
+      "sourcePath": "设计文档/开发文档.md",
+      "line": 200,
+      "endLine": 205,
+      "category": "interfaces",
+      "topic": {
+        "id": "realtime",
+        "name": "实时通道"
+      }
+    },
+    {
+      "id": "rule-legacy-browser",
+      "name": "老内核与移动端不依赖 WS",
+      "condition": "前端引入新传输层时",
+      "explanation": "站点需兼容落后内核浏览器；WS 不可用（旧内核、代理拦截、断线）时必须静默回落 AJAX 长轮询，页面不得以 WS 为前提。",
+      "verification": "禁用 WS 跑完整聊天主流程（登录、收、发、切换会话）。",
+      "applicability": "applicable",
+      "modules": [
+        "web-ui"
+      ],
+      "sourcePath": "设计文档/开发文档.md",
+      "line": 12,
+      "endLine": 12,
+      "category": "interfaces",
+      "topic": {
+        "id": "realtime",
+        "name": "实时通道"
+      }
+    },
+    {
+      "id": "rule-no-third-party",
+      "name": "零第三方依赖（含 WS 实现）",
+      "condition": "选择 WS 实现方式时",
+      "explanation": "WS 常驻进程必须纯 PHP 标准库实现（手写握手/帧/事件循环）；不得引入 Composer/vendor/Workerman/Node 运行时依赖。确需引入须先建议并等待用户确认。README 与前言同述此规则。",
+      "verification": "仓库无 composer.json/vendor/新增运行时依赖；WS 实现仅用 PHP 内置函数。",
+      "applicability": "applicable",
+      "modules": [
+        "ws-gateway",
+        "realtime"
+      ],
+      "sourcePath": "设计文档/开发文档.md",
+      "line": 70,
+      "endLine": 70,
+      "category": "configuration",
+      "topic": {
+        "id": "deps-deploy",
+        "name": "依赖与部署"
+      }
+    },
+    {
+      "id": "rule-deploy-simple",
+      "name": "默认部署不因 WS 引入常驻进程",
+      "condition": "增加运行形态时",
+      "explanation": "站点定位开箱即用/低成本部署（虚拟主机亦可）。WS 只能做可选增强：默认关闭即现状（零常驻进程），开启才需要额外进程，并提供随程序走的启动与守护说明。",
+      "verification": "默认部署安装向导与聊天全流程可用；关闭 WS 后进程可停、与现状一致。",
+      "applicability": "applicable",
+      "modules": [
+        "app-entry",
+        "ws-gateway"
+      ],
+      "sourcePath": "设计文档/开发文档.md",
+      "line": 7,
+      "endLine": 7,
+      "category": "configuration",
+      "topic": {
+        "id": "deps-deploy",
+        "name": "依赖与部署"
+      }
+    },
+    {
+      "id": "rule-multi-db",
+      "name": "跨引擎兼容延伸到常驻进程",
+      "condition": "常驻进程访问数据时",
+      "explanation": "WS 进程的数据访问必须走 DB:: 兼容层（方言收口处），不得写引擎特有 SQL。",
+      "verification": "同一声明式断言在 SQLite 与 MySQL 驱动下通过。",
+      "applicability": "applicable",
+      "modules": [
+        "db-layer",
+        "ws-gateway"
+      ],
+      "sourcePath": "设计文档/开发文档.md",
+      "line": 8,
+      "endLine": 8,
+      "category": "configuration",
+      "topic": {
+        "id": "deps-deploy",
+        "name": "依赖与部署"
+      }
+    },
+    {
+      "id": "rule-workerman-superseded",
+      "name": "前言 Workerman 表述已被用户裁决取代",
+      "condition": "阅读前言选型表述时",
+      "explanation": "前言仍写「Workerman WebSocket」；与零依赖硬性规则冲突，2026-09-26 用户裁决改为长轮询主通道；2026-10-15 用户再定 WS 方向，实现仍须零依赖手写。不要照前言引入 Workerman。",
+      "verification": "代码库无 Workerman/Composer 痕迹（仅文档表述保留）。",
+      "applicability": "superseded",
+      "sourcePath": "设计文档/开发文档.md",
+      "line": 2,
+      "endLine": 2,
+      "category": "configuration",
+      "topic": {
+        "id": "deps-deploy",
+        "name": "依赖与部署"
+      }
+    },
+    {
+      "id": "rule-dm-visibility",
+      "name": "推送私聊必须经可见性口径",
+      "condition": "WS 推送私聊/会话帧时",
+      "explanation": "任何私聊查询（含推送扇出）必须经 visible()/dmPairConds() 收口；WS 不是特权通道。合规查阅仍只能走 dmComplianceRead()。",
+      "verification": "第三方账号订阅他人会话收不到帧；超管亦不例外。",
+      "applicability": "applicable",
+      "modules": [
+        "chat-core",
+        "ws-gateway"
+      ],
+      "sourcePath": "设计文档/开发文档.md",
+      "line": 137,
+      "endLine": 138,
+      "category": "security",
+      "topic": {
+        "id": "visibility",
+        "name": "可见性与合规"
+      }
+    },
+    {
+      "id": "rule-visibility-server-truth",
+      "name": "受限可见性布尔由服务端下发",
+      "condition": "推送在线状态等受限信息时",
+      "explanation": "在线点等受限信息必须由服务端算好布尔随载荷下发（canSeeOnlineStatus 口径），WS 推送同样；前端只按标志渲染，不自行判身份。",
+      "verification": "会员/游客的推送载荷不含在线状态数据。",
+      "applicability": "applicable",
+      "modules": [
+        "chat-core",
+        "web-ui",
+        "ws-gateway"
+      ],
+      "sourcePath": "设计文档/开发文档.md",
+      "line": 423,
+      "endLine": 424,
+      "category": "security",
+      "topic": {
+        "id": "visibility",
+        "name": "可见性与合规"
+      }
+    },
+    {
+      "id": "rule-guest-ip",
+      "name": "IP 只取 TCP 对端，禁信可伪造头",
+      "condition": "WS 侧需要 IP 时",
+      "explanation": "全项目 IP 唯一来源是 REMOTE_ADDR（TCP 对端）；WS 走 nginx 反代后守护进程只见 127.0.0.1，禁止信任 X-Real-IP 等头做安全判定——WS 的安全决策以票据身份为主，不用 IP。",
+      "verification": "代码审查：WS 侧无基于可伪造头的安全判定；控制口仅本机/密钥可调。",
+      "applicability": "applicable",
+      "modules": [
+        "security",
+        "ws-gateway"
+      ],
+      "sourcePath": "设计文档/开发文档.md",
+      "line": 562,
+      "endLine": 563,
+      "category": "security",
+      "topic": {
+        "id": "visibility",
+        "name": "可见性与合规"
+      }
+    },
+    {
+      "id": "rule-sensitive-ops",
+      "name": "不可逆操作接入一次性票据",
+      "condition": "WS 引入写操作时",
+      "explanation": "本期计划 WS 只读（订阅/心跳），不含写操作；后续若增加撤回/删除类操作，必须走既有一次性票据体系，不得绕过。",
+      "verification": "评审 WS 帧处理写路径：无绕过票据的不可逆操作。",
+      "applicability": "applicable",
+      "modules": [
+        "security",
+        "ws-gateway"
+      ],
+      "sourcePath": "设计文档/开发文档.md",
+      "line": 504,
+      "endLine": 505,
+      "category": "security",
+      "topic": {
+        "id": "visibility",
+        "name": "可见性与合规"
+      }
+    },
+    {
+      "id": "rule-test-pitfalls",
+      "name": "回归沿用既有测试口径",
+      "condition": "为 WS 改造写回归脚本时",
+      "explanation": "沿用本项目硬性测试口径（Sec::sessionStart 注入会话、真实输入框发送、票据一次性不混用等），避免假阴性；只报告真实执行过的检查。",
+      "verification": "脚本按口径编写并自查（无 PHPSESSID 假身份等）。",
+      "applicability": "applicable",
+      "sourcePath": "设计文档/开发文档.md",
+      "line": 591,
+      "endLine": 592,
+      "category": "testing",
+      "topic": {
+        "id": "regression",
+        "name": "回归口径"
+      }
+    },
+    {
+      "id": "rule-security-audit",
+      "name": "上线前按维度安全自查",
+      "condition": "WS 层上线前",
+      "explanation": "新增 WS 入口按该提示词维度自查：注入/XSS/CSRF/越权/限流/明文存储/异常泄露，按致命/严重/建议输出清单。",
+      "verification": "输出分级清单并修复验证。",
+      "applicability": "applicable",
+      "sourcePath": "设计文档/前后端代码安全审核AI提示词.md",
+      "line": 18,
+      "endLine": 20,
+      "category": "security",
+      "topic": {
+        "id": "audit",
+        "name": "上线自查"
+      }
+    }
+  ],
+  "ruleReview": {
+    "scope": "本次仅审阅与 WS 实时层改造直接相关的规则（实时通道、依赖与部署、安全与可见性、计划任务、回归口径、上线自查）；README 与两份设计文档的其余章节未逐条审阅。",
+    "sourcePaths": [
+      "README.md",
+      "设计文档/开发文档.md",
+      "设计文档/前后端代码安全审核AI提示词.md"
+    ],
+    "reviewedAt": "2026-10-15T17:30:49.789Z",
+    "implementationVerification": "unverified"
+  }
+}

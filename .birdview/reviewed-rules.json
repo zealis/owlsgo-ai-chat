@@ -1,0 +1,244 @@
+{
+  "revision": "3f0e154cbd514eb1730590ebe2a9fb9db4f20761",
+  "scope": "本次仅审阅与 WS 实时层改造直接相关的规则（实时通道、依赖与部署、安全与可见性、计划任务、回归口径、上线自查）；README 与两份设计文档的其余章节未逐条审阅。",
+  "architectureBinding": {
+    "mapId": "owlsgo-chat",
+    "mapRevision": 11,
+    "sourceRevision": "3f0e154cbd514eb1730590ebe2a9fb9db4f20761"
+  },
+  "groups": [
+    {
+      "sourcePath": "README.md",
+      "category": "interfaces",
+      "topic": { "id": "capacity", "name": "容量与运行" },
+      "rules": [
+        {
+          "id": "rule-phpcgi-limit",
+          "name": "长轮询占进程是容量上限现实（WS 的动因）",
+          "anchor": "本项目实时通道是 AJAX 长轮询，每个挂起的轮询会占住一个 php-cgi 进程",
+          "condition": "评估实时通道容量与选择传输层时",
+          "explanation": "README 明确：长轮询每个挂起连接占一个 php-cgi 进程，默认 1~2 个进程就会排队。用户基数增长后这是硬墙，也是 WS 改造的目标之一：把连接集中到一个常驻进程。",
+          "verification": "对比启用 WS 前后的 php-cgi 占用与请求排队情况。",
+          "applicability": "applicable",
+          "modules": ["realtime", "nginx-site", "ws-gateway"]
+        }
+      ]
+    },
+    {
+      "sourcePath": "README.md",
+      "category": "lifecycle",
+      "topic": { "id": "cron", "name": "计划任务" },
+      "rules": [
+        {
+          "id": "rule-cron-driver",
+          "name": "计划任务需要长轮询之外的驱动承接",
+          "anchor": "统一计划任务（长轮询驱动或 `?action=cron`）",
+          "condition": "长轮询流量被 WS 取代后",
+          "explanation": "插件计划任务目前由长轮询的 cronTick 驱动；全站切到 WS 后必须有承接（WS 进程驱动 cronTick 或系统任务打 ?action=cron），否则日常任务会饿死。",
+          "verification": "全站仅 WS 在线时，插件计划任务在预期周期内执行。",
+          "applicability": "applicable",
+          "modules": ["plugin-system", "ws-gateway"]
+        }
+      ]
+    },
+    {
+      "sourcePath": "README.md",
+      "category": "security",
+      "topic": { "id": "api-auth", "name": "接口与鉴权" },
+      "rules": [
+        {
+          "id": "rule-api-sign",
+          "name": "HTTP 签名口径；WS 握手用等价防重放机制",
+          "anchor": "POST 携带 `ts` + `sign=md5(key|ts|action)`",
+          "condition": "设计 WS 握手鉴权时",
+          "explanation": "现有 HTTP API 统一以 ts+sign 签名；WS 握手应使用一次性票据（时效 + 用后即焚）达到等价防重放强度，帧内不再重复签名，审计与 HTTP 侧同源。",
+          "verification": "伪造/重放握手被拒；票据一次性生效并有审计记录。",
+          "applicability": "applicable",
+          "modules": ["security", "ws-gateway", "app-entry"]
+        }
+      ]
+    },
+    {
+      "sourcePath": "设计文档/开发文档.md",
+      "category": "interfaces",
+      "topic": { "id": "realtime", "name": "实时通道" },
+      "rules": [
+        {
+          "id": "rule-ws-degrade",
+          "name": "实时通道保留降级路径",
+          "anchor": "WebSocket 实时推送，心跳保活，断线自动降级轮询",
+          "condition": "改造实时消息通道时",
+          "explanation": "原设计明确 WebSocket 实时推送 + 心跳保活 + 断线自动降级轮询。WS 落地必须保留「降级到长轮询」的兜底与自动重连，任一时刻通道不可用都不能让聊天停摆。",
+          "verification": "断线/服务停止场景验证自动回落长轮询、恢复后自动重连。",
+          "applicability": "applicable",
+          "modules": ["realtime", "ws-gateway", "web-ui"]
+        },
+        {
+          "id": "rule-heartbeat-presence",
+          "name": "心跳维持精确在线状态",
+          "anchor": "精确的在线 / 离线状态追踪",
+          "condition": "实现心跳与在线状态时",
+          "explanation": "在线/离线要「精确」：WS 连接即在线、断开即离线；同时保留心跳窗口剔除半死连接（TCP 假活）。",
+          "verification": "挂起/断网场景下 45 秒窗口内从在线列表剔除。",
+          "applicability": "applicable",
+          "modules": ["ws-gateway", "realtime"]
+        },
+        {
+          "id": "rule-poll-exclusive",
+          "name": "消息区刷新通道互斥（世代号语义）",
+          "anchor": "两条长轮询必须互斥",
+          "condition": "改动消息区刷新通道时",
+          "explanation": "群聊 poll 与私聊 dm_poll 共用消息区与输入栏，切换视图必须让旧循环自毁；WS 替换传输层时必须继承互斥语义，禁止两个在途通道同时刷新 #owMessages 或覆盖 since。",
+          "verification": "私聊↔群聊往返与 WS/长轮询模式切换：无串房、无重复、since 不回退。",
+          "applicability": "applicable",
+          "modules": ["web-ui", "realtime"]
+        },
+        {
+          "id": "rule-conv-list-channel",
+          "name": "会话列表独立通道、不打断当前会话",
+          "anchor": "会话列表需要独立于消息长轮询的轻量轮询",
+          "condition": "让会话列表接收实时更新时",
+          "explanation": "会话列表更新必须独立于当前会话通道，且重排只碰侧栏：不切会话、不重渲染消息区、不丢输入草稿；WS 推送前置/未读沿用同一条纪律。",
+          "verification": "其他会话来消息时列表前置，而当前会话高亮、消息区与输入草稿不受影响。",
+          "applicability": "applicable",
+          "modules": ["web-ui", "chat-list-widget"]
+        },
+        {
+          "id": "rule-legacy-browser",
+          "name": "老内核与移动端不依赖 WS",
+          "anchor": "支持 AJAX 交互和响应式布局，兼顾 PC 与移动端使用体验",
+          "condition": "前端引入新传输层时",
+          "explanation": "站点需兼容落后内核浏览器；WS 不可用（旧内核、代理拦截、断线）时必须静默回落 AJAX 长轮询，页面不得以 WS 为前提。",
+          "verification": "禁用 WS 跑完整聊天主流程（登录、收、发、切换会话）。",
+          "applicability": "applicable",
+          "modules": ["web-ui"]
+        }
+      ]
+    },
+    {
+      "sourcePath": "设计文档/开发文档.md",
+      "category": "configuration",
+      "topic": { "id": "deps-deploy", "name": "依赖与部署" },
+      "rules": [
+        {
+          "id": "rule-no-third-party",
+          "name": "零第三方依赖（含 WS 实现）",
+          "anchor": "硬性规则：本项目禁止使用其他任何第三方框架和 Composer 包",
+          "condition": "选择 WS 实现方式时",
+          "explanation": "WS 常驻进程必须纯 PHP 标准库实现（手写握手/帧/事件循环）；不得引入 Composer/vendor/Workerman/Node 运行时依赖。确需引入须先建议并等待用户确认。README 与前言同述此规则。",
+          "verification": "仓库无 composer.json/vendor/新增运行时依赖；WS 实现仅用 PHP 内置函数。",
+          "applicability": "applicable",
+          "modules": ["ws-gateway", "realtime"]
+        },
+        {
+          "id": "rule-deploy-simple",
+          "name": "默认部署不因 WS 引入常驻进程",
+          "anchor": "纯原生 PHP，单核心代码文件，无框架和 Composer 依赖，部署与维护简单",
+          "condition": "增加运行形态时",
+          "explanation": "站点定位开箱即用/低成本部署（虚拟主机亦可）。WS 只能做可选增强：默认关闭即现状（零常驻进程），开启才需要额外进程，并提供随程序走的启动与守护说明。",
+          "verification": "默认部署安装向导与聊天全流程可用；关闭 WS 后进程可停、与现状一致。",
+          "applicability": "applicable",
+          "modules": ["app-entry", "ws-gateway"]
+        },
+        {
+          "id": "rule-multi-db",
+          "name": "跨引擎兼容延伸到常驻进程",
+          "anchor": "数据库结构和搜索能力保持跨引擎兼容",
+          "condition": "常驻进程访问数据时",
+          "explanation": "WS 进程的数据访问必须走 DB:: 兼容层（方言收口处），不得写引擎特有 SQL。",
+          "verification": "同一声明式断言在 SQLite 与 MySQL 驱动下通过。",
+          "applicability": "applicable",
+          "modules": ["db-layer", "ws-gateway"]
+        },
+        {
+          "id": "rule-workerman-superseded",
+          "name": "前言 Workerman 表述已被用户裁决取代",
+          "anchor": "PostgreSQL+ Workerman WebSocket 构建",
+          "condition": "阅读前言选型表述时",
+          "explanation": "前言仍写「Workerman WebSocket」；与零依赖硬性规则冲突，2026-09-26 用户裁决改为长轮询主通道；2026-10-15 用户再定 WS 方向，实现仍须零依赖手写。不要照前言引入 Workerman。",
+          "verification": "代码库无 Workerman/Composer 痕迹（仅文档表述保留）。",
+          "applicability": "superseded"
+        }
+      ]
+    },
+    {
+      "sourcePath": "设计文档/开发文档.md",
+      "category": "security",
+      "topic": { "id": "visibility", "name": "可见性与合规" },
+      "rules": [
+        {
+          "id": "rule-dm-visibility",
+          "name": "推送私聊必须经可见性口径",
+          "anchor": "超级管理员与后台管理同样不可查看或代读他人私聊",
+          "condition": "WS 推送私聊/会话帧时",
+          "explanation": "任何私聊查询（含推送扇出）必须经 visible()/dmPairConds() 收口；WS 不是特权通道。合规查阅仍只能走 dmComplianceRead()。",
+          "verification": "第三方账号订阅他人会话收不到帧；超管亦不例外。",
+          "applicability": "applicable",
+          "modules": ["chat-core", "ws-gateway"]
+        },
+        {
+          "id": "rule-visibility-server-truth",
+          "name": "受限可见性布尔由服务端下发",
+          "anchor": "凡是「谁能看见什么」的判定",
+          "condition": "推送在线状态等受限信息时",
+          "explanation": "在线点等受限信息必须由服务端算好布尔随载荷下发（canSeeOnlineStatus 口径），WS 推送同样；前端只按标志渲染，不自行判身份。",
+          "verification": "会员/游客的推送载荷不含在线状态数据。",
+          "applicability": "applicable",
+          "modules": ["chat-core", "web-ui", "ws-gateway"]
+        },
+        {
+          "id": "rule-guest-ip",
+          "name": "IP 只取 TCP 对端，禁信可伪造头",
+          "anchor": "全项目获取访客 IP",
+          "condition": "WS 侧需要 IP 时",
+          "explanation": "全项目 IP 唯一来源是 REMOTE_ADDR（TCP 对端）；WS 走 nginx 反代后守护进程只见 127.0.0.1，禁止信任 X-Real-IP 等头做安全判定——WS 的安全决策以票据身份为主，不用 IP。",
+          "verification": "代码审查：WS 侧无基于可伪造头的安全判定；控制口仅本机/密钥可调。",
+          "applicability": "applicable",
+          "modules": ["security", "ws-gateway"]
+        },
+        {
+          "id": "rule-sensitive-ops",
+          "name": "不可逆操作接入一次性票据",
+          "anchor": "必须接入敏感操作校验",
+          "condition": "WS 引入写操作时",
+          "explanation": "本期计划 WS 只读（订阅/心跳），不含写操作；后续若增加撤回/删除类操作，必须走既有一次性票据体系，不得绕过。",
+          "verification": "评审 WS 帧处理写路径：无绕过票据的不可逆操作。",
+          "applicability": "applicable",
+          "modules": ["security", "ws-gateway"]
+        }
+      ]
+    },
+    {
+      "sourcePath": "设计文档/开发文档.md",
+      "category": "testing",
+      "topic": { "id": "regression", "name": "回归口径" },
+      "rules": [
+        {
+          "id": "rule-test-pitfalls",
+          "name": "回归沿用既有测试口径",
+          "anchor": "极易得到**假阴性**",
+          "condition": "为 WS 改造写回归脚本时",
+          "explanation": "沿用本项目硬性测试口径（Sec::sessionStart 注入会话、真实输入框发送、票据一次性不混用等），避免假阴性；只报告真实执行过的检查。",
+          "verification": "脚本按口径编写并自查（无 PHPSESSID 假身份等）。",
+          "applicability": "applicable"
+        }
+      ]
+    },
+    {
+      "sourcePath": "设计文档/前后端代码安全审核AI提示词.md",
+      "category": "security",
+      "topic": { "id": "audit", "name": "上线自查" },
+      "rules": [
+        {
+          "id": "rule-security-audit",
+          "name": "上线前按维度安全自查",
+          "anchor": "按严重程度（致命/严重/建议）列出问题清单",
+          "condition": "WS 层上线前",
+          "explanation": "新增 WS 入口按该提示词维度自查：注入/XSS/CSRF/越权/限流/明文存储/异常泄露，按致命/严重/建议输出清单。",
+          "verification": "输出分级清单并修复验证。",
+          "applicability": "applicable"
+        }
+      ]
+    }
+  ]
+}

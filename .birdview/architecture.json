@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
   "mapId": "owlsgo-chat",
-  "revision": 8,
+  "revision": 11,
   "language": "zh",
   "project": {
     "id": "owlsgo-chat",
     "name": "Owlsgo-Chat (OChat) 即时通讯聊天室"
   },
   "constraintDiscovery": {
-    "checkedAt": "2026-10-02T18:45:00+08:00",
+    "checkedAt": "2026-10-15T23:25:00+08:00",
     "checkedPaths": [
       "README.md",
       "设计文档/开发文档.md",
@@ -16,12 +16,20 @@
       "设计文档/色彩搭配方案.md",
       "设计文档/前后端代码安全审核AI提示词.md",
       "设计文档/失控的防御系统图片API文档.md",
-      "设计文档/其他选择.md"
+      "设计文档/其他选择.md",
+      "PLUGIN.md",
+      "nginx-server.conf",
+      "core/chat.php",
+      "assets/js/chat.js",
+      "index.php",
+      "plugins/redis/main.php",
+      "plugins/chat-scripts/main.php"
     ],
     "uninspectedPaths": [
       "设计文档/.obsidian",
       "设计文档/Pasted image 20260908155620.png",
-      "设计文档/Pasted image 20260908160038.png"
+      "设计文档/Pasted image 20260908160038.png",
+      "参考文献"
     ]
   },
   "groups": [
@@ -53,7 +61,8 @@
         "upload-media",
         "security",
         "db-layer",
-        "plugin-system"
+        "plugin-system",
+        "ws-gateway"
       ],
       "evidence": [
         {
@@ -150,14 +159,18 @@
     },
     {
       "id": "realtime",
-      "name": "实时推送通道",
+      "name": "实时推送通道（现状：长轮询）",
       "kind": "local",
       "role": "backend",
-      "responsibility": "消息实时推送与在线状态心跳同步。经用户裁决：主通道采用 AJAX 长轮询（约 20 秒挂起 + 心跳保活 + 断线自动降级短轮询），零依赖、低成本虚拟主机可跑，不引入 Workerman。",
+      "responsibility": "消息实时推送与在线状态心跳同步的传输层（现状：AJAX 长轮询）。实现在 Chat::poll()/dmPoll()（约 20 秒挂起、0.5 秒探活）与前端 chat.js 世代号互斥的轮询循环；心跳随 poll 写入 online 表（45 秒窗口）。经用户裁决（2026-09-26）采用零依赖长轮询、不引入 Workerman。计划（2026-10-15，见 ws-gateway）：WS 常驻进程接管实时推送，长轮询保留为兜底与可切换开关。",
       "ownership": [
         {
           "kind": "file",
-          "path": "core/realtime.php"
+          "path": "core/chat.php"
+        },
+        {
+          "kind": "file",
+          "path": "assets/js/chat.js"
         }
       ],
       "evidence": [
@@ -172,12 +185,71 @@
           "line": 69,
           "note": "零依赖硬性规则（用户裁决优先遵守）",
           "quote": "硬性规则：本项目禁止使用其他任何第三方框架和 Composer 包"
+        },
+        {
+          "path": "core/chat.php",
+          "line": 1088,
+          "note": "长轮询实现位置与「零依赖替代 WebSocket」的原始注释（core/realtime.php 从未创建）",
+          "quote": "长轮询（主通道，零依赖替代 WebSocket）"
+        },
+        {
+          "path": "README.md",
+          "line": 16,
+          "note": "长轮询每连接占一个 php-cgi 进程，是 WS 改造的动因",
+          "quote": "每个挂起的轮询会占住一个 php-cgi 进程"
         }
       ],
       "status": "supported",
       "openQuestions": [],
       "layout": {
         "row": 1,
+        "column": 0
+      }
+    },
+    {
+      "id": "ws-gateway",
+      "name": "WebSocket 实时网关（拟建，未实现）",
+      "kind": "local",
+      "role": "backend",
+      "responsibility": "拟建的零依赖 WS 常驻推送进程（PHP CLI，手写握手 / 帧解析 / 事件循环）：承载连接保活心跳（前端 startHeartbeat 形状）、在线状态（连接即在线/断开即离线，保留 45 秒窗口剔除半死连接）、按房间与会话的消息推送扇出（复用 Chat::visible()/pack()/allMembers() 口径，不复制任何可见性规则）、PHP→daemon 控制口（消息 nudge 与缓存失效）。发送 P1/P2 期间仍走 HTTP，P3 迁入 WS（收 = 发；须以子进程隔离插件同步长任务，Linux 生产用 pcntl/fork）；长轮询端点保留为兜底，前端断线自动回落、开关一键切回。运维：Linux 用 PM2 守护启动（自启 + 崩溃自动重启）。部署形态参考 ttt 站点（nginx /ws 反代 + wss 同源 + 客户端 30s 心跳 + 5s×5→60s 重连），但不复制其把业务规则搬进中继进程的做法。",
+      "ownership": [
+        {
+          "kind": "file",
+          "path": "ws-server.php"
+        },
+        {
+          "kind": "file",
+          "path": "core/realtime_ws.php"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "设计文档/开发文档.md",
+          "line": 20,
+          "note": "原始设计即要求 WebSocket 实时推送与降级（曾因零依赖裁决暂缓）",
+          "quote": "WebSocket 实时推送，心跳保活，断线自动降级轮询"
+        },
+        {
+          "path": "README.md",
+          "line": 16,
+          "note": "长轮询占 php-cgi 进程的现实是改造动因",
+          "quote": "每个挂起的轮询会占住一个 php-cgi 进程"
+        },
+        {
+          "path": "nginx-server.conf",
+          "line": 18,
+          "note": "现有站点配置为长轮询放宽超时；WS 需并列新增 /ws 反代（ttt 站点已有同款可参考）",
+          "quote": "长轮询须知（本项目实时通道是 AJAX 长轮询，不是 WebSocket）"
+        }
+      ],
+      "status": "uncertain",
+      "openQuestions": [
+        "P1（骨架 / 一次性票据握手 / 心跳 / 在线状态）尚未实现；消息推送扇出与 cronTick 接管为后续阶段规划。",
+        "实现载体未定稿：零依赖约束下的候选是纯 PHP 手写事件循环，需经方案评审后落地。",
+        "发送迁移（P3）的子进程隔离方案未定稿（pcntl/fork 或 proc_open 池，Linux 生产）。"
+      ],
+      "layout": {
+        "row": 0,
         "column": 0
       }
     },
@@ -732,8 +804,33 @@
     {
       "id": "dm-compliance-plugin",
       "name": "私聊合规查阅插件（dm-compliance）",
+      "kind": "local",
+      "role": "security",
+      "responsibility": "经 dm.read 钩子为超级管理员开一个显式合规查阅入口（Chat::dmComplianceRead() 的唯一放行方）：插件未注册 / 停用时物理不可查阅；每次查阅无论命中与否都写安全日志（强制留痕）；路由接一次性票据（CSRF / 防重放）。",
+      "ownership": [
+        {
+          "kind": "directory",
+          "path": "plugins/dm-compliance"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "core/chat.php",
+          "note": "dmComplianceRead() 是唯一能绕过 visible() 的入口；只有插件注册 dm.read 钩子才放行",
+          "quote": "仅超级管理员可查阅"
+        },
+        {
+          "path": "plugins/dm-compliance/main.php",
+          "note": "插件注册 dm.read 钩子",
+          "quote": "Plugin::on('dm.read'"
+        }
+      ],
       "status": "supported",
-      "summary": "经 dm.read 钩子为超级管理员开一个显式合规查阅入口，强制留痕；停用即物理不可查阅。"
+      "openQuestions": [],
+      "layout": {
+        "row": 6,
+        "column": 2
+      }
     }
   ],
   "relationships": [
@@ -1165,6 +1262,103 @@
       "openQuestions": [
         "1.1.0 拟新增关系，落地时确认最终调用路径与模块归属"
       ]
+    },
+    {
+      "id": "r-ui-ws",
+      "from": "web-ui",
+      "to": "ws-gateway",
+      "label": "WSS 连接（一次性票据握手）与心跳 / 订阅帧",
+      "evidence": [
+        {
+          "path": "设计文档/开发文档.md",
+          "line": 20,
+          "note": "实时通道设计要求（WS 推送 + 心跳 + 降级）"
+        }
+      ],
+      "kind": "request",
+      "visibility": "overview",
+      "status": "uncertain",
+      "openQuestions": [
+        "握手票据接口（一次性 token 路由）与订阅帧格式未定稿"
+      ]
+    },
+    {
+      "id": "r-ws-ui",
+      "from": "ws-gateway",
+      "to": "web-ui",
+      "label": "推送新消息与在线状态事件（连接即在线；断线事件驱动回落）",
+      "evidence": [
+        {
+          "path": "README.md",
+          "line": 31,
+          "note": "实时在线列表与心跳同步是既有功能要求"
+        }
+      ],
+      "kind": "event",
+      "visibility": "overview",
+      "status": "uncertain",
+      "openQuestions": [
+        "推送帧的载荷粒度（wake 唤醒 vs 全量包体）在下一阶段定稿"
+      ]
+    },
+    {
+      "id": "r-ws-chat",
+      "from": "ws-gateway",
+      "to": "chat-core",
+      "label": "复用 Chat::visible()/pack()/allMembers() 构建推送包（可见性口径单一来源）",
+      "evidence": [
+        {
+          "path": "core/chat.php",
+          "line": 1088,
+          "note": "长轮询打包逻辑是推送口径的唯一来源，WS 网关不新增可见性规则",
+          "quote": "长轮询（主通道，零依赖替代 WebSocket）"
+        }
+      ],
+      "kind": "dependency",
+      "visibility": "overview",
+      "status": "uncertain",
+      "openQuestions": [
+        "常驻进程内复用核心函数的加载方式（同进程 require 的调用形态）待方案评审"
+      ]
+    },
+    {
+      "id": "r-nginx-ws",
+      "from": "nginx-site",
+      "to": "ws-gateway",
+      "label": "wss 反向代理 /ws → 127.0.0.1:端口（Upgrade 头 + 超时）",
+      "evidence": [
+        {
+          "path": "nginx-server.conf",
+          "line": 18,
+          "note": "现有配置围绕长轮询；WS 需并列新增 /ws 反代（ttt 站点已有同款，注释写明应配 wss://）"
+        }
+      ],
+      "kind": "request",
+      "visibility": "overview",
+      "status": "uncertain",
+      "openQuestions": [
+        "ws 监听端口与 proxy_read_timeout 取值待 P1 定稿"
+      ]
+    },
+    {
+      "id": "r-ws-cron",
+      "from": "ws-gateway",
+      "to": "plugin-system",
+      "label": "驱动 Plugin::cronTick()（长轮询流量下降后的计划任务承接）",
+      "evidence": [
+        {
+          "path": "PLUGIN.md",
+          "line": 351,
+          "note": "计划任务当前由长轮询驱动",
+          "quote": "计划任务由长轮询驱动（`Plugin::cronTick()`）"
+        }
+      ],
+      "kind": "control",
+      "visibility": "detail",
+      "status": "uncertain",
+      "openQuestions": [
+        "承接方式待定稿：daemon 驱动 cronTick vs 系统计划任务打 ?action=cron"
+      ]
     }
   ],
   "constraints": [
@@ -1381,7 +1575,7 @@
     {
       "id": "c-long-polling-transport",
       "name": "实时主通道采用 AJAX 长轮询 + 心跳 + 断线降级短轮询；频率限制以数据库/文件计数实现（替代 Redis）",
-      "note": "用户 2026-09-26 对 c-realtime-transport-conflict 的裁决结果，优先满足零依赖硬性规则。",
+      "note": "用户 2026-09-26 对 c-realtime-transport-conflict 的裁决结果，优先满足零依赖硬性规则。2026-10-15：用户提出用户基数增长后长轮询不可用、转向 WebSocket 实时层（实现仍零依赖，见 c-ws-realtime-plan 与 ws-gateway 模块）；WS 落地前本裁决继续有效——长轮询仍是当前实际通道。",
       "origin": "user",
       "strength": "required",
       "applicability": "applicable",
@@ -1517,9 +1711,7 @@
       "applicability": "applicable",
       "scope": "project",
       "modules": [],
-      "relationships": [
-        "dm-bubble-same-as-room"
-      ],
+      "relationships": [],
       "evidence": [
         {
           "path": "core/chat.php",
@@ -1538,9 +1730,7 @@
       "applicability": "applicable",
       "scope": "project",
       "modules": [],
-      "relationships": [
-        "dm-compliance-exception"
-      ],
+      "relationships": [],
       "evidence": [
         {
           "path": "core/chat.php",
@@ -1715,15 +1905,13 @@
       "origin": "local",
       "strength": "required",
       "applicability": "applicable",
-      "scope": "project",
+      "scope": "modules",
       "modules": [
         "chat-core",
         "dm-compliance-plugin",
         "security"
       ],
-      "relationships": [
-        "dm-privacy"
-      ],
+      "relationships": [],
       "evidence": [
         {
           "path": "core/chat.php",
@@ -1750,16 +1938,14 @@
       "origin": "local",
       "strength": "required",
       "applicability": "applicable",
-      "scope": "project",
+      "scope": "modules",
       "modules": [
         "chat-core",
         "db-layer",
         "web-ui",
         "admin-console"
       ],
-      "relationships": [
-        "dm-compliance-exception"
-      ],
+      "relationships": [],
       "evidence": [
         {
           "path": "core/chat.php",
@@ -1786,7 +1972,7 @@
       "origin": "local",
       "strength": "required",
       "applicability": "applicable",
-      "scope": "project",
+      "scope": "modules",
       "modules": [
         "chat-core",
         "db-layer",
@@ -1806,8 +1992,7 @@
         },
         {
           "path": "core/auth.php",
-          "note": "ensureGuest 不再写 daily_count / daily_date",
-          "quote": ""
+          "note": "ensureGuest 不再写 daily_count / daily_date"
         }
       ],
       "verification": "浏览器：游客第 1 条成功、第 2 条被拒「游客发言间隔为 30 秒」；同窗口登录用户连发 2 条均成功（确不受影响）；设置页默认值 30"
@@ -1819,7 +2004,7 @@
       "origin": "local",
       "strength": "required",
       "applicability": "applicable",
-      "scope": "project",
+      "scope": "modules",
       "modules": [
         "web-ui"
       ],
@@ -1845,7 +2030,7 @@
       "origin": "local",
       "strength": "required",
       "applicability": "applicable",
-      "scope": "project",
+      "scope": "modules",
       "modules": [
         "web-ui"
       ],
@@ -1871,7 +2056,7 @@
       "origin": "local",
       "strength": "required",
       "applicability": "applicable",
-      "scope": "project",
+      "scope": "modules",
       "modules": [
         "web-ui",
         "plugin-system",
@@ -1899,7 +2084,7 @@
       "origin": "local",
       "strength": "required",
       "applicability": "applicable",
-      "scope": "project",
+      "scope": "modules",
       "modules": [
         "web-ui",
         "app-entry",
@@ -1937,14 +2122,12 @@
       "origin": "local",
       "strength": "required",
       "applicability": "applicable",
-      "scope": "project",
+      "scope": "modules",
       "modules": [
         "chat-core",
         "web-ui"
       ],
-      "relationships": [
-        "room-manage-entry-aligned"
-      ],
+      "relationships": [],
       "evidence": [
         {
           "path": "core/chat.php",
@@ -1971,15 +2154,13 @@
       "origin": "local",
       "strength": "required",
       "applicability": "applicable",
-      "scope": "project",
+      "scope": "modules",
       "modules": [
         "chat-core",
         "announcements-plugin",
         "web-ui"
       ],
-      "relationships": [
-        "online-status-privileged-only"
-      ],
+      "relationships": [],
       "evidence": [
         {
           "path": "core/chat.php",
@@ -2006,15 +2187,12 @@
       "origin": "local",
       "strength": "required",
       "applicability": "applicable",
-      "scope": "project",
+      "scope": "modules",
       "modules": [
         "chat-core",
         "web-ui"
       ],
-      "relationships": [
-        "dm-identity",
-        "dm-privacy"
-      ],
+      "relationships": [],
       "evidence": [
         {
           "path": "core/chat.php",
@@ -2046,14 +2224,12 @@
       "origin": "local",
       "strength": "required",
       "applicability": "applicable",
-      "scope": "project",
+      "scope": "modules",
       "modules": [
         "announcements-plugin",
         "chat-core"
       ],
-      "relationships": [
-        "room-manage-entry-aligned"
-      ],
+      "relationships": [],
       "evidence": [
         {
           "path": "plugins/announcements/main.php",
@@ -2085,15 +2261,12 @@
       "origin": "local",
       "strength": "required",
       "applicability": "applicable",
-      "scope": "project",
+      "scope": "modules",
       "modules": [
         "announcements-plugin",
         "chat-core"
       ],
-      "relationships": [
-        "room-manage-entry-aligned",
-        "announcement-no-system-wide"
-      ],
+      "relationships": [],
       "evidence": [
         {
           "path": "plugins/announcements/main.php",
@@ -2112,6 +2285,29 @@
         }
       ],
       "verification": "修复前：直调 del(room_id=19, id=2) 返回 {\"ok\":true,\"msg\":\"公告已删除\"} 但查库 id=2 仍在。修复后：del(id=...) 真删（列表 2→1），del(id=999999) 返回「公告不存在或已被删除」，batch(不存在的 ids) 返回「成功 0 条（2 条不存在或已删除）」"
+    },
+    {
+      "id": "c-ws-realtime-plan",
+      "name": "方向已定：实时通道转向 WebSocket（零依赖常驻进程实现；长轮询保留为兜底与开关；发送暂留 HTTP）",
+      "note": "来源：用户 2026-10-15 会话方向（sanitized），2026-10-16 对照架构文件定稿、同日二次修订（发送迁移改回 P3；运维定 PM2）。用户基数增长后长轮询会被 php-cgi 进程墙卡死，须以 WebSocket 承载心跳（startHeartbeat）/ 在线状态 / 消息推送；实现保持零依赖（手写 WS）。分期：P1 骨架 + 一次性票据握手 + 心跳/在线状态（含上线/下线事件——属在线状态本体，随成员列表即时下发，保留「超管/群主才见在线点」口径）→ P2 消息推送扇出（复用 Chat::visible/pack/allMembers 口径）+ PHP→daemon 控制口（nudge/缓存失效）+ cronTick 承接 → P3 逐个立项：typing、已读回执、插件实时扩展点、发送迁移（收 = 发；须以子进程隔离插件同步长任务——Linux 生产用 pcntl/fork）。运维：Linux 用 PM2 守护启动（pm2 startup + pm2 save 开机自启、崩溃自动重启、pm2 logs 日志轮转；Windows 仅本地 bat 辅助）。「用户可见的 XX 上线提示」未立项。长轮询端点全期保留为兜底，每期独立上线、可一键切回。",
+      "origin": "user",
+      "strength": "required",
+      "applicability": "applicable",
+      "scope": "modules",
+      "modules": [
+        "realtime",
+        "ws-gateway"
+      ],
+      "relationships": [],
+      "evidence": [
+        {
+          "path": "设计文档/开发文档.md",
+          "line": 20,
+          "note": "原始设计即要求 WebSocket 实时推送 + 心跳 + 降级轮询，与本次方向一致",
+          "quote": "WebSocket 实时推送，心跳保活，断线自动降级轮询"
+        }
+      ],
+      "verification": "P1 验收：一次性票据握手、30s 心跳、断开即下线、长轮询回落、开关一键切回、零第三方依赖评审通过。"
     }
   ]
 }
