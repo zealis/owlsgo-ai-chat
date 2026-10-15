@@ -422,19 +422,31 @@
         box.innerHTML = tasksInner(CI.level);
     }
 
+    /** 小数去尾：0.50 → 0.5、3.00 → 3（等级信任 v3.0 的任务奖励是天数，可含小数） */
+    function rwNum(v) {
+        var n = parseFloat(v);
+        if (!isFinite(n)) n = 0;
+        var s = n.toFixed(2).replace(/\.?0+$/, '');
+        return s === '' || s === '-' ? '0' : s;
+    }
+
     function tasksInner(L) {
         var LABEL = OwLevel.LABEL;
         var list = L.tasks || [];
-        var done = 0, i, t, okk;
+        var done = 0, rwAll = 0, rwGot = 0, i, t, okk;
         var h = '<div class="ow-ci-h"><span>今日任务</span><em>Lv.' + L.level
             + ' · ' + esc(L.stage) + '</em></div><div class="ow-ci-tasks">';
         for (i = 0; i < list.length; i++) {
             t = list[i];
             okk = t.cur >= t.n;
             if (okk) done++;
+            // v1.1.2（配套等级信任 v3.0）：每个任务各有一个奖励天数、各自发放，
+            // 不再是「全部完成才记 1 天」。
+            rwAll += parseFloat(t.rw) || 0;
+            if (t.paid) rwGot += parseFloat(t.rw) || 0;
             h += '<div class="ow-ci-task">'
-                + '<span class="ow-ci-task-k">' + esc(LABEL[t.k] || t.k)
-                + (t.alt ? '<i class="ow-ci-task-alt" title="可替代任务">替</i>' : '') + '</span>'
+                + '<span class="ow-ci-task-k">' + esc(LABEL[t.k] || t.k) + '</span>'
+                + (parseFloat(t.rw) > 0 ? '<i class="ow-ci-task-rw">+' + rwNum(t.rw) + '天</i>' : '')
                 + '<span class="ow-ci-task-bar"><i class="' + (okk ? 'done' : '') + '" style="width:'
                 + (t.n > 0 ? Math.min(100, Math.round(t.cur / t.n * 100)) : 0) + '%"></i></span>'
                 + '<span class="ow-ci-task-v' + (okk ? ' done' : '') + '">' + t.cur + ' / ' + t.n + '</span>'
@@ -442,16 +454,15 @@
         }
         h += '</div>';
         var all = list.length > 0 && done >= list.length;
-        // v1.1.1：等级信任 v2.0 起「完成一天任务 = 记 1 个活跃天数」，按倍率换算等级
-        // （默认 1.3，后台可调），不再是固定的「升 1 级」——这里不写死任何数字，
-        // 想要准确换算的观众点「等级规则」看公式。
-        h += '<div class="ow-ci-tip">保底任务完成 <b>' + done + ' / ' + list.length + '</b>，';
+        h += '<div class="ow-ci-tip">今日任务完成 <b>' + done + ' / ' + list.length + '</b>';
+        if (rwAll > 0) h += '，已获得 <b>' + rwNum(rwGot) + '</b> / ' + rwNum(rwAll) + ' 天奖励';
+        h += '。';
         if (L.frozen) {
             h += '今日已被管理员冻结，进度暂停。';
         } else if (all) {
-            h += '今天记 1 个活跃天数' + (L.settled ? '（<b style="color:var(--ow-green)">今日已结算</b>）' : '') + '。';
+            h += '今日任务已全部完成。';
         } else {
-            h += '全部完成今天记 1 个活跃天数。';
+            h += '每个任务各自发奖，每天各计一次。';
         }
         h += ' <a href="?page=level">等级规则 ›</a></div>';
         return h;

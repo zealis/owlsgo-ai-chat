@@ -21,6 +21,25 @@
             .replace(/"/g, '&quot;');
     }
     function taskName(k) { return LABEL[k] || k; }
+    /** 小数去尾：0.50 → 0.5、3.00 → 3（与 PHP 侧 owLTNum 同一口径） */
+    function num(v) {
+        var n = parseFloat(v);
+        if (!isFinite(n)) n = 0;
+        var s = n.toFixed(2).replace(/\.?0+$/, '');
+        return s === '' || s === '-' ? '0' : s;
+    }
+    /** 秒 → 中文时长（与 PHP 侧 owLTFmtDur 同一口径；两处各写一份是刻意的，
+     *  不值得为格式化再打一次接口） */
+    function fmtDur(sec) {
+        sec = parseInt(sec, 10) || 0;
+        if (sec < 60) return sec + ' 秒';
+        var m = Math.floor(sec / 60);
+        if (m < 60) return m + ' 分';
+        var hh = Math.floor(m / 60), mm = m % 60;
+        if (hh < 24) return hh + ' 小时' + (mm > 0 ? ' ' + mm + ' 分' : '');
+        var dd = Math.floor(hh / 24), rh = hh % 24;
+        return dd + ' 天' + (rh > 0 ? ' ' + rh + ' 小时' : '');
+    }
     /**
      * 一行「标签 : 值」。
      * @param {string} k  标签（纯文本，转义）
@@ -156,14 +175,20 @@
                 if (!box) return;
                 if (!r.ok) { box.innerHTML = '<p class="ow-panel-empty">' + esc(r.msg) + '</p>'; return; }
 
+                var p = r.prog || {};        // v3.0：等级的三个来源（在线 / 任务 / 设定）
                 var html = '<div class="ow-card-meta" style="border-top:0;padding-top:0">'
                     // ⚠️ nickname 是**用户自己设的**，必须转义 —— row() 现在按 HTML 输出。
                     // 昵称含 < > & 时不转义就是存储型 XSS（后台管理员打开这页即中招）。
                     + row('用户', esc(r.nickname) + '（ID ' + r.uid + '）' + (r.role === 'admin' ? ' · 超级管理员' : ''))
                     + row('等级', (w.OwLevel ? w.OwLevel.badge(r.level) : esc('Lv.' + r.level)) + ' ' + esc(r.stage))
-                    + row('累计完成', r.days + ' 天（活跃天数，等级 = 1 + ⌊天数 × 倍率⌋）')
+                    + row('等级来源', '在线 <b>' + esc(fmtDur(p.online_sec)) + '</b>'
+                        + ' · 任务 <b>' + num(p.task_days) + '</b> 天'
+                        + (parseFloat(p.bonus_days) > 0.0001 ? ' · 管理员设定 <b>' + num(p.bonus_days) + '</b> 天' : '')
+                        + '　= 合计 <b>' + num(p.total_days) + '</b> 天（1 天 = 1 级）')
+                    + row('进度', '本级 <b>' + (p.pct || 0) + '%</b> · 距 Lv.' + (p.next_level || (parseInt(r.level, 10) + 1))
+                        + ' 还需 <b>' + num(p.gap_days) + '</b> 天（在线满 ' + num(p.online_hours) + ' 小时算 1 天）')
                     + row('登录', '连续 ' + r.login_streak + ' 天 · 累计 ' + r.login_days + ' 天')
-                    + row('今日', (r.frozen ? '已冻结' : (r.settled ? '已完成并结算' : '进行中'))
+                    + row('今日', (r.frozen ? '已冻结' : (r.settled ? '任务已全部完成' : '进行中'))
                         + ' · 本周补签 ' + r.patch_used + ' 次 · 本月保护 ' + r.protect_used + ' 次')
                     + '</div>';
 
@@ -172,6 +197,10 @@
                     var t = r.tasks[i];
                     var done = t.cur >= t.n;
                     html += '<div class="ow-lt-task"><span class="ow-lt-task-k">' + esc(taskName(t.k))
+                        + (parseFloat(t.rw) > 0
+                            ? ' <span style="color:var(--ow-text-sub)">+' + num(t.rw) + ' 天'
+                              + (t.paid ? '·已发' : '') + '</span>'
+                            : '')
                         + '</span><span class="ow-lt-task-v' + (done ? ' done' : '') + '">'
                         + t.cur + ' / ' + t.n + '</span></div>';
                 }
@@ -181,7 +210,7 @@
                     + '<button class="ow-btn ow-btn-ghost" onclick="OwLT.op(' + r.uid + ',\'patch\')">补签（每周 1 次）</button>'
                     + '<button class="ow-btn ow-btn-ghost" onclick="OwLT.op(' + r.uid + ',\''
                     + (r.frozen ? 'unfreeze' : 'freeze') + '\')">' + (r.frozen ? '解除冻结' : '冻结今日') + '</button>'
-                    + '<button class="ow-btn ow-btn-primary" onclick="OwLT.setLevel(' + r.uid + ',' + r.level + ',' + r.days + ')">直接设置</button>'
+                    + '<button class="ow-btn ow-btn-primary" onclick="OwLT.setLevel(' + r.uid + ',' + r.level + ',' + num(p.task_days) + ')">直接设置</button>'
                     + '</div>';
                 box.innerHTML = html;
             });
@@ -194,16 +223,18 @@
             });
         },
 
-        setLevel: function (uid, lv, days) {
+        setLevel: function (uid, lv, taskDays) {
             OwChat.openModal(
                 '<h3>设置等级</h3>'
                 + '<div class="ow-form-item"><label>等级（≥1）</label>'
                 + '<input class="ow-input" id="owLtSetLv" type="number" min="1" value="' + lv + '"></div>'
-                + '<div class="ow-form-item"><label>累计完成天数（≥0）</label>'
-                + '<input class="ow-input" id="owLtSetDays" type="number" min="0" value="' + days + '">'
+                + '<div class="ow-form-item"><label>任务累计天数（≥0，可含小数）</label>'
+                + '<input class="ow-input" id="owLtSetDays" type="number" min="0" step="0.1" value="' + taskDays + '">'
                 + '<p style="font-size:12px;color:var(--ow-text-sub);margin-top:4px">'
-                + '等级一般由公式自动算出（1 + ⌊天数 × 倍率⌋，只升不降）；这里只用于迁移或纠错，'
-                + '直接改数值后，日结算仍按「旧等级与新公式取大」保护已设过的等级。</p></div>'
+                + 'v3.0 起等级 = 1 + ⌊ 在线天 + 任务天 + 设定天 ⌋。这里改的是<b>任务天</b>；'
+                + '若把等级设得比「在线天 + 任务天」还高，差额会自动记成<b>管理员设定</b>，'
+                + '等级页会如实显示这一项 —— 不会出现「Lv.30 配累计 4 天」这种自相矛盾。'
+                + '等级只升不降：设得比公式值低时，下次结算会被顶回去。</p></div>'
                 + '<div class="ow-modal-actions">'
                 + '<button class="ow-btn ow-btn-ghost" onclick="OwChat.closeModal()">取消</button>'
                 + '<button class="ow-btn ow-btn-primary" onclick="OwLT.doSet(' + uid + ')">保存</button>'
@@ -212,10 +243,10 @@
 
         doSet: function (uid) {
             var n = parseInt(($('owLtSetLv') || {}).value, 10);
-            var dd = parseInt(($('owLtSetDays') || {}).value, 10);
+            var dd = parseFloat(($('owLtSetDays') || {}).value);
             if (!n || n < 1) { toast('等级需为 ≥1 的整数'); return; }
-            if (isNaN(dd) || dd < 0) { toast('累计天数需为 ≥0 的整数'); return; }
-            OwApi.secure('plugin_level_trust_op', { uid: uid, op: 'set', level: n, days: dd }, function (r) {
+            if (isNaN(dd) || dd < 0) { toast('任务累计天数需为 ≥0 的数'); return; }
+            OwApi.secure('plugin_level_trust_op', { uid: uid, op: 'set', level: n, task_days: dd }, function (r) {
                 toast(r.msg || (r.ok ? '已设置' : '设置失败'));
                 if (r.ok) { OwChat.closeModal(); OwLT.query(); }
             });

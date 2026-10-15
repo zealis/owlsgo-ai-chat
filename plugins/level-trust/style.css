@@ -65,6 +65,15 @@
 .ow-lv-h3 { margin: 0 0 10px; font-size: 15px; color: var(--ow-text-title); }
 .ow-lv-task { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 13px; }
 .ow-lv-task-k { width: 132px; flex-shrink: 0; color: var(--ow-text-sub); }
+/* v3.0：任务奖励天数（「+0.5 天」）。跟着任务名一起放在 .ow-lv-task-k 里 ——
+   那格 132px、窄屏 96px，任务名两三个字 + 奖励共 80~90px，装得下；
+   .ow-lv-task-k 没有 flex-shrink:0，真挤了也只会收窄而不会撑破一行。 */
+.ow-lv-task-rw {
+    font-weight: 400;
+    font-size: 11.5px;
+    color: var(--ow-primary-dark);
+    font-variant-numeric: tabular-nums;
+}
 .ow-lv-task-bar { flex: 1; height: 6px; border-radius: 3px; background: var(--ow-bg-sub); overflow: hidden; }
 .ow-lv-task-bar > i { display: block; height: 100%; background: #9AA5B1; }
 .ow-lv-task-v { width: 56px; text-align: right; font-weight: 600; }

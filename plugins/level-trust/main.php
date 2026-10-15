@@ -4,23 +4,39 @@
  *
  * 规则出处：设计文档/等级设计.md（该文档描述的是 v1.x 旧公式，v2.0 起以本文件注释为准）
  *
- * ── 等级公式 ────────────────────────────────────────────────
- *   L = 1 + ⌊D × lv_step⌋        （lv_step 默认 1.3，后台可配）
- *   D = 累计完成每日保底任务的天数
- *   即「平均每完成一天任务升 1.3 级」——与旧公式典型用户的实际速度一致
- *   （旧公式 D + W，W 日均约 0.3 天：连签每 3 天 +0.3、每日发言 +0.1~0.3）。
- *   不设满级；每天最多升 ⌊lv_step⌋+1 = 2 级。
- *   未完成任务不降级：等级只取 max(旧等级, 公式值)，后台直设过的等级不会被公式压回去。
+ * ── 等级公式（v3.0：在线时间 + 每日任务）─────────────────────
+ *   L = 1 + ⌊ 在线天数 + 任务天数 + 设定天数 ⌋
+ *     在线天数 = 累计在线秒 ÷ (online_hours × 3600)，默认 online_hours=24
+ *                —— 「总共在线满一天就加一级」
+ *     任务天数 = Σ 已完成任务的奖励（rw_<任务key>，后台逐任务可配，默认各 0.5 天）
+ *                —— 「完成每日任务，每一个任务加多少天」；每个任务每天最多发一次
+ *     设定天数 = 管理员直设等级时自动补的差额（见 owLTAlignLevel）
+ *   「天」是唯一单位：1 天 = 1 级。三项相加后取整。
+ *   不设满级。未完成任务不降级：等级只取 max(旧等级, 公式值)。
  *
- *   v1.x 旧公式（已废弃）：L = 1 + ⌊D + min(W, 0.5D) × 追赶系数⌋，W 由连签/发言/文件
- *   随机累加、封顶、再加全服中位数追赶系数——12 个参数、随机数、跨用户耦合，故重制。
- *   weight / file_w_days 两列保留不删（存量数据），但新公式不再读写。
+ *   ⚠️ 为什么要单列「设定天数」而不是把差额塞进任务天数（v1.3.150 的教训）：
+ *     等级和「天数」是两个可以各自独立写入的量（后台用户管理那个等级输入框只写
+ *     level、不动天数），一旦脱钩，页面就会同时显示「Lv.30」和「累计 4 天」，
+ *     而页面自己写着 L = 1 + ⌊天数⌋ —— 整页自相矛盾。把差额显式记成「管理员设定」，
+ *     等级页就能如实拆开展示，而不是拿假的任务天数糊过去。
  *
- * ── 分阶段每日任务（v2.0 起无「替代」、无「挑战」）────────────
+ *   v2.0 旧公式（已废弃）：L = 1 + ⌊D × lv_step⌋，D = 累计完成每日任务的天数。
+ *     v1.x 更早的公式（已废弃）：L = 1 + ⌊D + min(W, 0.5D) × 追赶系数⌋。
+ *     days / weight / file_w_days 三列保留不删（存量数据），v3.0 起不再读写。
+ *
+ * ── 在线时长怎么来的（v3.0）────────────────────────────────
+ *   钩子用 index.php 的 `user.active`（每个请求都触发，含 20 秒长轮询）。
+ *   每次请求把「now − 上次请求时间」累加进 online_sec，**单次封顶 120 秒**：
+ *   关掉页面几小时后再回来，那几小时不会一次补上（页面没开着就不算在线）。
+ *   「页面开着就算在线」是站方定案 —— 所以挂机也算，这是本方案已知的代价。
+ *   ⚠️ 封顶只能挡「离开很久再回来一次性补齐」，挡不住「脚本掐着点定时上报」
+ *      （每 2 分钟请求一次就能拿满 120 秒）—— 后者与挂机等价，无法在服务端区分。
+ *
+ * ── 每日任务（v3.0：逐任务各自发奖）──────────────────────────
  *   全部阶段统一为：登录 + 群发言 N 条（N 见后台 stage_gm，默认 1/3/5/5/10）
- *   取消原因：替代任务组（上传↔私聊首条、下载↔群发言）判定分支多、
- *   后台要懂每组的等价关系才能调参；且无文件/无好友的用户绕一圈仍等价于群发言。
- *   挑战任务（上传/下载）从不阻塞升级，只是加权来源，加权已随公式一并移除。
+ *   v3.0 起**每个任务各配一个奖励天数**（rw_login / rw_gm），完成即发、每天各一次，
+ *   不再要求「当天全部完成才 +1 天」—— 站方口径是「每一个任务加多少天」。
+ *   v2.0 的「替代任务组」（上传↔私聊首条）与「挑战任务」更早已取消。
  *
  * ── 五次功能解锁（设计文档第五节）────────────────────────────
  *   3 级  自定义头像、贴纸收藏（3 张起，按 sticker_tiers 分档递增）、单文件 ≤ 1/4 全局上限
@@ -32,8 +48,10 @@
  *
  * 安全与性能约束：
  *   - 所有 SQL 参数化；等级行按 user_id 主键读写。
- *   - `user.active` 每请求都会触发（含长轮询），因此**同日内只做一次主键查询就返回**，
- *     不写库、不算等级；跨天才做迁移与结算。
+ *   - `user.active` 每请求都会触发（含长轮询）：**同日内仍是「一次主键查询」起步**，
+ *     但 v3.0 起每次请求都要写一次库（在线时长就是靠每次请求的差值攒的），
+ *     写入频率 = 该用户的轮询频率（≤20 秒一次），差值 <5 秒的请求跳过不写。
+ *     跨天才做迁移、发登录奖励与结算。
  *   - 单插件抛异常不影响主流程（Plugin::fire 已兜底）。
  */
 if (!defined('OWLSGO_VERSION')) exit;   // 禁止直接 HTTP 访问本文件
@@ -70,6 +88,10 @@ function owLTBoot(): void
         " . DB::textCol('protect_mon') . ",            -- 保护计数所属月份 Y-m
         patch_used   INTEGER NOT NULL DEFAULT 0,      -- 本周已补签次数
         " . DB::textCol('patch_week') . ",             -- 补签计数所属周（Y-W）
+        online_sec   INTEGER NOT NULL DEFAULT 0,     -- v3.0：累计在线秒（只增，等级来源之一）
+        task_days    REAL    NOT NULL DEFAULT 0,     -- v3.0：每日任务奖励累计「天」（小数，等级来源之二）
+        bonus_days   REAL    NOT NULL DEFAULT 0,     -- v3.0：管理员直设等级时补的差额「天」（等级来源之三）
+        hb_at        INTEGER NOT NULL DEFAULT 0,     -- v3.0：上次累计在线的时间戳（算两次请求的差值用）
         updated_at   {$ts} DEFAULT 0)");
     DB::run("CREATE TABLE IF NOT EXISTS plugin_level_config (
         k TEXT PRIMARY KEY, " . DB::textCol('v') . ")");
@@ -84,6 +106,44 @@ function owLTBoot(): void
         files    INTEGER NOT NULL DEFAULT 0,  -- 文件操作次数
         rooms    INTEGER NOT NULL DEFAULT 0,  -- 建群次数
         updated_at {$ts} DEFAULT 0)");
+
+    // ---------- v3.0 迁移（幂等，只跑一次）----------
+    // ⚠️ 用 plugin_level_config 里的 schema 标记短路，而不是每请求 4 次 PRAGMA 探测：
+    //    user.active 每请求都触发（含 20 秒长轮询），这段代码跑在热路径上。
+    // ⚠️ 'schema' 刻意**不写进 owLTDefaults()** —— 若写进默认值，升级上来的老站点
+    //    会从默认值读到 '3' 而跳过迁移（老站点的配置表里本来就没有这一行）。
+    if (owLTCfg('schema') !== '3') {
+        DB::ensureColumn('plugin_level_trust', 'online_sec', 'int', '0');
+        DB::ensureColumn('plugin_level_trust', 'task_days', 'real', '0');
+        DB::ensureColumn('plugin_level_trust', 'bonus_days', 'real', '0');
+        DB::ensureColumn('plugin_level_trust', 'hb_at', 'int', '0');
+        owLTSeedV3();
+        owLTSetCfg('schema', '3');
+    }
+}
+
+/**
+ * v3.0 存量折算：把 v2.0 的整数 days（累计完成天数）折进 task_days，
+ * 再用 bonus_days 把差额补齐到现有等级。
+ * 目的有两个：① 让存量行也不再「等级和天数自相矛盾」；② 谁都不掉级。
+ *
+ * 折算口径：旧体系里「1 个完成日」= lv_step 级进度，所以乘 lv_step 换算成新单位的天。
+ * 只在迁移那一刻跑一次（由 schema 标记保证），之后不参与任何计算。
+ */
+function owLTSeedV3(): void
+{
+    $step = (float)owLTCfg('lv_step');
+    if ($step < 1) $step = 1.3;                 // v2.0 的默认倍率；配置被清空时兜底
+    foreach (DB::all('SELECT * FROM plugin_level_trust') as $r) {
+        $uid = (int)($r['user_id'] ?? 0);
+        if ($uid <= 0) continue;
+        $row = $r;
+        $row['task_days']  = round((int)($r['days'] ?? 0) * $step, 4);
+        $row['bonus_days'] = 0.0;
+        owLTAlignLevel($row, (int)($r['level'] ?? 1));   // 差额进 bonus_days，只增不减
+        DB::run('UPDATE plugin_level_trust SET task_days=?, bonus_days=? WHERE user_id=?',
+            [(float)$row['task_days'], (float)$row['bonus_days'], $uid]);
+    }
 }
 
 /** 确保当天的汇总行存在（各驱动没有统一的 INSERT OR IGNORE，用「查不到就插」最稳） */
@@ -150,20 +210,28 @@ function owLTPurgeActiveKeys(int $keepDays = 40): void
 }
 
 /**
- * 全部可调参数与默认值（v2.0：解锁等级 / 建群名额 / 有效发言 / 阶段阈值全部可在
- * 后台「等级信任 → 参数设置」里改；加权参数已随旧公式一并移除，只留一个 lv_step）。
+ * 全部可调参数与默认值（v3.0：在线折算小时数 / 逐任务奖励天数 / 解锁等级 / 建群名额 /
+ * 有效发言 / 阶段阈值全部可在后台「等级信任 → 参数设置」里改）。
  *
  * ⚠️ 每加一个新键，必须同时：
- *   ① 在这里给默认值；② 在后台表单里给输入框；③ 在 cfg_save 的白名单里放行。
- * 漏了 ③ 的表现是「后台保存成功但值没变」，很难查。
+ *   ① 在这里给默认值；② 在后台表单里给输入框；③ 在 cfg_save 的白名单里放行
+ *      （白名单就是这个数组的键集合，所以 ① 做了 ③ 就自动成立）。
+ * 漏了输入框的表现是「值存在但后台看不到、改不了」，很难查。
  */
 function owLTDefaults(): array
 {
     return [
         // ---- 总开关 ----
         'gating'        => '1',     // 是否按等级限制功能（0=只看等级不做限制）
-        // ---- 等级速度 ----
-        'lv_step'       => '1.3',   // 每日任务换算的等级进度：L = 1 + ⌊D × lv_step⌋
+        // ---- 等级速度（v3.0：L = 1 + ⌊ 在线天 + 任务天 + 设定天 ⌋）----
+        'online_hours'  => '24',    // 在线满 N 小时算 1 天（= 1 级）；<1 会被兜底成 24
+        'rw_login'      => '0.5',   // 「登录」任务完成一次奖励多少天
+        'rw_gm'         => '0.5',   // 「群发言」任务完成一次奖励多少天
+        // ⚠️ v2.0 遗留：每日任务换算的等级进度倍率（L = 1 + ⌊D × lv_step⌋）。
+        //    v3.0 起公式不再用它，但**不能删键**：① 迁移时还要读一次（把旧 days
+        //    折算成新单位的天数）；② cfg_save 的白名单就是这个数组的键集合，
+        //    删掉它会让老站点配置表里的值再也写不回去。
+        'lv_step'       => '1.3',
         // ---- 能力解锁等级 ----
         'lv_avatar'     => '3',     // 自定义头像
         'lv_sticker'    => '3',     // 上传/设置贴纸（v1.3.30：20 → 3，数量按 sticker_tiers 分档）
@@ -403,27 +471,97 @@ function owLTMedian(): float
 }
 
 /**
- * 等级公式（v2.0）：L = 1 + ⌊D × lv_step⌋
- * D = 累计完成每日保底任务的天数；lv_step 默认 1.3（后台可配）。
- * 速度对标旧公式的典型用户（旧 W 日均约 0.3 天：连签每 3 天 +0.3、每日发言 +0.1~0.3）：
- *   D=7/10/20/30 天 → 旧典型 Lv.10/14/27/40，新公式 10/14/27/40，逐段一致。
+ * 「在线多少小时 = 1 天」（后台可配，默认 24）。
+ * ⚠️ 兜底 ≥1：被调成 0 会让 owLTTotalDays 除零、全体瞬间满级。
  */
-function owLTCalc(int $days): int
+function owLTOnlineHours(): float
 {
-    $step = owLTFloat('lv_step');
-    if ($step < 1) $step = 1.0;          // 后台把倍率调成 0 会让所有人永远不升级，兜底
-    return max(1, 1 + (int)floor($days * $step));
+    $h = owLTFloat('online_hours');
+    return $h >= 1 ? $h : 24.0;
+}
+
+/**
+ * 三项合计的「天」数 —— 等级公式里 floor 之前的那个值。
+ * 在线秒 / 任务奖励 / 管理员设定 三项相加，单位统一是「天」，1 天 = 1 级。
+ */
+function owLTTotalDays(array $row): float
+{
+    return (float)($row['online_sec'] ?? 0) / (owLTOnlineHours() * 3600)
+        + (float)($row['task_days'] ?? 0)
+        + (float)($row['bonus_days'] ?? 0);
+}
+
+/** 等级公式（v3.0）：L = 1 + ⌊ 总天数 ⌋ */
+function owLTLevelFromTotal(float $total): int
+{
+    return max(1, 1 + (int)floor($total));
 }
 
 /**
  * 按公式重算等级并写回 $row。
- * ⚠️ 取 max(旧等级, 公式值)：未完成当天任务不降级；后台直设过等级（或旧公式下
- *    加权攒得多）时，纯公式会算出比当前更低的等级——不兜这一手就是「什么都没做却掉级」。
- *    所有改等级的地方（每日结算、补签后台操作）都必须走这里，别各处自己算一遍。
+ * ⚠️ 取 max(旧等级, 公式值)：未完成任务不降级；后台直设过的等级不会被公式压回去。
+ *    所有改等级的地方（任务发奖、补签、后台操作）都必须走这里，别各处自己算一遍。
  */
 function owLTRecalc(array &$row): void
 {
-    $row['level'] = max((int)$row['level'], owLTCalc((int)$row['days']));
+    $row['level'] = max((int)($row['level'] ?? 1), owLTLevelFromTotal(owLTTotalDays($row)));
+}
+
+/**
+ * 把等级设为 $level，并把「公式还没算到」的差额记进 bonus_days（管理员设定）。
+ *
+ * 存在的意义：等级可以被后台直接写（用户管理的等级输入框只写 level、不动天数），
+ * 而公式是按「天」算的 —— 两者一旦脱钩，等级页就会自相矛盾
+ * （同时显示「Lv.30」和「累计 4 天」，而页面自己写着 L = 1 + ⌊天数⌋）。
+ * 把差额显式记成「管理员设定」，页面就能如实拆开展示。
+ *
+ * ⚠️ 只增不减：公式值已经高于目标等级时**不动** bonus_days。
+ *    这等于承认「后台降级是无效的」—— 下一次重算 max() 会把等级顶回去，
+ *    这是 v2.0 起定下的口径（只升不降），本函数不改变它。
+ */
+function owLTAlignLevel(array &$row, int $level): void
+{
+    $level = max(1, $level);
+    $row['level'] = $level;
+    $total = owLTTotalDays($row);
+    $want  = $level - 1;                  // total ≥ want 才能保证 floor(total)+1 ≥ level
+    if ($total < $want) {
+        // +1e-6：浮点误差不能把 total 落在 want 下沿之外（差 1e-9 就掉一整级）
+        $row['bonus_days'] = (float)($row['bonus_days'] ?? 0) + ($want - $total) + 1e-6;
+    }
+}
+
+/**
+ * 等级进度快照 —— 等级页 / mine 接口 / 后台用户查询共用的一份口径。
+ * 三处各拼一遍数字必然漂移（v2.0 就是这么出现「进度条 0% 却写着还需 20 天」的）。
+ *
+ * pct 为什么这么算：公式是 L = 1 + ⌊total⌋，所以 total 的小数部分**天生**就是
+ * 「当前这一级已完成的比例」，不需要任何基准点。v2.0 用的是
+ * `days×step − (lv−1)`，那个式子只有在「等级必然等于公式值」时才成立 ——
+ * 后台一直设等级就恒为负数被夹到 0。
+ *
+ * @param array $row 等级行（需含 level / online_sec / task_days / bonus_days）
+ */
+function owLTSnapshot(array $row): array
+{
+    $total = owLTTotalDays($row);
+    $lv    = max(1, (int)($row['level'] ?? 1));
+    $oh    = owLTOnlineHours();
+    $floor = floor($total);
+    return [
+        'level'        => $lv,
+        'online_sec'   => (int)($row['online_sec'] ?? 0),
+        'online_days'  => (float)($row['online_sec'] ?? 0) / ($oh * 3600),
+        'task_days'    => (float)($row['task_days'] ?? 0),
+        'bonus_days'   => (float)($row['bonus_days'] ?? 0),
+        'total_days'   => round($total, 4),
+        'online_hours' => $oh,
+        'pct'          => (int)max(0, min(100, round(($total - $floor) * 100))),
+        // 下一级的起点是 floor(total)+1（不是 lv+1 —— 倍率/小数会让等级跳档，
+        // v2.0 的「距 Lv.N+1 还需 X 天」就写错过：写着 Lv.5 实际会落到 Lv.6）
+        'gap_days'     => round(max(0.0, $floor + 1 - $total), 4),
+        'next_level'   => (int)$floor + 2,
+    ];
 }
 
 /* ============================ 行读写 ============================ */
@@ -445,22 +583,130 @@ function owLTRow(int $uid): array
     return DB::one('SELECT * FROM plugin_level_trust WHERE user_id=?', [$uid]) ?: [];
 }
 
+/**
+ * 写回等级行。
+ * ⚠️ days / weight / file_w_days 是 v1.x~v2.0 的遗留列，v3.0 起**不从 $row 回写**
+ *    （只在建行时留默认值），免得把历史值搬来搬去反而看不清楚它们已经不用了。
+ */
 function owLTSave(int $uid, array $row, array $t): void
 {
-    DB::run('UPDATE plugin_level_trust SET level=?, days=?, weight=?, login_streak=?, login_days=?,'
-        . ' file_w_days=?, day=?, today=?, settled=?, frozen_day=?, protect_used=?, protect_mon=?,'
-        . ' patch_used=?, patch_week=?, updated_at=? WHERE user_id=?', [
-        (int)$row['level'], (int)$row['days'], (float)$row['weight'],
-        (int)$row['login_streak'], (int)$row['login_days'], (int)$row['file_w_days'],
+    DB::run('UPDATE plugin_level_trust SET level=?, login_streak=?, login_days=?,'
+        . ' day=?, today=?, settled=?, frozen_day=?, protect_used=?, protect_mon=?,'
+        . ' patch_used=?, patch_week=?, online_sec=?, task_days=?, bonus_days=?, hb_at=?,'
+        . ' updated_at=? WHERE user_id=?', [
+        (int)$row['level'],
+        (int)$row['login_streak'], (int)$row['login_days'],
         (string)$row['day'], json_encode($t, JSON_UNESCAPED_UNICODE), (int)$row['settled'],
         (int)$row['frozen_day'], (int)$row['protect_used'], (string)$row['protect_mon'],
-        (int)$row['patch_used'], (string)$row['patch_week'], time(), $uid,
+        (int)$row['patch_used'], (string)$row['patch_week'],
+        (int)($row['online_sec'] ?? 0), (float)($row['task_days'] ?? 0),
+        (float)($row['bonus_days'] ?? 0), (int)($row['hb_at'] ?? 0),
+        time(), $uid,
     ]);
 }
 
 /**
+ * 累计在线时长（v3.0）。
+ *
+ * 口径（站方定案）：**页面开着就算在线**。服务端不区分「有没有真在看」，
+ * 只认「这个请求距上一个请求过了多久」。于是：
+ *   · 聊天页长轮询 ≤20 秒一次 → 每次累加 ≈20 秒，等于页面开着的时间；
+ *   · 浏览器标签被挂到后台时定时器被节流到约 1 分钟 → 累加照旧，只是粒度变粗；
+ *   · 关掉页面几小时后再回来，那几小时**不会**补记（单次封顶兜住）。
+ *
+ * ⚠️ 单次封顶 120 秒：不加这一手，任何人刷新一次页面就能把「上次访问到现在」的
+ *    全部时间记成在线（挂三天再刷新 = +3 天 = +3 级），等级体系直接报废。
+ *    ⚠️ 但要清楚它**挡不住**「脚本掐着点定时上报」—— 每 2 分钟请求一次就能拿满
+ *    120 秒（等于 100% 计入）。那与「页面真开着挂机」在服务端完全等价，无法区分，
+ *    这是本方案已知且站方接受的代价（口径定的是「页面开着就算在线」）。
+ * ⚠️ 差值 <5 秒不落库也不记账：同屏快速连点多个接口时把这几秒攒到下一次一起算，
+ *    避免「一次点击写一次库」。代价是那几秒在请求结束时没有立即持久化（下次请求补上）。
+ *
+ * @return bool 是否需要写库（false = 差值太小，本次不记）
+ */
+function owLTAccumOnline(int $uid, array &$row): bool
+{
+    $now  = time();
+    $last = (int)($row['hb_at'] ?? 0);
+    if ($last <= 0 || $last > $now) {          // 首次 / 时间倒流（改过服务器时钟）
+        $row['hb_at'] = $now;
+        return true;
+    }
+    $delta = $now - $last;
+    if ($delta < 5) return false;              // 攒到下一次一起算
+    if ($delta > 120) $delta = 120;            // 单次封顶（见上方注释）
+    $row['online_sec'] = (int)($row['online_sec'] ?? 0) + $delta;
+    $row['hb_at'] = $now;
+    return true;
+}
+
+/**
+ * 某个任务的奖励「天」数 —— 后台逐任务可配，键名 `rw_<任务key>`（如 rw_login / rw_gm）。
+ * 缺项 / 非法值按 0 处理（配错不至于让任务发钱发到满级）。
+ */
+function owLTReward(string $taskKey): float
+{
+    $map = owLTDefaults();
+    $key = 'rw_' . $taskKey;
+    if (!isset($map[$key])) return 0.0;        // 没有这个任务就没有奖励（新增任务要先加配置键）
+    $v = (float)owLTCfg($key);
+    return $v > 0 ? $v : 0.0;
+}
+
+/** 当前任务表里所有任务的奖励天数（键 => 天），供后台与等级页展示 */
+function owLTRewardTable(): array
+{
+    $out = [];
+    foreach (owLTStage(1)['base'] as $task) $out[$task['k']] = owLTReward($task['k']);
+    return $out;
+}
+
+/** 奖励的中文清单（「登录 0.5 天 + 群发言 0.5 天」）—— 等级页与后台共用，避免两处各写一份 */
+function owLTRewardText(): string
+{
+    $parts = [];
+    foreach (owLTRewardTable() as $k => $d) {
+        if ($d <= 0) continue;
+        $parts[] = owLTTaskLabel((string)$k) . ' ' . owLTNum($d) . ' 天';
+    }
+    return $parts ? implode(' + ', $parts) : '未配置奖励';
+}
+
+/**
+ * 发当日任务奖励（v3.0）。
+ *
+ * 与 v2.0 最大的不同：**逐任务各自发奖**，不再要求「当天保底任务全部完成才 +1 天」。
+ * 依据是站方原话「完成每日任务，每一个任务加多少天管理员可以在后台设置」——
+ * 每个任务有自己的奖励值，也就必须各自结算。
+ *
+ * 「每天最多一次」由 today JSON 里的 paid 标记保证：today 跨天会整体重置，
+ * 所以 paid 天然是按自然日隔离的，不需要额外的日期字段。
+ *
+ * @return float 本次实际发出的天数（0 = 没有新完成的任务）
+ */
+function owLTPayTasks(array &$row, array &$t): float
+{
+    $paid = is_array($t['paid'] ?? null) ? $t['paid'] : [];
+    $add  = 0.0;
+    foreach (owLTStage((int)$row['level'])['base'] as $task) {
+        $k = (string)$task['k'];
+        if (!empty($paid[$k])) continue;                  // 今天这个任务已经发过了
+        if (!owLTTaskOk($task, $t)) continue;             // 还没达标
+        $paid[$k] = 1;
+        $add += owLTReward($k);
+    }
+    $t['paid'] = $paid;
+    if ($add > 0) {
+        $row['task_days'] = (float)($row['task_days'] ?? 0) + $add;
+    }
+    return $add;
+}
+
+/**
  * 跨天迁移 + 记一次登录。
- * ⚠️ 同日内直接返回（零写入）—— user.active 每请求都触发，长轮询下不能每次都写库。
+ * ⚠️ 同日内**不做迁移也不重复计登录**（只读一次行、解出今日进度）。
+ *    注意这不等于「同日内不写库」—— v3.0 起写库由调用方按需做
+ *    （user.active 里累加在线时长那一步，见该钩子注释）。
  */
 function owLTTouch(int $uid): array
 {
@@ -576,18 +822,42 @@ function owLTAddFile(int $uid, string $kind, bool $own = false): void
 /* ============================ 结算 ============================ */
 
 /**
- * 进度变化后：当天保底任务全部完成 → 记 1 个活跃天数（D+1）→ 按公式重算等级。
- * v2.0 起没有加权、没有随机、没有封顶——完成一天就是一天，公式自己算等级。
+ * 今日任务清单（带进度、奖励与是否已发奖）—— mine 接口 / 后台查询 / 等级页共用。
+ * 三处各写一份的话，加一个字段就会漏掉其中一处（v2.0 的 tasks 与等级页就分了两份）。
  */
-function owLTAfterProgress(int $uid, array $row, array $t): void
+function owLTTasksToday(array $row, array $t): array
 {
-    if ((int)$row['settled'] === 1) { owLTSave($uid, $row, $t); return; }   // 今天已结算过
-    $stage = owLTStage((int)$row['level']);
-    if (!owLTBaseOk($stage, $t)) { owLTSave($uid, $row, $t); return; }
+    $paid = is_array($t['paid'] ?? null) ? $t['paid'] : [];
+    $out  = [];
+    foreach (owLTStage((int)$row['level'])['base'] as $task) {
+        $k = (string)$task['k'];
+        $out[] = [
+            'k' => $k, 'label' => owLTTaskLabel($k),
+            'n' => (int)$task['n'], 'cur' => owLTProg($t, $k),
+            'rw' => owLTReward($k),                       // 完成一次奖励多少天
+            'paid' => !empty($paid[$k]) ? 1 : 0,          // 今天是否已发过奖
+            'ok' => owLTTaskOk($task, $t) ? 1 : 0,
+        ];
+    }
+    return $out;
+}
 
-    $row['days'] = (int)$row['days'] + 1;
-    $row['settled'] = 1;
-    $before = (int)$row['level'];
+/**
+ * 进度变化后：逐任务发奖（每个任务每天一次）→ 按公式重算等级。
+ * v3.0 起没有「整天」概念了 —— 完成哪个任务就发哪个任务的「天」，
+ * 与站方口径（每一个任务各配一个奖励天数）一致。
+ *
+ * ⚠️ $row / $t 必须**按引用**传：调用方紧接着还要拿这份数据写库
+ *    （user.active 里跨天之后就是累加在线那一步）。按值传会让调用方手里
+ *    还是发奖前的旧快照，它的保存会**把刚发的奖励覆盖回 0**
+ *    —— v3.0 自检第 11 组抓到的就是这个：新用户首次活跃，0.5 天不见了。
+ */
+function owLTAfterProgress(int $uid, array &$row, array &$t): void
+{
+    $before = (int)($row['level'] ?? 1);
+    owLTPayTasks($row, $t);
+    // settled 保留原义：今日保底任务是否已全部完成（只作展示，见等级页「今日已结算」）
+    $row['settled'] = owLTBaseOk(owLTStage((int)$row['level']), $t) ? 1 : 0;
     owLTRecalc($row);          // 不降级由 owLTRecalc 保证
     owLTSave($uid, $row, $t);
     if ((int)$row['level'] > $before) owLTBump('upgrades');
@@ -636,19 +906,46 @@ Plugin::on('room.created', function ($roomId, $actor, $charged = 0) {
     owLTBump('rooms');
 });
 
-/** 每日登录（会话仍在就不走登录钩子，所以挂 user.active） */
+/**
+ * 每日登录（会话仍在就不走登录钩子，所以挂 user.active）
+ *
+ * v3.0：这个钩子还兼着「累计在线时长」的活 —— 它是全站唯一每请求都会跑的入口，
+ * 在线时长只能在这里按「两次请求的时间差」累加。因此**同日路径不再是零写入**
+ * （v2.0 的注释写着「长轮询下不能每次都写库」，v3.0 起必须写：在线时长就是靠
+ * 每次请求记一个差值攒出来的）。写入频率 = 该用户的轮询频率（≤20 秒一次），
+ * 且差值 <5 秒的请求不落库，所以同屏连点不会放大写量。
+ */
 Plugin::on('user.active', function (array $actor) {
     if (($actor['kind'] ?? '') !== 'user') return;
     $uid = (int)$actor['id'];
     if ($uid <= 0) return;
-    $isNewDay = (string)(owLTRow($uid)['day'] ?? '') !== date('Y-m-d');
-    [$row, $t] = owLTTouch($uid);
+
+    $row = owLTRow($uid);
     if (!$row) return;
-    // v1.2.44 活跃趋势：当日活跃人数（同一人一天只计一次）
-    owLTMarkActive($uid);
-    if ($isNewDay) owLTBump('logins');      // 跨天才算一次「登录人天」
-    // 登录本身就可能直接达成低阶段保底任务（新手阶段 = 登录 + 群发言 1，还差发言）
-    owLTAfterProgress($uid, $row, $t);
+
+    if ((string)$row['day'] !== date('Y-m-d')) {
+        // 跨天：进度清零 + 迁移（owLTTouch 内部会写库）
+        [$row, $t] = owLTTouch($uid);
+        if (!$row) return;
+        // v1.2.44 活跃趋势：当日活跃人数（同一人一天只计一次）
+        owLTMarkActive($uid);
+        owLTBump('logins');                   // 跨天才算一次「登录人天」
+        // 登录本身就可能直接达成低阶段任务（新手阶段 = 登录 + 群发言 1）
+        owLTAfterProgress($uid, $row, $t);
+    } else {
+        $t = owLTDecode((string)$row['today']);
+    }
+
+    // v3.0：每次请求都累加在线时长（页面开着就算在线）
+    if (owLTAccumOnline($uid, $row)) {
+        // ⚠️ 必须在这里重算等级：在线时长是**这一条路径**攒出来的，而等级只在
+        //    跨天结算时才重算的话，「在线满一天就升一级」要等到第二天才生效。
+        //    自检第 10 组（在线攒满 86400 秒）就是拿这个当断言。
+        $before = (int)$row['level'];
+        owLTRecalc($row);
+        owLTSave($uid, $row, $t);
+        if ((int)$row['level'] > $before) owLTBump('upgrades');
+    }
 });
 
 /** 发言 */
@@ -808,7 +1105,11 @@ Plugin::on('user.level.get', function (int &$level, int $uid) {
 /**
  * `user.level.set` —— 设置某用户等级（后台「用户管理」用）。
  * $ok 传入 **null**：没有插件响应时它保持 null，调用方据此提示「未安装等级插件」，
- * 而不是误报成功。等级只改数值，不重算加权（与插件后台的「直接设置」同口径）。
+ * 而不是误报成功。
+ *
+ * v3.0 起等级是按「天」算的（在线 + 任务 + 设定），所以直设等级必须补差额：
+ * 走 owLTAlignLevel() 把差额记进 bonus_days，等级页才能如实拆开展示。
+ * 不补的话就会出现「Lv.30 配累计 4 天」—— 页面自己写着 L = 1 + ⌊天数⌋，整页自相矛盾。
  *
  * ```php
  * $ok = null; $msg = '';
@@ -821,7 +1122,7 @@ Plugin::on('user.level.set', function (int $uid, int $level, ?bool &$ok, string 
     $row = owLTRow($uid);
     if (!$row) { $ok = false; $msg = '用户不存在'; return; }
     $t = owLTDecode((string)$row['today']);
-    $row['level'] = max(1, $level);
+    owLTAlignLevel($row, $level);
     owLTSave($uid, $row, $t);
     $ok = true;
     $msg = '等级已设为 Lv.' . (int)$row['level'];
@@ -835,20 +1136,19 @@ Plugin::route('plugin_level_trust_mine', function (array $ctx) {
     $uid = (int)$ctx['actor']['id'];
     [$row, $t] = owLTTouch($uid);
     $stage = owLTStage((int)$row['level']);
-    $tasks = [];
-    foreach ($stage['base'] as $task) {
-        $tasks[] = ['k' => $task['k'], 'n' => (int)$task['n'], 'cur' => owLTProg($t, $task['k'])];
-    }
+    $tasks = owLTTasksToday($row, $t);
     Api::json([
         'ok' => true,
-        'level' => (int)$row['level'], 'days' => (int)$row['days'],
+        'level' => (int)$row['level'],
         'stage' => $stage['name'], 'stage_no' => owLTStageNo((int)$row['level']),
-        'honor' => (int)$row['level'] >= 60 ? 1 : 0,
+        'honor' => (int)$row['level'] >= owLTInt('lv_honor') ? 1 : 0,
         'login_streak' => (int)$row['login_streak'], 'login_days' => (int)$row['login_days'],
         'settled' => (int)$row['settled'],
         'frozen' => (int)$row['frozen_day'] === (int)date('Ymd') ? 1 : 0,
         'tasks' => $tasks,
         'unlocks' => owLTUnlocks((int)$row['level']),
+        // v3.0：等级来源拆开下发（在线 / 任务 / 管理员设定），前端不必自己换算
+        'prog' => owLTSnapshot($row),
     ]);
 });
 
@@ -871,6 +1171,26 @@ function owLTStageColor(int $no): string
 {
     $c = [1 => '#9AA5B1', 2 => '#0099FF', 3 => '#13A8A8', 4 => '#7A5AF8', 5 => '#D4A017'];
     return $c[$no] ?? '#9AA5B1';
+}
+
+/** 小数去尾：0.50 → 0.5、3.00 → 3、0 → 0（等级页与后台共用的数字显示口径） */
+function owLTNum(float $v): string
+{
+    return rtrim(rtrim(number_format($v, 2, '.', ''), '0'), '.');
+}
+
+/** 秒 → 中文时长（累计在线时长显示用：8 分 / 2 小时 15 分 / 3 天 4 小时） */
+function owLTFmtDur(int $sec): string
+{
+    if ($sec < 60) return max(0, $sec) . ' 秒';
+    $m = intdiv($sec, 60);
+    if ($m < 60) return $m . ' 分';
+    $hh = intdiv($m, 60);
+    $mm = $m % 60;
+    if ($hh < 24) return $hh . ' 小时' . ($mm > 0 ? ' ' . $mm . ' 分' : '');
+    $d = intdiv($hh, 24);
+    $rh = $hh % 24;
+    return $d . ' 天' . ($rh > 0 ? ' ' . $rh . ' 小时' : '');
 }
 
 /** 能力解锁对比表：返回每一档的能力清单（档位取自全部配置过的等级门槛） */
@@ -923,22 +1243,19 @@ Plugin::page('level', '等级', function (array $actor, $user = null) {
 
     if ($isUser) {
         [$row, $t] = owLTTouch($uid);
-        $days = (int)$row['days'];
-        $step = owLTFloat('lv_step');
-        if ($step < 1) $step = 1.0;
-        // 下一级所需天数：⌊D×step⌋ ≥ lv 即升到 lv+1 → D ≥ lv/step。
-        // 用 $lv（真实等级，可能被后台直设过）而不是公式值，否则直设过的用户
-        // 会看到「进度条 90% 但还差 21 天」这种自相矛盾的提示。
-        $needDays = (int)ceil($lv / $step);
-        $pct = (int)max(0, min(100, round(($days * $step - ($lv - 1)) * 100)));
-
+        $snap = owLTSnapshot($row);
+        // v3.0：等级有三个来源，页面如实拆开展示（后台直设过的等级会多一行「管理员设定」）。
+        // 上一版把三项混成一个「累计完成 N 天」，后台一改等级就自相矛盾。
         $h .= '<div class="ow-lv-hero-meta">'
-            . '<span>累计完成 <b>' . $days . '</b> 天</span>'
-            . '<span>每天完成任务 = <b>' . $step . '</b> 级进度</span>'
+            . '<span>累计在线 <b>' . owLTFmtDur((int)$snap['online_sec']) . '</b></span>'
+            . '<span>任务奖励 <b>' . owLTNum((float)$snap['task_days']) . '</b> 天</span>'
+            . ($snap['bonus_days'] > 0.0001
+                ? '<span>管理员设定 <b>' . owLTNum((float)$snap['bonus_days']) . '</b> 天</span>'
+                : '')
             . '<span>连续登录 <b>' . (int)$row['login_streak'] . '</b> 天</span>'
-            . '<span>距 Lv.' . ($lv + 1) . ' 还需 <b>' . max(0, $needDays - $days) . '</b> 天任务</span>'
+            . '<span>距 Lv.' . (int)$snap['next_level'] . ' 还需 <b>' . owLTNum((float)$snap['gap_days']) . '</b> 天</span>'
             . '</div>'
-            . '<div class="ow-lv-bar"><i style="width:' . $pct . '%"></i></div>';
+            . '<div class="ow-lv-bar"><i style="width:' . (int)$snap['pct'] . '%"></i></div>';
     } else {
         $h .= '<div class="ow-lv-hero-meta"><span>登录后即可看到你的等级进度与今日任务。</span></div>';
     }
@@ -974,35 +1291,43 @@ Plugin::page('level', '等级', function (array $actor, $user = null) {
     if ($isUser) {
         $h .= '<div class="ow-card"><h3 class="ow-lv-h3">今日任务</h3>';
         $done = 0;
-        foreach ($stage['base'] as $task) {
-            $has = owLTProg($t, $task['k']);
-            $n = (int)$task['n'];
-            $ok = $has >= $n;
+        $got  = 0.0;                       // 今日已到手的天数（= 今日实际进度）
+        $all  = 0.0;
+        foreach (owLTTasksToday($row, $t) as $task) {
+            $has = (int)$task['cur'];
+            $n   = (int)$task['n'];
+            $ok  = $task['ok'] === 1;
             if ($ok) $done++;
+            $all += (float)$task['rw'];
+            if ($task['paid'] === 1) $got += (float)$task['rw'];
             $h .= '<div class="ow-lv-task">'
-                . '<span class="ow-lv-task-k">' . Sec::e(owLTTaskLabel($task['k'])) . '</span>'
+                . '<span class="ow-lv-task-k">' . Sec::e((string)$task['label'])
+                . ($task['rw'] > 0 ? ' <b class="ow-lv-task-rw">+' . owLTNum((float)$task['rw']) . ' 天</b>' : '')
+                . '</span>'
                 . '<span class="ow-lv-task-bar"><i style="width:' . (int)min(100, $n > 0 ? $has / $n * 100 : 0) . '%"></i></span>'
                 . '<span class="ow-lv-task-v' . ($ok ? ' done' : '') . '">' . $has . ' / ' . $n . '</span>'
                 . '</div>';
         }
         $h .= '<div class="ow-lv-task-sum">'
-            . '保底任务完成 <b>' . $done . ' / ' . count($stage['base']) . '</b>，'
-            . '全部完成今天记 1 个活跃天数（升 <b>' . owLTFloat('lv_step') . '</b> 级进度）'
-            . ((int)$row['settled'] === 1 ? '（<b style="color:var(--ow-green)">今日已结算</b>）' : '')
-            . '。任务次日清零，断签不降级。</div>'
+            . '今日任务完成 <b>' . $done . ' / ' . count($stage['base']) . '</b>，'
+            . '已获得 <b>' . owLTNum($got) . '</b> / ' . owLTNum($all) . ' 天'
+            . ($got > 0 && $got >= $all ? '（<b style="color:var(--ow-green)">今日已全部到手</b>）' : '')
+            . '。每个任务每天各计一次，次日清零，完不成也不降级。</div>'
             . '</div>';
     }
 
     /* ---------- 等级公式 ---------- */
     $h .= '<div class="ow-card"><h3 class="ow-lv-h3">等级怎么算</h3>'
-        . '<div class="ow-lv-formula">L = 1 + ⌊ D × ' . owLTFloat('lv_step') . ' ⌋</div>'
+        . '<div class="ow-lv-formula">L = 1 + ⌊ 在线天 + 任务天 + 设定天 ⌋</div>'
         . '<ul class="ow-lv-ul">'
-        . '<li><b>D</b>：累计完成每日保底任务的天数，每天最多 +1</li>'
-        . '<li><b>' . owLTFloat('lv_step') . '</b>：每个活跃天数换算的等级进度（后台可调，默认 1.3）</li>'
-        . '<li>平均每完成一天任务升 <b>' . owLTFloat('lv_step') . '</b> 级；'
-        . '因为取整，实际是「攒几天跳一级」的节奏，不是每天准时跳</li>'
-        . '<li>各阶段保底任务都是「登录 + 群发言 N 条」，N 随阶段递增（见下方一览）</li>'
-        . '<li>未完成当天任务不降级，已攒下的天数不会被收回</li>'
+        . '<li><b>在线天</b>：累计在线每满 <b>' . owLTNum(owLTOnlineHours()) . ' 小时</b> = 1 天 = 1 级。'
+        . '页面开着就算在线；离开后再回来不会补记（单次最多记 2 分钟）</li>'
+        . '<li><b>任务天</b>：完成每日任务直接加「天」，每个任务加多少天由后台设置'
+        . '（当前：' . owLTRewardText() . '），每个任务每天只计一次</li>'
+        . '<li><b>设定天</b>：仅在管理员直接设置等级时出现，用来补齐「等级」与「天」的差额，'
+        . '普通用户不会有这一项</li>'
+        . '<li>三项相加后向下取整 +1 就是等级；因为取整，实际是「攒够一天跳一级」的节奏</li>'
+        . '<li>未完成任务不降级，已攒下的在线时长与任务奖励都不会被收回</li>'
         . '</ul>'
         . '<div class="ow-lv-tip">有效发言需同时满足：内容 ≥ ' . owLTInt('msg_min_len') . ' 字、非纯表情/纯图片/纯链接、'
         . '距上一条计入任务 ≥ ' . owLTInt('msg_cooldown') . ' 秒、每分钟 ≤ ' . owLTInt('msg_per_minute')
@@ -1011,7 +1336,7 @@ Plugin::page('level', '等级', function (array $actor, $user = null) {
 
     /* ---------- 各等级条件一览 ---------- */
     $h .= '<div class="ow-card"><h3 class="ow-lv-h3">各阶段任务一览</h3><table class="ow-lv-table">'
-        . '<tr><th>阶段</th><th>等级</th><th>保底任务</th></tr>';
+        . '<tr><th>阶段</th><th>等级</th><th>保底任务</th><th>完成奖励</th></tr>';
     $defs = [
         [1, '新手阶段', 1, $b[0] - 1, $gm[0]],
         [2, '日常阶段', $b[0], $b[1] - 1, $gm[1]],
@@ -1022,10 +1347,13 @@ Plugin::page('level', '等级', function (array $actor, $user = null) {
     foreach ($defs as $d) {
         $range = $d[3] > 0 ? ($d[2] === $d[3] ? (string)$d[2] : ($d[2] . '~' . $d[3])) : ($d[2] . ' 及以上');
         $base = '登录 + 群发言 ' . $d[4] . ' 条';
+        // 奖励与阶段无关（登录/群发言各一个键），所以五行的奖励列是同一组数
+        $rw = '+' . owLTNum(owLTReward('login') + owLTReward('gm')) . ' 天';
         $h .= '<tr class="ow-lv-tr' . ($stageNo === $d[0] ? ' is-cur' : '') . '">'
             . '<td><span class="ow-lv-dot" style="background:' . owLTStageColor($d[0]) . '"></span>'
             . Sec::e($d[1]) . '</td>'
-            . '<td>' . Sec::e($range) . '</td><td>' . Sec::e($base) . '</td></tr>';
+            . '<td>' . Sec::e($range) . '</td><td>' . Sec::e($base) . '</td>'
+            . '<td>' . Sec::e($rw) . '</td></tr>';
     }
     $h .= '</table></div>';
 
@@ -1033,13 +1361,20 @@ Plugin::page('level', '等级', function (array $actor, $user = null) {
     // 9 列，窄屏上压进卡片会把每列挤成一竖溜换行（表头是中文双/三字词，一换行就错位）。
     // 外层 .ow-lv-card-scroll 在 ≤640px 时开横向滚动，配合 style.css 里的 width:auto，
     // 让表格按内容自然展开、超出部分横向滑。
+    // ⚠️ 高亮行 = 「≤ 当前等级的最大档位」，不是「等于当前等级」：
+    //    档位取自各项解锁门槛，等级几乎不会恰好落在档位上（后台直设成 Lv.30 时
+    //    档位表里就没有 30），按等于匹配会导致整张表一行都不高亮。
+    $marks = [];
+    foreach (owLTUnlockMatrix() as $mr) $marks[] = (int)$mr['lv'];
+    $curMark = 0;
+    foreach ($marks as $mk) if ($mk <= $lv && $mk > $curMark) $curMark = $mk;
     $h .= '<div class="ow-card"><h3 class="ow-lv-h3">能力解锁对比</h3><div class="ow-lv-card-scroll"><table class="ow-lv-table">'
         . '<tr><th>等级</th><th>阶段</th><th>建群名额</th><th>头像</th><th>贴纸上限</th>'
         . '<th>加好友</th><th>单文件上限</th><th>管理候选</th><th>荣誉</th></tr>';
     foreach (owLTUnlockMatrix() as $r) {
         $y = '<span class="ow-lv-yes">✓</span>';
         $n = '<span class="ow-lv-no">—</span>';
-        $h .= '<tr class="' . ($r['lv'] === $lv ? 'is-cur' : '') . '">'
+        $h .= '<tr class="' . ((int)$r['lv'] === $curMark ? 'is-cur' : '') . '">'
             . '<td><b>Lv.' . (int)$r['lv'] . '</b></td>'
             . '<td>' . Sec::e($r['stage']) . '</td>'
             . '<td>' . ((int)$r['quota'] > 0 ? (int)$r['quota'] . ' 个' : $n) . '</td>'
@@ -1189,18 +1524,16 @@ Plugin::route('plugin_level_trust_user', function (array $ctx) use ($ltGuard) {
     if (!$u) Api::json(['ok' => false, 'msg' => '用户不存在']);
     [$row, $t] = owLTTouch($uid);
     $stage = owLTStage((int)$row['level']);
-    $tasks = [];
-    foreach ($stage['base'] as $task) {
-        $tasks[] = ['k' => $task['k'], 'n' => (int)$task['n'], 'cur' => owLTProg($t, $task['k'])];
-    }
+    $tasks = owLTTasksToday($row, $t);
     Api::json([
         'ok' => true,
         'uid' => $uid, 'nickname' => (string)$u['nickname'], 'role' => (string)$u['role'],
-        'level' => (int)$row['level'], 'days' => (int)$row['days'],
+        'level' => (int)$row['level'],
         'stage' => $stage['name'], 'login_streak' => (int)$row['login_streak'], 'login_days' => (int)$row['login_days'],
         'settled' => (int)$row['settled'], 'frozen' => (int)$row['frozen_day'] === (int)date('Ymd') ? 1 : 0,
         'patch_used' => (int)$row['patch_used'], 'protect_used' => (int)$row['protect_used'],
         'tasks' => $tasks, 'today' => $t,
+        'prog' => owLTSnapshot($row),      // v3.0：在线/任务/设定三项拆开给后台展示
     ]);
 });
 
@@ -1215,16 +1548,26 @@ Plugin::route('plugin_level_trust_op', function (array $ctx) use ($ltGuard) {
     $t = owLTDecode((string)$row['today']);
 
     switch ($op) {
-        case 'patch':       // 补签：每周最多 1 次，视为完成当天全部保底任务，活跃天数 +1
+        case 'patch':       // 补签：每周最多 1 次，视为完成当天全部保底任务 → 发放当日全部任务奖励
             $week = date('o-W');
             if ((string)$row['patch_week'] !== $week) { $row['patch_week'] = $week; $row['patch_used'] = 0; }
             if ((int)$row['patch_used'] >= 1) Api::json(['ok' => false, 'msg' => '本周补签次数已用完']);
             $row['patch_used'] = (int)$row['patch_used'] + 1;
-            $row['days'] = (int)$row['days'] + 1;
+            // 把当天每个任务的进度顶到要求值 —— 而不是绕过任务直接改等级，
+            // 这样「补签得到的东西」和「真做完任务得到的东西」严格一致（v3.0 逐任务发奖）。
+            foreach (owLTStage((int)$row['level'])['base'] as $tk) {
+                $k = (string)$tk['k'];
+                if (owLTProg($t, $k) < (int)$tk['n']) $t[$k] = (int)$tk['n'];
+            }
+            $before = (int)$row['level'];
+            owLTPayTasks($row, $t);
             $row['settled'] = 1;
             owLTRecalc($row);
             owLTSave($uid, $row, $t);
-            Api::json(['ok' => true, 'msg' => '已补签，等级提升至 Lv.' . (int)$row['level']]);
+            if ((int)$row['level'] > $before) owLTBump('upgrades');
+            Api::json(['ok' => true, 'msg' => (int)$row['level'] > $before
+                ? '已补签，等级提升至 Lv.' . (int)$row['level']
+                : '已补签，当日任务奖励已发放（等级不变，仍 Lv.' . (int)$row['level'] . '）']);
 
         case 'freeze':      // 冻结当天任务进度（结算不再进行）
             $row['frozen_day'] = (int)date('Ymd');
@@ -1236,13 +1579,23 @@ Plugin::route('plugin_level_trust_op', function (array $ctx) use ($ltGuard) {
             owLTSave($uid, $row, $t);
             Api::json(['ok' => true, 'msg' => '已解除冻结']);
 
-        case 'set':         // 直接设置等级与天数（迁移或纠错用）
+        case 'set':         // 直接设置等级（可选同时改「任务累计天数」）；差额自动记进「管理员设定」
             $lv = max(1, (int)($ctx['post']['level'] ?? 1));
-            $days = max(0, (int)($ctx['post']['days'] ?? (int)$row['days']));
-            $row['level'] = $lv;
-            $row['days'] = $days;
+            // 兼容旧前端字段名 days（v3.0 起改叫 task_days，语义也从整数活跃天数变成小数）
+            $raw = $ctx['post']['task_days'] ?? ($ctx['post']['days'] ?? null);
+            if ($raw !== null && $raw !== '') {
+                $row['task_days'] = max(0.0, min(1000000.0, (float)$raw));
+            }
+            // ⚠️ 关键一步：把「公式还没算到」的差额记进 bonus_days，
+            //    否则等级页会同时显示 Lv.N 与一个远低于 N 的天数（v1.3.150 前的表现）。
+            owLTAlignLevel($row, $lv);
             owLTSave($uid, $row, $t);
-            Api::json(['ok' => true, 'msg' => '已设置为 Lv.' . $lv . '（累计 ' . $days . ' 天）']);
+            Api::json(['ok' => true, 'msg' => '已设为 Lv.' . (int)$row['level']
+                . '（任务累计 ' . round((float)$row['task_days'], 2) . ' 天'
+                . ((float)$row['bonus_days'] > 0
+                    ? '，管理员设定 ' . round((float)$row['bonus_days'], 2) . ' 天'
+                    : '')
+                . '）']);
 
         case 'gate':        // 限制总开关
             $v = (string)($ctx['post']['v'] ?? '1') === '1' ? '1' : '0';
@@ -1263,8 +1616,10 @@ Plugin::adminPage('level-trust', '等级信任', function () {
             . '</div>';
     };
     $head = '<h2>等级信任</h2>'
-        . '<p class="ow-admin-desc">等级 L = 1 + ⌊D × lv_step⌋（v2.0 起）：D 为累计完成每日保底任务的天数，'
-        . '默认每个活跃天换算 1.3 级进度，平均一天升 1.3 级。各阶段保底任务统一为「登录 + 群发言 N 条」，无替代、无挑战。'
+        . '<p class="ow-admin-desc">等级 L = 1 + ⌊ 在线天 + 任务天 + 设定天 ⌋（v3.0）：'
+        . '累计在线每满 <b>' . owLTNum(owLTOnlineHours()) . '</b> 小时算 1 天，完成每日任务按后台设定的奖励加「天」，'
+        . '1 天 = 1 级。当前任务奖励：<b>' . Sec::e(owLTRewardText()) . '</b>。'
+        . '各阶段保底任务统一为「登录 + 群发言 N 条」，每个任务各自发奖、每天各一次。'
         . '以下参数全部可调，改完点最下方「保存全部参数」。</p>';
 
     $head .= '<div class="ow-card" id="owLTStats"></div>'
@@ -1313,9 +1668,15 @@ Plugin::adminPage('level-trust', '等级信任', function () {
         . $f('stage_gm', '各阶段群发言条数', '逗号分隔：新手,日常,活跃,核心,荣誉')
         . '</div>';
 
-    $head .= '<h4 class="ow-lt-cap">等级速度</h4><div class="ow-form-row">'
-        . $f('lv_step', '每日进度倍率', '每个完成日的活跃天数换算多少级进度；1 = 每天升 1 级，1.3 = 平均一天 1.3 级')
-        . '</div>';
+    $head .= '<h4 class="ow-lt-cap">等级速度（v3.0：L = 1 + ⌊ 在线天 + 任务天 + 设定天 ⌋）</h4><div class="ow-form-row">'
+        . $f('online_hours', '在线多少小时算 1 天', '累计在线每满这么多小时 = +1 天 = +1 级；默认 24')
+        . $f('rw_login', '「登录」任务奖励（天）', '完成一次奖励多少天，默认 0.5；每个任务每天只发一次')
+        . $f('rw_gm', '「群发言」任务奖励（天）', '完成一次奖励多少天，默认 0.5')
+        . '</div>'
+        . '<p style="font-size:12px;color:var(--ow-text-sub);margin:0 0 14px">'
+        . '任务奖励填 0 = 该任务不发奖励（只统计进度）；两个都填 1 就是「每天做完任务升 2 级」。'
+        . '在线时长按「页面开着」累计，单次最多计 2 分钟（离开后再回来不会补记）。'
+        . 'v2.0 的「每日进度倍率」已停用：只在存量数据迁移时读一次，不再出现在这里。</p>';
 
     $head .= '<h4 class="ow-lt-cap">有效发言判定</h4><div class="ow-form-row">'
         . $f('msg_min_len', '内容最少字数')

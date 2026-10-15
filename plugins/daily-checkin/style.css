@@ -481,6 +481,16 @@
     font-variant-numeric: tabular-nums;
 }
 .ow-ci-task-v.done { color: var(--ow-green); }
+/* v1.1.2（配套等级信任 v3.0）：任务奖励天数。
+   放在任务名与进度条之间、独立一列而不是塞进 .ow-ci-task-k（那格是定宽 76px，
+   塞进去要么撑破要么换行）。字号取 10.5px、不加粗（≤13px 中文不用 600 是站方约定）。 */
+.ow-ci-task-rw {
+    flex-shrink: 0; -webkit-flex-shrink: 0;
+    font-style: normal;
+    font-size: 10.5px;
+    color: var(--ow-text-sub);
+    font-variant-numeric: tabular-nums;
+}
 /* 「可替代」小标：与等级页的 ow-lv-task-alt 同一套警示色变量 */
 .ow-ci-task-alt {
     font-style: normal;
