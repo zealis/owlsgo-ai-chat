@@ -1564,6 +1564,13 @@
             this.room = cfg.room;
             this.syncRoomOwner();
             this.sound = cfg.settings.sound === '1';
+            /* v1.3.164：提示音开关是**本机偏好**（与 owl_theme / owl_fontsize 同一类），
+               站点默认（后台 sound_default）之上允许本机覆盖。此前点了只翻内存标志、什么也不存，
+               刷新即回到站点默认 —— 站方报的「提示音状态一刷新就失效」就是这个。 */
+            try {
+                var sv = w.localStorage.getItem('owl_sound');
+                if (sv === '0' || sv === '1') this.sound = sv === '1';
+            } catch (e) {}
             var self = this;
 
             this.loadConversations();   // 会话列表（群聊+私聊聚合）——私聊路由要靠它取昵称
@@ -1715,12 +1722,14 @@
             };
             var sndBtn = $('owBtnSound');
             /* 首屏先把图标对到已存偏好上：服务端那一枚恒按「开」渲染，
-               而 this.sound 取自用户偏好（cfg.settings.sound）。偏好是「关」时，
+               而 this.sound 已叠加了本机偏好（owl_sound，见 init）。偏好是「关」时，
                图标显示成有声、实际不出声 —— 点了才纠正过来，等于让用户先信错一次。 */
             if (sndBtn && !self.sound) sndBtn.innerHTML = sndBtn.getAttribute('data-off');
             sndBtn.onclick = function () {
                 self.sound = !self.sound;
                 this.innerHTML = this.getAttribute(self.sound ? 'data-on' : 'data-off');
+                // v1.3.164：本机偏好落 localStorage（与日夜模式/字号同一类，不随「保存」提交）
+                try { w.localStorage.setItem('owl_sound', self.sound ? '1' : '0'); } catch (e) {}
                 toast(self.sound ? '提示音已开启' : '提示音已关闭');
             };
             // 窄屏浮层遮罩：侧栏或成员面板打开时显示
