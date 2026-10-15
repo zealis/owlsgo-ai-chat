@@ -69,15 +69,8 @@
 .ow-lv-task-bar > i { display: block; height: 100%; background: #9AA5B1; }
 .ow-lv-task-v { width: 56px; text-align: right; font-weight: 600; }
 .ow-lv-task-v.done { color: var(--ow-green); }
-.ow-lv-task-alt {
-    /* v1.3.37：原先写死「暖底暖字」(#B06000 / #FFF6E5 / #FFE1B0) 并在深色下另写覆盖块；
-       现改用核心警示色变量（--ow-yellow / --ow-warn-bg / --ow-warn-border），
-       深浅两套自动跟随，下面的深色补丁随之删除。 */
-    font-size: 11px; color: var(--ow-yellow); background: var(--ow-warn-bg);
-    border: 1px solid var(--ow-warn-border); border-radius: 2px; padding: 0 4px;
-}
 .ow-lv-task-sum { margin-top: 10px; font-size: 13px; color: var(--ow-text-sub); }
-.ow-lv-ch { margin-top: 6px; font-size: 12px; color: var(--ow-text-sub); }
+/* v2.0 起任务无「可替代」徽标（.ow-lv-task-alt）与挑战区（.ow-lv-ch），样式一并移除 */
 
 .ow-lv-formula {
     font-family: Menlo, Consolas, monospace; font-size: 13px;

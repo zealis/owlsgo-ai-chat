@@ -442,13 +442,16 @@
         }
         h += '</div>';
         var all = list.length > 0 && done >= list.length;
+        // v1.1.1：等级信任 v2.0 起「完成一天任务 = 记 1 个活跃天数」，按倍率换算等级
+        // （默认 1.3，后台可调），不再是固定的「升 1 级」——这里不写死任何数字，
+        // 想要准确换算的观众点「等级规则」看公式。
         h += '<div class="ow-ci-tip">保底任务完成 <b>' + done + ' / ' + list.length + '</b>，';
         if (L.frozen) {
             h += '今日已被管理员冻结，进度暂停。';
         } else if (all) {
-            h += '今天升 1 级' + (L.settled ? '（<b style="color:var(--ow-green)">今日已结算</b>）' : '') + '。';
+            h += '今天记 1 个活跃天数' + (L.settled ? '（<b style="color:var(--ow-green)">今日已结算</b>）' : '') + '。';
         } else {
-            h += '全部完成今天升 1 级。';
+            h += '全部完成今天记 1 个活跃天数。';
         }
         h += ' <a href="?page=level">等级规则 ›</a></div>';
         return h;

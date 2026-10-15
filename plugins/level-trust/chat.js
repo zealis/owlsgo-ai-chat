@@ -21,10 +21,9 @@
     if (!w.OwChat || typeof OwChat.onCardMetaTop !== 'function') return;
     w.__haLevelLoaded = true;
 
-    /** 任务 key → 中文（前台/后台共用） */
+    /** 任务 key → 中文（v2.0 起任务只剩登录与群发言；旧键已随替代/挑战任务移除） */
     var LABEL = {
-        login: '登录', gm: '群发言', gfirst: '群聊首条',
-        pfirst: '私聊首条', fup: '上传文件', fdl: '下载文件', fact: '群文件操作'
+        login: '登录', gm: '群发言'
     };
 
     /** 等级徽章 HTML */

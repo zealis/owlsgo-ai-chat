@@ -161,7 +161,7 @@
                     // 昵称含 < > & 时不转义就是存储型 XSS（后台管理员打开这页即中招）。
                     + row('用户', esc(r.nickname) + '（ID ' + r.uid + '）' + (r.role === 'admin' ? ' · 超级管理员' : ''))
                     + row('等级', (w.OwLevel ? w.OwLevel.badge(r.level) : esc('Lv.' + r.level)) + ' ' + esc(r.stage))
-                    + row('累计完成', r.days + ' 天 · 加权 ' + r.weight + ' 天')
+                    + row('累计完成', r.days + ' 天（活跃天数，等级 = 1 + ⌊天数 × 倍率⌋）')
                     + row('登录', '连续 ' + r.login_streak + ' 天 · 累计 ' + r.login_days + ' 天')
                     + row('今日', (r.frozen ? '已冻结' : (r.settled ? '已完成并结算' : '进行中'))
                         + ' · 本周补签 ' + r.patch_used + ' 次 · 本月保护 ' + r.protect_used + ' 次')
@@ -202,7 +202,8 @@
                 + '<div class="ow-form-item"><label>累计完成天数（≥0）</label>'
                 + '<input class="ow-input" id="owLtSetDays" type="number" min="0" value="' + days + '">'
                 + '<p style="font-size:12px;color:var(--ow-text-sub);margin-top:4px">'
-                + '等级一般由公式自动算出；这里只用于迁移或纠错，直接改数值不会同步改加权。</p></div>'
+                + '等级一般由公式自动算出（1 + ⌊天数 × 倍率⌋，只升不降）；这里只用于迁移或纠错，'
+                + '直接改数值后，日结算仍按「旧等级与新公式取大」保护已设过的等级。</p></div>'
                 + '<div class="ow-modal-actions">'
                 + '<button class="ow-btn ow-btn-ghost" onclick="OwChat.closeModal()">取消</button>'
                 + '<button class="ow-btn ow-btn-primary" onclick="OwLT.doSet(' + uid + ')">保存</button>'

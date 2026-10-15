@@ -1,22 +1,26 @@
 <?php
 /**
- * 等级信任插件（v1.2.42）
+ * 等级信任插件（v2.0.0 公式重制）
  *
- * 规则出处：设计文档/等级设计.md
+ * 规则出处：设计文档/等级设计.md（该文档描述的是 v1.x 旧公式，v2.0 起以本文件注释为准）
  *
  * ── 等级公式 ────────────────────────────────────────────────
- *   L = 1 + ⌊D + W_最终⌋
- *   D = 累计完成每日固定任务的天数
- *   W_最终 = min(W_总, 0.5 × D) × 追赶系数
- *   不设满级；每天最多升 2 级（由公式天然保证：D 每天 +1，W 每天最多 +0.8）
+ *   L = 1 + ⌊D × lv_step⌋        （lv_step 默认 1.3，后台可配）
+ *   D = 累计完成每日保底任务的天数
+ *   即「平均每完成一天任务升 1.3 级」——与旧公式典型用户的实际速度一致
+ *   （旧公式 D + W，W 日均约 0.3 天：连签每 3 天 +0.3、每日发言 +0.1~0.3）。
+ *   不设满级；每天最多升 ⌊lv_step⌋+1 = 2 级。
+ *   未完成任务不降级：等级只取 max(旧等级, 公式值)，后台直设过的等级不会被公式压回去。
  *
- * ── 分阶段每日任务 ──────────────────────────────────────────
- *   新手 1-5    登录 + 群发言 1
- *   日常 6-15   登录 + 群发言 3 + 群聊首条
- *   活跃 16-30  登录 + 群发言 5 + 群文件操作 1 + 私聊首条
- *   核心 31-45  保底：登录 + 群发言 5 + 群聊首条；挑战：上传 1 + 下载 1
- *   荣誉 46+    保底：登录 + 群发言 10 + 群聊首条 + 私聊首条；挑战：上传 1 + 下载 1
- *   高阶段任务支持「替代」（无文件、无好友时不卡人），见 owLTStage() 的 alt。
+ *   v1.x 旧公式（已废弃）：L = 1 + ⌊D + min(W, 0.5D) × 追赶系数⌋，W 由连签/发言/文件
+ *   随机累加、封顶、再加全服中位数追赶系数——12 个参数、随机数、跨用户耦合，故重制。
+ *   weight / file_w_days 两列保留不删（存量数据），但新公式不再读写。
+ *
+ * ── 分阶段每日任务（v2.0 起无「替代」、无「挑战」）────────────
+ *   全部阶段统一为：登录 + 群发言 N 条（N 见后台 stage_gm，默认 1/3/5/5/10）
+ *   取消原因：替代任务组（上传↔私聊首条、下载↔群发言）判定分支多、
+ *   后台要懂每组的等价关系才能调参；且无文件/无好友的用户绕一圈仍等价于群发言。
+ *   挑战任务（上传/下载）从不阻塞升级，只是加权来源，加权已随公式一并移除。
  *
  * ── 五次功能解锁（设计文档第五节）────────────────────────────
  *   3 级  自定义头像、贴纸收藏（3 张起，按 sticker_tiers 分档递增）、单文件 ≤ 1/4 全局上限
@@ -29,7 +33,7 @@
  * 安全与性能约束：
  *   - 所有 SQL 参数化；等级行按 user_id 主键读写。
  *   - `user.active` 每请求都会触发（含长轮询），因此**同日内只做一次主键查询就返回**，
- *     不写库、不算加权；跨天才做迁移与结算。
+ *     不写库、不算等级；跨天才做迁移与结算。
  *   - 单插件抛异常不影响主流程（Plugin::fire 已兜底）。
  */
 if (!defined('OWLSGO_VERSION')) exit;   // 禁止直接 HTTP 访问本文件
@@ -54,10 +58,10 @@ function owLTBoot(): void
         user_id      {$pk},
         level        INTEGER NOT NULL DEFAULT 1,      -- 当前等级
         days         INTEGER NOT NULL DEFAULT 0,      -- D：累计完成每日任务的天数
-        weight       REAL    NOT NULL DEFAULT 0,      -- W：累计加权（天）
-        login_streak INTEGER NOT NULL DEFAULT 0,      -- C：连续登录天数
-        login_days   INTEGER NOT NULL DEFAULT 0,      -- 累计登录天数
-        file_w_days  INTEGER NOT NULL DEFAULT 0,      -- 文件加权已累积次数（上限 3）
+        weight       REAL    NOT NULL DEFAULT 0,      -- v1.x 遗留：旧公式的累计加权，v2.0 起不再读写
+        login_streak INTEGER NOT NULL DEFAULT 0,      -- C：连续登录天数（展示/断签保护用，不进公式）
+        login_days   INTEGER NOT NULL DEFAULT 0,      -- 累计登录天数（展示用，不进公式）
+        file_w_days  INTEGER NOT NULL DEFAULT 0,      -- v1.x 遗留：文件加权累积次数，v2.0 起不再使用
         " . DB::textCol('day') . ",                    -- 上次活跃日 Y-m-d
         " . DB::textCol('today', "'{}'") . ",          -- 今日进度 JSON
         settled      INTEGER NOT NULL DEFAULT 0,      -- 今日是否已结算（加权每天只结算一次）
@@ -146,18 +150,20 @@ function owLTPurgeActiveKeys(int $keepDays = 40): void
 }
 
 /**
- * 全部可调参数与默认值（v1.2.44：解锁等级 / 建群名额 / 加权参数 / 有效发言 / 阶段阈值
- * 全部可在后台「等级信任 → 参数设置」里改）。
+ * 全部可调参数与默认值（v2.0：解锁等级 / 建群名额 / 有效发言 / 阶段阈值全部可在
+ * 后台「等级信任 → 参数设置」里改；加权参数已随旧公式一并移除，只留一个 lv_step）。
  *
  * ⚠️ 每加一个新键，必须同时：
  *   ① 在这里给默认值；② 在后台表单里给输入框；③ 在 cfg_save 的白名单里放行。
- *   漏了 ③ 的表现是「后台保存成功但值没变」，很难查。
+ * 漏了 ③ 的表现是「后台保存成功但值没变」，很难查。
  */
 function owLTDefaults(): array
 {
     return [
         // ---- 总开关 ----
         'gating'        => '1',     // 是否按等级限制功能（0=只看等级不做限制）
+        // ---- 等级速度 ----
+        'lv_step'       => '1.3',   // 每日任务换算的等级进度：L = 1 + ⌊D × lv_step⌋
         // ---- 能力解锁等级 ----
         'lv_avatar'     => '3',     // 自定义头像
         'lv_sticker'    => '3',     // 上传/设置贴纸（v1.3.30：20 → 3，数量按 sticker_tiers 分档）
@@ -174,20 +180,6 @@ function owLTDefaults(): array
         // 20 级=100 与核心旧全局上限对齐（存量用户无感），60 级=999 封顶。
         'sticker_tiers'  => "3:3\n6:10\n10:30\n20:100\n30:200\n40:400\n50:700\n60:999",
         'room_point_cost' => '50',  // 每超出 1 个群（或等级不够时）消耗的积分；0=不允许付费建群
-        // ---- 加权参数 ----
-        'w_cap_ratio'    => '0.5',  // 加权封顶比例：W ≤ ratio × D
-        'w_daily_cap'    => '0.8',  // 每日加权上限（天）
-        'w_login_every'  => '3',    // 每连续 N 天
-        'w_login_step'   => '0.3',  // 加多少天
-        'w_days_every'   => '30',   // 累计登录每 N 天
-        'w_days_step'    => '0.1',  // 加多少天
-        'w_msg_min'      => '0.1',  // 每日发言加权下限
-        'w_msg_max'      => '0.3',  // 上限
-        'w_file_min'     => '0.1',  // 文件操作加权下限
-        'w_file_max'     => '0.5',  // 上限
-        'w_file_days'    => '3',    // 文件加权最多累积几次
-        'catchup_slow'   => '1.2',  // 低于全服中位数：加速
-        'catchup_fast'   => '0.8',  // 高出中位数 10 级：减速
         // ---- 有效发言判定 ----
         'msg_cooldown'   => '15',   // 距上一条计入任务的发言至少 N 秒
         'msg_per_minute' => '5',    // 每分钟最多计入 N 条
@@ -300,12 +292,6 @@ function owLTStickerQuota(int $level): int
 /* ============================ 等级计算 ============================ */
 
 /**
- * 阶段任务表。
- * base      = 保底任务，全部完成才升级
- * challenge = 挑战任务，完成给额外加权（不阻塞升级）
- * alt       = 替代任务组（组内全部满足即视为该任务完成），避免无文件/无好友时卡住
- */
-/**
  * 阶段阈值（可配）：返回 [日常, 活跃, 核心, 荣誉] 四个起始等级。
  * ⚠️ 必须保证单调递增，否则 owLTStageNo 会出现「高等级落在低阶段」的错乱。
  */
@@ -334,6 +320,12 @@ function owLTStageGm(): array
     return $out;
 }
 
+/**
+ * 阶段任务表（v2.0 起只有保底任务，无替代、无挑战）。
+ * base = 保底任务，当天全部完成才记 1 个活跃天数（D+1）。
+ * 各阶段任务统一为「登录 + 群发言 N 条」，N 取后台 stage_gm——
+ * 群发言是唯一人人可做的行为（全员默认群），不需要替代组兜底。
+ */
 function owLTStage(int $level): array
 {
     $b = owLTStageBounds();          // [日常, 活跃, 核心, 荣誉]
@@ -341,40 +333,23 @@ function owLTStage(int $level): array
     $login = [['k' => 'login', 'n' => 1]];
 
     if ($level < $b[0]) {
-        return ['name' => '新手阶段', 'from' => 1, 'to' => $b[0] - 1, 'base' => array_merge($login, [
-            ['k' => 'gm', 'n' => $gm[0]],
-        ]), 'ch' => []];
+        return ['name' => '新手阶段', 'from' => 1, 'to' => $b[0] - 1,
+            'base' => array_merge($login, [['k' => 'gm', 'n' => $gm[0]]])];
     }
     if ($level < $b[1]) {
-        return ['name' => '日常阶段', 'from' => $b[0], 'to' => $b[1] - 1, 'base' => array_merge($login, [
-            ['k' => 'gm', 'n' => $gm[1]],
-            ['k' => 'gfirst', 'n' => 1],
-        ]), 'ch' => []];
+        return ['name' => '日常阶段', 'from' => $b[0], 'to' => $b[1] - 1,
+            'base' => array_merge($login, [['k' => 'gm', 'n' => $gm[1]]])];
     }
     if ($level < $b[2]) {
-        return ['name' => '活跃阶段', 'from' => $b[1], 'to' => $b[2] - 1, 'base' => array_merge($login, [
-            ['k' => 'gm', 'n' => $gm[2]],
-            ['k' => 'fact', 'n' => 1, 'alt' => [['k' => 'pfirst', 'n' => 1], ['k' => 'gfirst', 'n' => 1]]],
-            ['k' => 'pfirst', 'n' => 1, 'alt' => [['k' => 'gm', 'n' => 3]]],
-        ]), 'ch' => []];
+        return ['name' => '活跃阶段', 'from' => $b[1], 'to' => $b[2] - 1,
+            'base' => array_merge($login, [['k' => 'gm', 'n' => $gm[2]]])];
     }
     if ($level < $b[3]) {
-        return ['name' => '核心阶段', 'from' => $b[2], 'to' => $b[3] - 1, 'base' => array_merge($login, [
-            ['k' => 'gm', 'n' => $gm[3]],
-            ['k' => 'gfirst', 'n' => 1],
-        ]), 'ch' => [
-            ['k' => 'fup', 'n' => 1, 'alt' => [['k' => 'gm', 'n' => 5]]],
-            ['k' => 'fdl', 'n' => 1, 'alt' => [['k' => 'gm', 'n' => 5]]],
-        ]];
+        return ['name' => '核心阶段', 'from' => $b[2], 'to' => $b[3] - 1,
+            'base' => array_merge($login, [['k' => 'gm', 'n' => $gm[3]]])];
     }
-    return ['name' => '荣誉阶段', 'from' => $b[3], 'to' => 0, 'base' => array_merge($login, [
-        ['k' => 'gm', 'n' => $gm[4]],
-        ['k' => 'gfirst', 'n' => 1],
-        ['k' => 'pfirst', 'n' => 1, 'alt' => [['k' => 'gm', 'n' => 3]]],
-    ]), 'ch' => [
-        ['k' => 'fup', 'n' => 1, 'alt' => [['k' => 'gm', 'n' => 5]]],
-        ['k' => 'fdl', 'n' => 1, 'alt' => [['k' => 'gm', 'n' => 5]]],
-    ]];
+    return ['name' => '荣誉阶段', 'from' => $b[3], 'to' => 0,
+        'base' => array_merge($login, [['k' => 'gm', 'n' => $gm[4]]])];
 }
 
 /** 阶段号（1~5），用于前端配色与后台分布统计 */
@@ -402,21 +377,10 @@ function owLTProg(array $t, string $k): int
     return (int)($t[$k] ?? 0);
 }
 
-/**
- * 单个任务是否完成。
- * alt 是「替代任务组」——**组内每一项都要满足**才算替代成功
- * （例：上传文件 1 个 可用「私聊首条 + 群聊首条」替代，两条都要有）。
- */
+/** 单个任务是否完成（v2.0 起无替代组，达标即完成） */
 function owLTTaskOk(array $task, array $t): bool
 {
-    if (owLTProg($t, $task['k']) >= (int)$task['n']) return true;
-    $alt = $task['alt'] ?? [];
-    if (!$alt) return false;
-    foreach ($alt as $one) {
-        if (!is_array($one) || !isset($one['k'])) return false;   // 结构异常：宁可不放行
-        if (owLTProg($t, $one['k']) < (int)$one['n']) return false;
-    }
-    return true;                                                   // 替代组全部满足
+    return owLTProg($t, $task['k']) >= (int)$task['n'];
 }
 
 function owLTBaseOk(array $stage, array $t): bool
@@ -425,7 +389,7 @@ function owLTBaseOk(array $stage, array $t): bool
     return true;
 }
 
-/** 全服等级中位数（每次请求只算一次，追赶系数要用） */
+/** 全服等级中位数（后台概览的 KPI 用；v2.0 起不再进等级公式） */
 function owLTMedian(): float
 {
     static $m = null;
@@ -438,43 +402,28 @@ function owLTMedian(): float
     return ($m = $row ? (float)$row['level'] : 1.0);
 }
 
-/** 追赶系数：低于中位数加速，高出中位数 10 级减速 */
-function owLTCatchUp(int $level): float
-{
-    $med = owLTMedian();
-    if ($level < $med) return owLTFloat('catchup_slow');
-    if ($level > $med + 10) return owLTFloat('catchup_fast');
-    return 1.0;
-}
-
 /**
- * 等级公式：L = 1 + ⌊D + min(W, 0.5D) × 追赶系数⌋
- * ⚠️ W 的单位是「天」，不是等级；封顶 0.5×D 防止活跃用户把休闲用户甩太远。
+ * 等级公式（v2.0）：L = 1 + ⌊D × lv_step⌋
+ * D = 累计完成每日保底任务的天数；lv_step 默认 1.3（后台可配）。
+ * 速度对标旧公式的典型用户（旧 W 日均约 0.3 天：连签每 3 天 +0.3、每日发言 +0.1~0.3）：
+ *   D=7/10/20/30 天 → 旧典型 Lv.10/14/27/40，新公式 10/14/27/40，逐段一致。
  */
-/** [min,max] 之间的浮点随机（配置里的小数位数不定，用千分位取整再还原） */
-function owLTRandF(float $min, float $max): float
+function owLTCalc(int $days): int
 {
-    if ($max <= $min) return $min;
-    return $min + (mt_rand(0, (int)round(($max - $min) * 1000)) / 1000);
-}
-
-function owLTCalc(int $days, float $weight, float $factor = 1.0): int
-{
-    // ⑤ 加权封顶：W ≤ ratio × D（比例可配）
-    $wv = min($weight, owLTFloat('w_cap_ratio') * $days);
-    return max(1, 1 + (int)floor($days + $wv * $factor));
+    $step = owLTFloat('lv_step');
+    if ($step < 1) $step = 1.0;          // 后台把倍率调成 0 会让所有人永远不升级，兜底
+    return max(1, 1 + (int)floor($days * $step));
 }
 
 /**
  * 按公式重算等级并写回 $row。
- * ⚠️ 取 max(旧等级, 公式值)：设计文档「未完成不降级」。追赶快慢切换、或后台直设过
- *    等级时，纯公式会算出**比当前更低**的等级 —— 表现为「什么都没做却掉级」。
+ * ⚠️ 取 max(旧等级, 公式值)：未完成当天任务不降级；后台直设过等级（或旧公式下
+ *    加权攒得多）时，纯公式会算出比当前更低的等级——不兜这一手就是「什么都没做却掉级」。
  *    所有改等级的地方（每日结算、补签后台操作）都必须走这里，别各处自己算一遍。
  */
 function owLTRecalc(array &$row): void
 {
-    $row['level'] = max((int)$row['level'],
-        owLTCalc((int)$row['days'], (float)$row['weight'], owLTCatchUp((int)$row['level'])));
+    $row['level'] = max((int)$row['level'], owLTCalc((int)$row['days']));
 }
 
 /* ============================ 行读写 ============================ */
@@ -605,61 +554,37 @@ function owLTAddMsg(int $uid, string $content, string $type, bool $isGroup): boo
     $t['recent'] = array_slice($recent, 0, max(1, owLTInt('msg_dedupe')));
 
     if ($isGroup) {
-        $t['gm'] = owLTProg($t, 'gm') + 1;
-        if (owLTProg($t, 'gm') === 1) $t['gfirst'] = 1;    // 群聊首条
-    } else {
-        $t['pfirst'] = 1;                                   // 私聊首条
+        $t['gm'] = owLTProg($t, 'gm') + 1;   // 群发言是唯一人人可做的任务行为
     }
     owLTAfterProgress($uid, $row, $t);
     return true;                                            // 真正计入了任务
 }
 
-/** 记一次文件操作（upload / download） */
-function owLTAddFile(int $uid, string $kind): bool
+/**
+ * 文件操作（upload / download）——v2.0 起只统计活跃趋势，不再记任务进度
+ * （旧公式里上传/下载是加权来源，还带「可用群发言替代」的挑战任务，已一并移除）。
+ * 下载自己的文件不计（防刷）的规则保留。
+ */
+function owLTAddFile(int $uid, string $kind, bool $own = false): void
 {
-    if ($uid <= 0) return false;
+    if ($uid <= 0) return;
+    if ($kind === 'download' && $own) return;
     owLTMarkActive($uid);
-    [$row, $t] = owLTTouch($uid);
-    if (!$row) return false;
-    if ((int)$row['frozen_day'] === (int)date('Ymd')) return false;
-    $key = $kind === 'download' ? 'fdl' : 'fup';
-    // 设计文档：每天文件任务最多计 1 次上传 + 1 次下载
-    if (owLTProg($t, $key) >= 1) { owLTAfterProgress($uid, $row, $t); return false; }
-    $t[$key] = owLTProg($t, $key) + 1;
-    owLTAfterProgress($uid, $row, $t);
     owLTBump('files');
-    return true;
 }
 
 /* ============================ 结算 ============================ */
 
-/** 进度变化后：判断是否达成保底任务 → 结算加权 → 重算等级 */
+/**
+ * 进度变化后：当天保底任务全部完成 → 记 1 个活跃天数（D+1）→ 按公式重算等级。
+ * v2.0 起没有加权、没有随机、没有封顶——完成一天就是一天，公式自己算等级。
+ */
 function owLTAfterProgress(int $uid, array $row, array $t): void
 {
     if ((int)$row['settled'] === 1) { owLTSave($uid, $row, $t); return; }   // 今天已结算过
     $stage = owLTStage((int)$row['level']);
     if (!owLTBaseOk($stage, $t)) { owLTSave($uid, $row, $t); return; }
 
-    // ① 连续登录加权（参数：每连续 N 天 +step）
-    $day = 0.0;
-    $c = (int)$row['login_streak'];
-    $dl = (int)$row['login_days'];
-    $every = max(1, owLTInt('w_login_every'));
-    $daysEvery = max(1, owLTInt('w_days_every'));
-    if ($c > 0 && $c % $every === 0) $day += owLTFloat('w_login_step');
-    elseif ($dl > 0 && $dl % $daysEvery === 0) $day += owLTFloat('w_days_step');
-    // ② 每日发言加权（区间可配，每天最多一次）
-    if (owLTProg($t, 'gm') > 0) $day += owLTRandF(owLTFloat('w_msg_min'), owLTFloat('w_msg_max'));
-    // ③ 文件操作加权（区间可配，每天最多一次，最多累积 N 次）
-    if (owLTProg($t, 'fact') > 0 && (int)$row['file_w_days'] < max(0, owLTInt('w_file_days'))) {
-        $day += owLTRandF(owLTFloat('w_file_min'), owLTFloat('w_file_max'));
-        $row['file_w_days'] = (int)$row['file_w_days'] + 1;
-    }
-    // ④ 每日加权上限
-    $cap = owLTFloat('w_daily_cap');
-    if ($day > $cap) $day = $cap;
-
-    $row['weight'] = (float)$row['weight'] + $day;
     $row['days'] = (int)$row['days'] + 1;
     $row['settled'] = 1;
     $before = (int)$row['level'];
@@ -734,15 +659,14 @@ Plugin::on('message.after_send', function ($id, $actor, $roomId, $content = '', 
     if (owLTAddMsg($uid, (string)$content, (string)$type, (int)$roomId > 0)) owLTBump('msgs');
 });
 
-/** 文件上传成功（附件上传插件） */
+/** 文件上传成功（附件上传插件）—— 仅活跃趋势统计 */
 Plugin::on('file.uploaded', function (int $uid, string $kind, int $size = 0) {
     owLTAddFile($uid, 'upload');
 });
 
-/** 文件下载完成（核心 file_download） */
+/** 文件下载完成（核心 file_download）—— 仅活跃趋势统计 */
 Plugin::on('file.downloaded', function (int $uid, int $msgId, int $ownerId = 0) {
-    if ($ownerId > 0 && $ownerId === $uid) return;    // 下载自己的文件不计任务（防刷）
-    owLTAddFile($uid, 'download');
+    owLTAddFile($uid, 'download', $ownerId > 0 && $ownerId === $uid);
 });
 
 /** 资料卡：把等级随 user_card 一起下发（前端无需再打一次接口） */
@@ -913,12 +837,11 @@ Plugin::route('plugin_level_trust_mine', function (array $ctx) {
     $stage = owLTStage((int)$row['level']);
     $tasks = [];
     foreach ($stage['base'] as $task) {
-        $tasks[] = ['k' => $task['k'], 'n' => (int)$task['n'], 'cur' => owLTProg($t, $task['k']), 'alt' => !empty($task['alt'])];
+        $tasks[] = ['k' => $task['k'], 'n' => (int)$task['n'], 'cur' => owLTProg($t, $task['k'])];
     }
     Api::json([
         'ok' => true,
         'level' => (int)$row['level'], 'days' => (int)$row['days'],
-        'weight' => round((float)$row['weight'], 2),
         'stage' => $stage['name'], 'stage_no' => owLTStageNo((int)$row['level']),
         'honor' => (int)$row['level'] >= 60 ? 1 : 0,
         'login_streak' => (int)$row['login_streak'], 'login_days' => (int)$row['login_days'],
@@ -932,13 +855,13 @@ Plugin::route('plugin_level_trust_mine', function (array $ctx) {
 
 /* ============================ 前台等级页（?page=level） ============================ */
 
-/** 任务 key → 中文（前台页与后台共用，避免两处各写一份） */
+/** 任务 key → 中文（v2.0 起任务只剩登录与群发言；旧键保留映射以防存量 today JSON 回显） */
 function owLTTaskLabel(string $k): string
 {
     $m = [
-        'login' => '登录', 'gm' => '群发言', 'gfirst' => '当天首条群发言',
-        'pfirst' => '当天首条私聊', 'fup' => '上传文件', 'fdl' => '下载文件',
-        'fact' => '群文件操作',
+        'login' => '登录', 'gm' => '群发言',
+        'gfirst' => '当天首条群发言', 'pfirst' => '当天首条私聊',
+        'fup' => '上传文件', 'fdl' => '下载文件', 'fact' => '群文件操作',
     ];
     return $m[$k] ?? $k;
 }
@@ -1000,19 +923,20 @@ Plugin::page('level', '等级', function (array $actor, $user = null) {
 
     if ($isUser) {
         [$row, $t] = owLTTouch($uid);
-        $factor = owLTCatchUp($lv);
         $days = (int)$row['days'];
-        $weight = round((float)$row['weight'], 2);
-        $wv = min($weight, owLTFloat('w_cap_ratio') * $days);
-        $nextAt = (int)ceil($days + 1 - $wv * $factor);   // 达到该天数+加权后即为下一级
-        $cur = 1 + (int)floor($days + $wv * $factor);
-        $pct = $cur >= $nextAt ? 100 : (int)max(0, min(100, round((($cur - 1) / max(1, $nextAt - $cur)) * 100)));
+        $step = owLTFloat('lv_step');
+        if ($step < 1) $step = 1.0;
+        // 下一级所需天数：⌊D×step⌋ ≥ lv 即升到 lv+1 → D ≥ lv/step。
+        // 用 $lv（真实等级，可能被后台直设过）而不是公式值，否则直设过的用户
+        // 会看到「进度条 90% 但还差 21 天」这种自相矛盾的提示。
+        $needDays = (int)ceil($lv / $step);
+        $pct = (int)max(0, min(100, round(($days * $step - ($lv - 1)) * 100)));
 
         $h .= '<div class="ow-lv-hero-meta">'
             . '<span>累计完成 <b>' . $days . '</b> 天</span>'
-            . '<span>加权 <b>' . $weight . '</b> 天（封顶 ' . round(owLTFloat('w_cap_ratio') * 100) . '% × 天数）</span>'
+            . '<span>每天完成任务 = <b>' . $step . '</b> 级进度</span>'
             . '<span>连续登录 <b>' . (int)$row['login_streak'] . '</b> 天</span>'
-            . '<span>距 Lv.' . ($lv + 1) . ' 还需 <b>' . max(0, $nextAt - $cur) . '</b> 级进度</span>'
+            . '<span>距 Lv.' . ($lv + 1) . ' 还需 <b>' . max(0, $needDays - $days) . '</b> 天任务</span>'
             . '</div>'
             . '<div class="ow-lv-bar"><i style="width:' . $pct . '%"></i></div>';
     } else {
@@ -1059,39 +983,26 @@ Plugin::page('level', '等级', function (array $actor, $user = null) {
                 . '<span class="ow-lv-task-k">' . Sec::e(owLTTaskLabel($task['k'])) . '</span>'
                 . '<span class="ow-lv-task-bar"><i style="width:' . (int)min(100, $n > 0 ? $has / $n * 100 : 0) . '%"></i></span>'
                 . '<span class="ow-lv-task-v' . ($ok ? ' done' : '') . '">' . $has . ' / ' . $n . '</span>'
-                . (!empty($task['alt']) ? '<span class="ow-lv-task-alt" title="可替代任务">可替代</span>' : '')
                 . '</div>';
         }
         $h .= '<div class="ow-lv-task-sum">'
             . '保底任务完成 <b>' . $done . ' / ' . count($stage['base']) . '</b>，'
-            . '全部完成今天升 1 级' . ((int)$row['settled'] === 1 ? '（<b style="color:var(--ow-green)">今日已结算</b>）' : '')
-            . '。加权每天最多结算 ' . owLTFloat('w_daily_cap') . ' 天，配合加权当天最多升 2 级。'
+            . '全部完成今天记 1 个活跃天数（升 <b>' . owLTFloat('lv_step') . '</b> 级进度）'
+            . ((int)$row['settled'] === 1 ? '（<b style="color:var(--ow-green)">今日已结算</b>）' : '')
+            . '。任务次日清零，断签不降级。</div>'
             . '</div>';
-        if (!empty($stage['ch'])) {
-            $h .= '<div class="ow-lv-ch">挑战任务（不阻塞升级，完成后同样计入加权）：'
-                . implode('、', array_map(function ($x) {
-                    return Sec::e(owLTTaskLabel($x['k'])) . ' ' . (int)$x['n'];
-                }, $stage['ch'])) . '</div>';
-        }
-        $h .= '</div>';
     }
 
     /* ---------- 等级公式 ---------- */
     $h .= '<div class="ow-card"><h3 class="ow-lv-h3">等级怎么算</h3>'
-        . '<div class="ow-lv-formula">L = 1 + ⌊ D + min(W, ' . round(owLTFloat('w_cap_ratio') * 100) . '% × D) × 追赶系数 ⌋</div>'
+        . '<div class="ow-lv-formula">L = 1 + ⌊ D × ' . owLTFloat('lv_step') . ' ⌋</div>'
         . '<ul class="ow-lv-ul">'
-        . '<li><b>D</b>：累计完成每日保底任务的天数（每天最多 +1）</li>'
-        . '<li><b>W</b>：活跃加权天数，由连续登录、每日发言、文件操作累加，'
-        . '单日最多 ' . owLTFloat('w_daily_cap') . ' 天</li>'
-        . '<li>连续登录每 ' . owLTInt('w_login_every') . ' 天 +' . owLTFloat('w_login_step')
-        . ' 天；累计登录每 ' . owLTInt('w_days_every') . ' 天 +' . owLTFloat('w_days_step') . ' 天</li>'
-        . '<li>每日有效发言 +' . owLTFloat('w_msg_min') . '~' . owLTFloat('w_msg_max') . ' 天（每天一次）</li>'
-        . '<li>文件操作 +' . owLTFloat('w_file_min') . '~' . owLTFloat('w_file_max') . ' 天，每天一次、最多累积 '
-        . owLTInt('w_file_days') . ' 次</li>'
-        . '<li><b>追赶系数</b>：低于全服中位数 ×' . owLTFloat('catchup_slow')
-        . '，高于中位数 10 级 ×' . owLTFloat('catchup_fast') . '，中间 ×1</li>'
-        . '<li>加权最多占总进度一半，防止活跃用户把休闲用户甩太远</li>'
-        . '<li>未完成当天任务不降级，已获得的加权也不会被收回</li>'
+        . '<li><b>D</b>：累计完成每日保底任务的天数，每天最多 +1</li>'
+        . '<li><b>' . owLTFloat('lv_step') . '</b>：每个活跃天数换算的等级进度（后台可调，默认 1.3）</li>'
+        . '<li>平均每完成一天任务升 <b>' . owLTFloat('lv_step') . '</b> 级；'
+        . '因为取整，实际是「攒几天跳一级」的节奏，不是每天准时跳</li>'
+        . '<li>各阶段保底任务都是「登录 + 群发言 N 条」，N 随阶段递增（见下方一览）</li>'
+        . '<li>未完成当天任务不降级，已攒下的天数不会被收回</li>'
         . '</ul>'
         . '<div class="ow-lv-tip">有效发言需同时满足：内容 ≥ ' . owLTInt('msg_min_len') . ' 字、非纯表情/纯图片/纯链接、'
         . '距上一条计入任务 ≥ ' . owLTInt('msg_cooldown') . ' 秒、每分钟 ≤ ' . owLTInt('msg_per_minute')
@@ -1100,26 +1011,21 @@ Plugin::page('level', '等级', function (array $actor, $user = null) {
 
     /* ---------- 各等级条件一览 ---------- */
     $h .= '<div class="ow-card"><h3 class="ow-lv-h3">各阶段任务一览</h3><table class="ow-lv-table">'
-        . '<tr><th>阶段</th><th>等级</th><th>保底任务</th><th>挑战任务</th></tr>';
+        . '<tr><th>阶段</th><th>等级</th><th>保底任务</th></tr>';
     $defs = [
-        [1, '新手阶段', 1, $b[0] - 1, $gm[0], false],
-        [2, '日常阶段', $b[0], $b[1] - 1, $gm[1], false],
-        [3, '活跃阶段', $b[1], $b[2] - 1, $gm[2], false],
-        [4, '核心阶段', $b[2], $b[3] - 1, $gm[3], true],
-        [5, '荣誉阶段', $b[3], 0, $gm[4], true],
+        [1, '新手阶段', 1, $b[0] - 1, $gm[0]],
+        [2, '日常阶段', $b[0], $b[1] - 1, $gm[1]],
+        [3, '活跃阶段', $b[1], $b[2] - 1, $gm[2]],
+        [4, '核心阶段', $b[2], $b[3] - 1, $gm[3]],
+        [5, '荣誉阶段', $b[3], 0, $gm[4]],
     ];
     foreach ($defs as $d) {
         $range = $d[3] > 0 ? ($d[2] === $d[3] ? (string)$d[2] : ($d[2] . '~' . $d[3])) : ($d[2] . ' 及以上');
         $base = '登录 + 群发言 ' . $d[4] . ' 条';
-        if ($d[1] === '日常阶段') $base .= ' + 当天首条群发言';
-        if ($d[1] === '活跃阶段') $base .= ' + 当天首条群发言 + 群文件操作 1 次（可用私聊/群聊首条替代） + 当天首条私聊';
-        if ($d[1] === '核心阶段') $base .= ' + 当天首条群发言';
-        if ($d[1] === '荣誉阶段') $base .= ' + 当天首条群发言 + 当天首条私聊';
-        $ch = $d[5] ? '上传文件 1 个 + 下载文件 1 个（各可用群发言 5 条替代）' : '—';
         $h .= '<tr class="ow-lv-tr' . ($stageNo === $d[0] ? ' is-cur' : '') . '">'
             . '<td><span class="ow-lv-dot" style="background:' . owLTStageColor($d[0]) . '"></span>'
             . Sec::e($d[1]) . '</td>'
-            . '<td>' . Sec::e($range) . '</td><td>' . Sec::e($base) . '</td><td>' . Sec::e($ch) . '</td></tr>';
+            . '<td>' . Sec::e($range) . '</td><td>' . Sec::e($base) . '</td></tr>';
     }
     $h .= '</table></div>';
 
@@ -1290,7 +1196,7 @@ Plugin::route('plugin_level_trust_user', function (array $ctx) use ($ltGuard) {
     Api::json([
         'ok' => true,
         'uid' => $uid, 'nickname' => (string)$u['nickname'], 'role' => (string)$u['role'],
-        'level' => (int)$row['level'], 'days' => (int)$row['days'], 'weight' => round((float)$row['weight'], 2),
+        'level' => (int)$row['level'], 'days' => (int)$row['days'],
         'stage' => $stage['name'], 'login_streak' => (int)$row['login_streak'], 'login_days' => (int)$row['login_days'],
         'settled' => (int)$row['settled'], 'frozen' => (int)$row['frozen_day'] === (int)date('Ymd') ? 1 : 0,
         'patch_used' => (int)$row['patch_used'], 'protect_used' => (int)$row['protect_used'],
@@ -1309,7 +1215,7 @@ Plugin::route('plugin_level_trust_op', function (array $ctx) use ($ltGuard) {
     $t = owLTDecode((string)$row['today']);
 
     switch ($op) {
-        case 'patch':       // 补签：每周最多 1 次，视为完成当天全部固定任务，等级 +1
+        case 'patch':       // 补签：每周最多 1 次，视为完成当天全部保底任务，活跃天数 +1
             $week = date('o-W');
             if ((string)$row['patch_week'] !== $week) { $row['patch_week'] = $week; $row['patch_used'] = 0; }
             if ((int)$row['patch_used'] >= 1) Api::json(['ok' => false, 'msg' => '本周补签次数已用完']);
@@ -1320,7 +1226,7 @@ Plugin::route('plugin_level_trust_op', function (array $ctx) use ($ltGuard) {
             owLTSave($uid, $row, $t);
             Api::json(['ok' => true, 'msg' => '已补签，等级提升至 Lv.' . (int)$row['level']]);
 
-        case 'freeze':      // 冻结当天任务进度与加权
+        case 'freeze':      // 冻结当天任务进度（结算不再进行）
             $row['frozen_day'] = (int)date('Ymd');
             owLTSave($uid, $row, $t);
             Api::json(['ok' => true, 'msg' => '已冻结今日任务']);
@@ -1357,8 +1263,9 @@ Plugin::adminPage('level-trust', '等级信任', function () {
             . '</div>';
     };
     $head = '<h2>等级信任</h2>'
-        . '<p class="ow-admin-desc">等级 L = 1 + ⌊D + min(W, ' . round(owLTFloat('w_cap_ratio') * 100) . '%×D) × 追赶系数⌋。'
-        . '每天完成保底任务升 1 级，加权可再加速 1 级（每天最多 2 级）。以下参数全部可调，改完点最下方「保存全部参数」。</p>';
+        . '<p class="ow-admin-desc">等级 L = 1 + ⌊D × lv_step⌋（v2.0 起）：D 为累计完成每日保底任务的天数，'
+        . '默认每个活跃天换算 1.3 级进度，平均一天升 1.3 级。各阶段保底任务统一为「登录 + 群发言 N 条」，无替代、无挑战。'
+        . '以下参数全部可调，改完点最下方「保存全部参数」。</p>';
 
     $head .= '<div class="ow-card" id="owLTStats"></div>'
         . '<div class="ow-card"><h3 style="margin:0 0 4px">活跃趋势</h3><div id="owLTTrend"></div></div>';
@@ -1406,20 +1313,8 @@ Plugin::adminPage('level-trust', '等级信任', function () {
         . $f('stage_gm', '各阶段群发言条数', '逗号分隔：新手,日常,活跃,核心,荣誉')
         . '</div>';
 
-    $head .= '<h4 class="ow-lt-cap">加权参数</h4><div class="ow-form-row">'
-        . $f('w_cap_ratio', '加权封顶比例', 'W ≤ 该比例 × D')
-        . $f('w_daily_cap', '每日加权上限（天）')
-        . $f('w_login_every', '连续登录每 N 天 +1')
-        . $f('w_login_step', '连续登录每次加（天）')
-        . $f('w_days_every', '累计登录每 N 天 +1')
-        . $f('w_days_step', '累计登录每次加（天）')
-        . $f('w_msg_min', '发言加权下限（天）')
-        . $f('w_msg_max', '发言加权上限（天）')
-        . $f('w_file_min', '文件加权下限（天）')
-        . $f('w_file_max', '文件加权上限（天）')
-        . $f('w_file_days', '文件加权最多累积（次）')
-        . $f('catchup_slow', '追赶系数·低于中位数')
-        . $f('catchup_fast', '追赶系数·高出中位数10级')
+    $head .= '<h4 class="ow-lt-cap">等级速度</h4><div class="ow-form-row">'
+        . $f('lv_step', '每日进度倍率', '每个完成日的活跃天数换算多少级进度；1 = 每天升 1 级，1.3 = 平均一天 1.3 级')
         . '</div>';
 
     $head .= '<h4 class="ow-lt-cap">有效发言判定</h4><div class="ow-form-row">'
