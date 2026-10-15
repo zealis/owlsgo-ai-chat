@@ -93,7 +93,7 @@
 
     CI.saveCfg = function () {
         var keys = ['enable', 'base', 'step', 'step_cap', 'cycle_days', 'cycle_bonus',
-                    'patch_cost', 'patch_limit', 'rank_size'];
+                    'patch_cost', 'patch_limit', 'rank_size', 'top_size'];
         var data = {}, i, el;
         for (i = 0; i < keys.length; i++) {
             el = $('owCiCfg_' + keys[i]);

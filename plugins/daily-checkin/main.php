@@ -98,7 +98,11 @@ function owCIDefaults(): array
         'cycle_bonus' => '20',   // 周期大奖积分
         'patch_cost'  => '30',   // 补签卡单价（积分）；0 = 不提供补签
         'patch_limit' => '2',    // 每人每月补签次数上限
-        'rank_size'   => '8',    // 排行榜展示人数
+        'rank_size'   => '8',    // 排行榜展示人数（前台「本月签到榜」）
+        // 后台「累计签到榜」显示人数。原来写死 10，站方反馈「只显示前 10」后改成可配（默认 50）——
+        // 累计榜是给站方看全貌的，截断到什么程度应该由站方自己定。
+        // ⚠️ 与 rank_size 是两项：那个管前台面板的月榜，这个管后台的累计榜。
+        'top_size'    => '50',
     ];
 }
 
@@ -466,11 +470,13 @@ Plugin::route('plugin_daily_checkin_stats', function (array $ctx) use ($ciGuard)
         $trend[] = ['day' => $d, 'n' => (int)($got[$d]['n'] ?? 0), 'p' => (int)($got[$d]['p'] ?? 0)];
     }
 
-    // 累计签到天数榜（全量，不是当月）
+    // 累计签到天数榜（全量，不是当月）。人数后台可配（top_size，默认 50；原来写死 10）——
+    // 收敛到 1~500：填 0 会让这张卡永远空着，填天量会把后台首屏拖垮，都不该由输入框随口决定。
+    $topSize = max(1, min(500, owCIInt('top_size')));
     $top = [];
     foreach (DB::all('SELECT u.id, u.nickname, u.role, s.total_days, s.streak, s.max_streak, s.points
                       FROM plugin_checkin_user s JOIN users u ON u.id=s.user_id
-                      ORDER BY s.total_days DESC, s.user_id ASC LIMIT 10') as $r) {
+                      ORDER BY s.total_days DESC, s.user_id ASC LIMIT ' . $topSize) as $r) {
         $top[] = ['uid' => (int)$r['id'], 'nickname' => (string)$r['nickname'], 'role' => (string)$r['role'],
                   'days' => (int)$r['total_days'], 'streak' => (int)$r['streak'],
                   'max_streak' => (int)$r['max_streak'], 'points' => (int)$r['points']];
@@ -613,6 +619,7 @@ Plugin::adminPage('daily-checkin', '每日签到', function () {
         . $f('patch_cost', '补签卡单价（积分）', '填 0 = 不提供补签')
         . $f('patch_limit', '每月补签上限（次）')
         . $f('rank_size', '排行榜人数')
+        . $f('top_size', '累计榜人数', '后台「累计签到榜」显示多少人（1~500）；前台面板月榜用的是上一项')
         . '</div>'
         // ⚠️ 全局对象名必须与 admin.js 里 w.OwCIAdmin 完全一致（后台页 OwCIAdmin、
         //    前台 chat.js 是 OwCI，两个页面互斥加载，名字分开避免误调）。
