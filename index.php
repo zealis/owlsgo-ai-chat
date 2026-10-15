@@ -1503,7 +1503,7 @@ function renderAuth(string $mode): void
                : '<div class="ow-form-item" id="owCaptchaRow" style="display:none"><label>图形验证码</label>'
                  . '<div class="ow-captcha-row"><input class="ow-input" name="captcha"><img src="?action=captcha" id="owCaptchaImg" alt="验证码" title="点击刷新"></div></div>')
            . '<button class="ow-btn ow-btn-primary ow-btn-block" type="submit">登 录</button><div class="ow-form-msg"></div></form>'
-           . '<div class="ow-auth-links"><a href="?page=register">注册账号</a><a href="?page=forgot">忘记密码</a><a href="?page=chat">返回聊天</a></div>';
+           . '<div class="ow-auth-links"><a href="?page=register">注册账号</a><a href="?page=forgot">忘记密码</a><a href="?page=chat">游客登录</a></div>';
     } elseif ($mode === 'register') {
         // 是否要求邮箱验证由后台设置决定：关闭时不再显示验证码输入框与发码按钮
         $needMail = Mailer::needRegisterCode();
@@ -1530,7 +1530,7 @@ function renderAuth(string $mode): void
            . '<div class="ow-form-item"><label>密码</label><input class="ow-input" type="password" name="password" required placeholder="至少 6 位"></div>'
            . $cvHtml
            . '<button class="ow-btn ow-btn-primary ow-btn-block" type="submit">注 册</button><div class="ow-form-msg"></div></form>'
-           . '<div class="ow-auth-links"><a href="?page=login">已有账号，去登录</a><a href="?page=chat">返回聊天</a></div>';
+           . '<div class="ow-auth-links"><a href="?page=login">已有账号，去登录</a><a href="?page=chat">游客登录</a></div>';
     } else {
         // 找回密码的唯一凭证就是邮箱验证码：开关关掉、或根本没装/没配邮件插件时，
         // 与其留一张「点发验证码只会报错」的死表单，不如直接说明走管理员。

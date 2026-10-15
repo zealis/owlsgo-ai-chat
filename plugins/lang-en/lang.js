@@ -32,6 +32,9 @@
         '注册账号': 'Create account',
         '忘记密码': 'Forgot password?',
         '返回聊天': 'Back to chat',
+        // v1.3.157：登录 / 注册页那个回聊天的链接改叫「游客登录」（点它进聊天就是游客身份）。
+        // 「返回聊天」的词条保留 —— 插件页顶栏（index.php 的 ow-page-back）还在用它。
+        '游客登录': 'Continue as guest',
         '返回登录': 'Back to sign in',
         '已有账号，去登录': 'Have an account? Sign in',
         '昵称': 'Nickname',
