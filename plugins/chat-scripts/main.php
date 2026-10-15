@@ -1487,7 +1487,13 @@ Plugin::sensitive('plugin_chat_scripts_admin_log_clear');
  * ow_icon('chat', 16) 与旧版 JS OwChat.icon('chat', 16) 输出逐字相同，外观不变。
  */
 Plugin::on('chat.toolbar', function (): string {
-    return '<button class="ow-icon-btn" id="owBtnCs" type="button" title="话术" aria-label="话术">'
+    /* v1.2.0：把配置的机器人账号 uid 挂在这颗按钮上（data-bot-uid）。
+       为什么挂这里：这是本插件在聊天页**唯一的服务端渲染点**，uid 随页面一起到，
+       前端读一下就能登记给核心（OwChat.markBots），既不用多发一个 conf 请求，
+       也不用把 bot_uid 暴露成一条公开接口。uid 本身不是秘密：任何人的消息里都带着自己的 uid。
+       0 = 后台还没配机器人，前端登记 0 会被核心忽略。 */
+    return '<button class="ow-icon-btn" id="owBtnCs" type="button" title="话术" aria-label="话术"'
+         . ' data-bot-uid="' . csCfgInt('bot_uid') . '">'
          . ow_icon('chat', 16) . '</button>';
 });
 

@@ -966,6 +966,13 @@
        群主=当前群聊 owner（橙色），VIP=会员（保留 VIP 配色），普通用户与超级管理员=会员（灰色），
        游客与其它角色不再展示身份标签。超级管理员在别人创建的群聊里同样显示「会员」。 */
     var CUR_OWNER = 0;   // 当前群聊的 owner 用户 ID（OwChat 切换群聊时同步）
+
+    /* 机器人账号（v1.3.152）：uid → 1。
+       机器人多半就是一个**普通用户账号**（群聊自动化那套就是这么做的：后台填一个 bot_uid，
+       它按普通用户的身份发言），不登记的话它在群里顶着「会员」标签，看着就是个真人。
+       由插件在脚本加载时调 OwChat.markBots() 登记 —— 值随插件自己的服务端渲染带下来
+       （见 chat-scripts 的 chat.toolbar 按钮），不用多发一个请求。 */
+    var BOT_UIDS = {};
     /**
      * 身份标签。
      *
@@ -981,7 +988,10 @@
      */
     function roleTag(role, title, uid, real) {
         var h = '';
-        if (uid && uid === CUR_OWNER) h = '<span class="ow-tag ow-tag-owner">群主</span>';
+        // v1.3.152：机器人优先于一切身份标签 —— 它就是台机器，标成「会员」会让人当成真人。
+        // 管理场景（real=true）同样出「机器人」：知道对方是机器人比知道它挂着管理员更能避免误判。
+        if (uid && BOT_UIDS[uid]) h = '<span class="ow-tag ow-tag-bot">机器人</span>';
+        else if (uid && uid === CUR_OWNER) h = '<span class="ow-tag ow-tag-owner">群主</span>';
         else if (real && role === 'admin') h = '<span class="ow-tag ow-tag-admin">超级管理员</span>';
         else if (role === 'vip') h = '<span class="ow-tag ow-tag-vip">会员</span>';
         else if (role === 'member' || role === 'admin') h = '<span class="ow-tag ow-tag-member">会员</span>';
@@ -3075,6 +3085,43 @@
          * 但插件应按 ctx.isOwner || ctx.isAdmin 自行决定是否填充。
          */
         onRoomEdit: function (fn) { if (typeof fn === 'function') this._roomEditHooks.push(fn); },
+
+        /**
+         * 登记机器人账号（插件扩展点，v1.3.152）。
+         *
+         * 登记过的 uid 在**所有** roleTag 出现的地方都出「机器人」标签：消息气泡、
+         * 会话列表、成员面板、用户资料卡 —— 走的是同一个渲染函数，不必逐处通知。
+         * @param {number|string|Array} uids 一个或多个用户 ID（0 / 空值忽略）
+         */
+        markBots: function (uids) {
+            var a = Object.prototype.toString.call(uids) === '[object Array]' ? uids : [uids], i, n, added = 0;
+            for (i = 0; i < a.length; i++) {
+                n = parseInt(a[i], 10) || 0;
+                if (n > 0 && !BOT_UIDS[n]) { BOT_UIDS[n] = 1; added++; }
+            }
+            /* 插件脚本在 init 之后才加载，而 init 会立刻去拉当前群的历史 ——
+               首屏那一批消息可能**先渲染完**。登记完补一次重渲染，否则机器人的第一次亮相
+               还是「会员」，要等下一次消息刷新才纠正。 */
+            if (added) this.refreshBotTags();
+        },
+        isBot: function (uid) { return !!BOT_UIDS[parseInt(uid, 10) || 0]; },
+        /** 把已渲染的消息重画一遍（只在登记机器人后调一次；没有任何消息时是空转） */
+        refreshBotTags: function () {
+            var box = $('owMessages');
+            if (!box || !box.children.length) return;
+            var nodes = box.children, i, m, frag = w.document.createDocumentFragment(), need = false, node;
+            for (i = 0; i < nodes.length; i++) {
+                node = nodes[i];
+                m = this.msgCache[parseInt(String(node.id).replace('owMsg', ''), 10)];
+                if (m) { frag.appendChild(this.buildMessage(m)); need = true; }
+                else frag.appendChild(node.cloneNode(true));   // 日期分隔条之类的非消息节点，原样留着
+            }
+            if (!need) return;                        // 一条消息都没有：别白清一次 DOM
+            var keepTop = box.scrollTop;              // 重画会回到顶部，滚动位置要还回去
+            box.innerHTML = '';
+            box.appendChild(frag);
+            box.scrollTop = keepTop;
+        },
         _fireRoomSwitch: function () {
             for (var i = 0; i < this._roomSwitchHooks.length; i++) {
                 try { this._roomSwitchHooks[i]({ roomId: this.room, ownerId: CUR_OWNER, isAdmin: this.cfg.actor.role === 'admin' }); } catch (e) {}
@@ -5573,7 +5620,9 @@
             var r = anchor.getBoundingClientRect();
             var vw = w.innerWidth || document.documentElement.clientWidth;
             var vh = w.innerHeight || document.documentElement.clientHeight;
-            var mh = menu.offsetHeight || items.length * 28;
+            /* v1.3.152：兜底行高回到 34 —— v1.3.146 收到 26px 的那笔已按站方要求撤回，
+               菜单行高仍是 32.8px（这个常量只在 offsetHeight 量不到时兜底）。 */
+            var mh = menu.offsetHeight || items.length * 34;
             var mw = menu.offsetWidth || 160;
             var top = align === 'top' ? r.bottom + 4 : r.bottom - mh;
             if (top < 8) top = 8;

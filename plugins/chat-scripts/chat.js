@@ -25,6 +25,17 @@
 
     // 后台页 / 登录页 / 安装页也会加载合并脚本：没有 OwChat.cfg 直接退出（幂等防重复注入）
     if (!w.OwChat || !OwChat.cfg) return;
+
+    /* v1.2.0：把自己配置的机器人账号登记给核心，让它在群聊里出「机器人」标签而不是「会员」
+       （机器人就是个普通用户账号，不登记的话看着像真人）。
+       uid 随「话术」按钮服务端下发（data-bot-uid），这里读一下即可，不发任何请求；
+       登记本身幂等，所以放在下面的 __owCsLoaded 去重之前 —— 即使脚本被加载两遍也无所谓。 */
+    (function () {
+        var btn = d.getElementById('owBtnCs');
+        var uid = btn ? (parseInt(btn.getAttribute('data-bot-uid'), 10) || 0) : 0;
+        if (uid > 0 && w.OwChat.markBots) w.OwChat.markBots(uid);
+    })();
+
     if (w.__owCsLoaded) return;
     w.__owCsLoaded = true;
 

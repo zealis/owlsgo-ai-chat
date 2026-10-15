@@ -415,6 +415,8 @@ html[data-fontsize="comfortable"] .ow-card-name { font-size: 19px; }
 [data-theme="dark"] .ow-tag-owner { background: #3A2A18; color: #FFB27A; border-color: #6B4A2A; }
 [data-theme="dark"] .ow-tag-vip { background: #3A2E12; color: #FFC069; border-color: #6B5424; }
 [data-theme="dark"] .ow-tag-member { background: #2E2E33; color: #A2A2AA; border-color: #4A4A50; }
+/* 机器人（v1.3.152）：深紫底 + 提亮紫字，与浅色档同一对颜色的反转 */
+[data-theme="dark"] .ow-tag-bot { background: #241A3A; color: #C9A6FF; border-color: #4A3A6B; }
 [data-theme="dark"] .ow-tag-title { background: #3A3412; color: #FFD666; border-color: #6B6024; }
 /* 警示块 / 成员删除 hover：浅色小面积贴片，深色下压暗并换亮字 */
 [data-theme="dark"] .ow-notice code { background: rgba(255, 255, 255, .10); }
@@ -703,6 +705,11 @@ input[type=range] {
    两者含义不同不能同色。 */
 .ow-tag-admin { background: #E6F4FF; color: var(--ow-primary-dark); border: 1px solid #91CAFF; }
 .ow-tag-guest { background: var(--ow-bg-sub); color: var(--ow-text-sub); border: 1px solid var(--ow-border); }
+/* 机器人（v1.3.152）：全新一档，取**紫**系 —— 现有八档里没有紫色，
+   所以「这是机器」一眼就能和 群主(米金)/会员(灰)/VIP(橙)/超管(蓝)/称号(黄)/可发言(绿)/已禁用(红)/游客(灰) 分开。
+   值用 AntD 的 purple 档：浅底 #F9F0FF + #531DAB = 8.88:1，深色 #241A3A + #C9A6FF = 8.09:1，都远超 AA。
+   字号仍是 10px（.ow-tag 基类），所以对齐的是「小字要 4.5:1」那一条。 */
+.ow-tag-bot { background: #F9F0FF; color: #531DAB; border: 1px solid #D3ADF7; }
 .ow-tag-title { background: #fffbe6; color: var(--ow-yellow); border: 1px solid #ffe58f; }
 .ow-badge-num {
     display: inline-block;
@@ -1947,15 +1954,11 @@ input[type=range] {
     padding: 4px 0;
     min-width: 136px;
 }
-/* v1.3.146：补上 line-height —— 这是全站唯一没钉行高的单行控件
-   （.ow-btn 1.4 / .ow-tab 1 / .ow-icon-btn 固定 36px），于是一直在继承正文段落的 1.6：
-   13px 的字撑出 20.8px 行盒，加上下各 6px padding = 每行 32.8px，两行汉字墨迹之间空 19.8px
-   （比字本身还大），站方原话「登录注册隔这么远」。
-   取 14px 而不是 1：1 会让**带图标**的行由 14px 图标撑到 26px、**没图标**的行只有 25px
-   （插件注入的条目、或文字不在 OW_CTX_ICONS 里的条目就没图标），同一张菜单差 1px 一眼看得出来。
-   padding 一个字没动。有 white-space:nowrap 兜着，行盒压到字高以下也不会折行重叠。
-   首行「头像 + 昵称」(a.ow-ctx-head) 不受影响：那行由 28px 头像撑，比 14px 高得多。 */
-.ow-ctx-menu a { display: block; padding: 6px 14px; font-size: 13px; line-height: 14px; color: var(--ow-text); white-space: nowrap; }
+/* v1.3.152：v1.3.146 那条 `line-height: 14px` 已按站方要求撤回（菜单行高回到 32.8px）。
+   记一下当时的结论，免得下次又当 bug 修一遍：它不是漏洞，只是没跟全站其它单行控件那样钉行高，
+   于是继承正文的 1.6 → 13px 的字撑出 20.8px 行盒 + 6px×2 padding = 每行 32.8px，
+   两行汉字墨迹之间空 19.8px。站方要的就是这个行距，别再"顺手修正"。 */
+.ow-ctx-menu a { display: block; padding: 6px 14px; font-size: 13px; color: var(--ow-text); white-space: nowrap; }
 /* v1.3.85：菜单条目左侧图标。四处菜单（消息右键 / 点头像昵称 / 右键头像 / 成员搜索）
    现在共用 ctxItemsHtml()，图标由这一条排版。
    flex 而不是给 svg 加 vertical-align：文字与图标基线对齐在 13px 中文上怎么调都会差 1–2px，
