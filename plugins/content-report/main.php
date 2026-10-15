@@ -1367,6 +1367,12 @@ Plugin::route('plugin_content_report_submit', function (array $ctx) {
         Api::json(['ok' => false, 'msg' => '不能举报自己']);
     }
 
+    // v1.2.3：不能举报超级管理员 —— 与 user-block「不能屏蔽超管」同一口径。
+    // 超管是平台的管理方，举报通道面向用户；有意见走别的渠道。
+    // ⚠️ 服务端必须自己判一次：前端只是把菜单项藏起来，直接调接口照样能提交。
+    $tRole = (string)(DB::val('SELECT role FROM users WHERE id=?', [$targetUid]) ?: '');
+    if ($tRole === 'admin') Api::json(['ok' => false, 'msg' => '不能举报超级管理员']);
+
     $reasons = owCRParseReasons($cfg['reasons']);
     if (!$reasons || !in_array($reason, $reasons, true)) Api::json(['ok' => false, 'msg' => '请选择举报理由']);
 

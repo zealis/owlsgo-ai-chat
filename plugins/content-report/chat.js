@@ -101,6 +101,8 @@
         if (me && me.id && targetUid === me.id && !cfgCache.allow_self) {
             toast('不能举报自己'); return;
         }
+        // v1.2.3：不能举报超级管理员（服务端也会拒，这里先给一句明确的话）
+        if (isAdminUid(targetUid)) { toast('不能举报超级管理员'); return; }
 
         // 配置未加载完时等待
         if (!cfgCache.loaded) {
@@ -391,6 +393,24 @@
         });
     };
 
+    /**
+     * 某用户是不是超级管理员（v1.2.3：不能举报超级管理员的消息）。
+     * 消息右键菜单里 `m.role` 直接就有；成员搜索只给 `{uid,gid,nickname,kind}`（没有 role），
+     * 所以沿用 user-block 的手法：从 msgCache 里找他任意一条消息的 role。
+     * 缓存里没有就判不出来 —— 那种情况由服务端硬校验兜底（接口一样会拒）。
+     */
+    function isAdminUid(uid) {
+        uid = parseInt(uid, 10) || 0;
+        if (uid <= 0) return false;
+        var cache = OwChat.msgCache || {}, k, mm;
+        for (k in cache) {
+            if (!Object.prototype.hasOwnProperty.call(cache, k)) continue;
+            mm = cache[k];
+            if (mm && parseInt(mm.uid, 10) === uid && mm.role === 'admin') return true;
+        }
+        return false;
+    }
+
     /** 昵称可点击 → 弹用户资料卡（站方 v1.2.0：点昵称就弹窗用户资料） */
     function nickLink(uid, nick) {
         uid = parseInt(uid, 10) || 0;
@@ -583,6 +603,9 @@
                 return;
             }
 
+            // v1.2.3：不能举报超级管理员（与服务端同一口径，这里只是把菜单项藏掉）
+            if (m.role === 'admin' || isAdminUid(targetUid)) return;
+
             // 已登录：允许举报自己关闭时，自己的消息不显示举报
             if (me && me.id && targetUid === me.id && !cfgCache.allow_self) return;
 
@@ -602,6 +625,7 @@
             if (!u || !u.uid) return;                     // 仅举报注册用户
             var me = (OwChat.cfg || {}).me || null;
             if (me && me.id && u.uid === me.id && !cfgCache.allow_self) return;
+            if (isAdminUid(u.uid)) return;                // v1.2.3：不能举报超级管理员
             items.push({
                 t: '举报',
                 run: function () { CR.openReport(u.uid, u.nickname || '', OwChat.room, 0, 0); }
