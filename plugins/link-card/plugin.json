@@ -1,1 +1,1 @@
-{"name":"链接卡片","version":"1.0.0","description":"一次填写分享信息，按需启用 Open Graph / X（Twitter）/ 微信 / QQ 平台的链接卡片（meta 标签），支持多张卡片与单独启停。","author":"Owlsgo-Chat"}
+{"name":"链接卡片","version":"1.1.0","description":"两个用途：① 消息里的链接自动读取目标页 Open Graph，在消息下方展示预览卡（可总开关，支持域名黑名单，名单内不抓取不出卡）；② 后台设置本站链接分享到 Open Graph / X / 微信 / QQ 时的卡片信息。","author":"Owlsgo-Chat"}

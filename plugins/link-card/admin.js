@@ -25,7 +25,38 @@
 
         /* ---------- 启动：等 #lcList 被注入后台主区 ---------- */
         boot: function () {
+            // 后台页 HTML 由 innerHTML 注入，开关的视觉同步要自己绑（核心只自动收 OwTip 气泡）
+            if (w.bindSwitches && $('lcMsgOn')) w.bindSwitches($('lcMsgOn'));
             OwLC.load();
+        },
+
+        /* ---------- 消息卡片设置（总开关 + 域名黑名单） ---------- */
+        saveMsgCfg: function () {
+            OwApi.post('plugin_link_card_cfg', {
+                msg_on: $('lcMsgOn') && $('lcMsgOn').checked ? 1 : 0,
+                blocked: ($('lcBlocked') || {}).value || ''
+            }, function (r) {
+                toast(r.msg);
+                if (!r.ok) return;
+                OwLC.setCacheInfo(r.cache_count);
+                // 黑名单是随聊天页下发的：已打开的聊天页要刷新才生效，这里说清楚
+                toast('已保存，已打开的聊天页刷新后生效');
+            });
+        },
+
+        /* ---------- 清空预览缓存（敏感操作：一次性票据） ---------- */
+        clearCache: function () {
+            w.OwAdmin.confirm('清空后所有链接会重新抓取一次（不会删除卡片设置）。确定清空预览缓存？', function () {
+                OwApi.secure('plugin_link_card_cache_clear', {}, function (r) {
+                    toast(r.msg);
+                    if (r.ok) OwLC.setCacheInfo(r.cache_count);
+                });
+            });
+        },
+
+        setCacheInfo: function (n) {
+            var el = $('lcCacheInfo');
+            if (el) el.textContent = '已缓存 ' + (parseInt(n, 10) || 0) + ' 个链接';
         },
 
         /* ---------- 列表 ---------- */
@@ -53,7 +84,7 @@
             }
 
             if (!cards.length) {
-                list.innerHTML = '<div class="ow-card lc-empty">还没有链接卡片。点击「新建卡片」填写标题、描述与封面图，一次填写即可按需启用 Open Graph / X / 微信 / QQ 平台的链接预览。</div>';
+                list.innerHTML = '<div class="lc-empty">还没有链接卡片。点击「新建卡片」填写标题、描述与封面图，一次填写即可按需启用 Open Graph / X / 微信 / QQ 平台的链接预览。</div>';
                 return;
             }
 

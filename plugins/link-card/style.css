@@ -1,11 +1,20 @@
 /**
- * 链接卡片插件 · 样式（link-card v1.0.0）
- * 仅后台「链接卡片」页使用；全部颜色引用核心 --ow-* 变量，深浅两套主题自动跟随，
- * 不写 [data-theme="dark"] 补丁（核心变量机制已覆盖）。
- * 经 page.head 以 ?action=assets&type=css&plugin=link-card&file=style.css 注入。
+ * 链接卡片插件 · 样式（link-card v1.1.0）
+ * 两份用途共用这一个文件（主程序不自动引入插件 CSS，由 page.head 注入到每个页面）：
+ *   ① 后台「链接卡片」页（lc- 前缀的管理界面）
+ *   ② 聊天页消息下方的链接预览卡（lc-msgcard 系列）
+ * 全部颜色引用核心 --ow-* 变量，深浅两套主题自动跟随，不写 [data-theme="dark"] 补丁。
  */
 
-/* ---------- 顶部工具行 ---------- */
+/* ---------- 后台：分区 ---------- */
+.lc-sec { padding: 16px 18px; }
+.lc-sec-hd { font-size: 15px; font-weight: 600; color: var(--ow-text-title); margin-bottom: 12px; }
+.lc-sec + .lc-sec { margin-top: 4px; }
+.lc-sec-desc { font-size: 12px; color: var(--ow-text-sub); margin: -6px 0 12px; line-height: 1.7; }
+.lc-mono { font-family: var(--ow-mono, Consolas, "Courier New", monospace); }
+.lc-cache-info { font-size: 12px; color: var(--ow-text-sub); align-self: center; -webkit-align-self: center; }
+
+/* ---------- 后台：顶部工具行 ---------- */
 .lc-count { font-size: 12px; color: var(--ow-text-sub); align-self: center; -webkit-align-self: center; }
 
 /* ---------- 卡片列表 ---------- */
@@ -88,6 +97,65 @@
 .lc-pv-host { font-size: 11px; color: var(--ow-text-sub); margin-top: 6px; opacity: .8; }
 .lc-pv-note { font-size: 11px; color: var(--ow-text-sub); padding: 8px 12px; border-top: 1px solid var(--ow-border); line-height: 1.5; }
 
+/* ---------- 聊天页：消息内的链接预览卡 ----------
+   版式参照核心 .ow-file-card（消息内的既有卡片）：固定视觉宽度、内部左对齐。
+   ⚠️ .ow-msg.mine .ow-msg-body 有 text-align:right（自己发的消息整块靠右），
+   卡片内部必须显式 text-align:left，否则标题/描述会被推到右边、与封面图错位。 */
+.lc-msgcard {
+    display: block;
+    width: 300px;
+    max-width: 100%;
+    margin-top: 6px;
+    border: 1px solid var(--ow-border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--ow-bg);
+    color: var(--ow-text);
+    text-align: left;
+    text-decoration: none;
+    transition: border-color .15s;
+    -webkit-transition: border-color .15s;
+}
+.lc-msgcard:hover { border-color: var(--ow-primary); }
+.lc-msgcard-img {
+    display: block;
+    width: 100%;
+    height: 132px;
+    object-fit: cover;
+    -o-object-fit: cover;
+    background: var(--ow-bg-sub);
+    border-bottom: 1px solid var(--ow-border);
+}
+.lc-msgcard-body { padding: 9px 11px 11px; }
+.lc-msgcard-site {
+    display: block;
+    font-size: 11px;
+    line-height: 16px;
+    color: var(--ow-text-sub);
+    text-transform: uppercase;
+    letter-spacing: .2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.lc-msgcard-title {
+    font-size: 13px;
+    line-height: 18px;
+    font-weight: 600;
+    color: var(--ow-text-title);
+    margin-top: 2px;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.lc-msgcard-desc {
+    font-size: 12px;
+    line-height: 17px;
+    color: var(--ow-text-sub);
+    margin-top: 4px;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
 /* ---------- 移动端（与后台 720px 断点一致） ---------- */
 @media (max-width: 720px) {
     .lc-card { flex-direction: column; -webkit-flex-direction: column; gap: 10px; padding: 12px 14px; }
@@ -96,4 +164,7 @@
     .lc-modal-aside { width: 100%; position: static; }
     .lc-form-2col { flex-direction: column; -webkit-flex-direction: column; gap: 0; }
     .lc-plat-grid .ow-switch-row { flex: 0 0 100%; }
+    /* 窄屏消息区本就窄：卡片占满气泡宽度即可，别再顶到 300px */
+    .lc-msgcard { width: 100%; }
+    .lc-msgcard-img { height: 112px; }
 }
