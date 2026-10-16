@@ -1,5 +1,5 @@
 /**
- * 群聊嵌入插件（room-embed）前端脚本 v2.2.0
+ * 群聊嵌入插件（room-embed）前端脚本 v2.3.0
  *
  * 职责：
  *   1. 嵌入模式（?embed=1）：域名白名单守卫 + UI 微调（隐藏音效按钮/拖拽手柄）
@@ -46,6 +46,10 @@
  *     选中即用真按钮 1:1 预览（CSS 来自服务端下发的 window.OW_RE_LAUNCHER，
  *     与嵌入代码同一份来源）；生成的代码按所选样式拼装，不再写死手机图标那一款。
  *   - autoTheme 多返回一组「界面底色」（minimal 款的白/深底描边按钮要用）。
+ * v2.3.0（2026-10-16）：
+ *   - 群聊信息面板新增「嵌入令牌」入口（与「嵌入代码」同权限）：列本群令牌
+ *     （有效 1 个 + 历史，最多 50 条）、单个/批量/全部吊销。样式在真打开弹窗时
+ *     注入一次（injectTokenCss），不占聊天页体积；确认走 OwChat 自研确认框。
  */
 (function () {
     var w = window;
@@ -679,8 +683,158 @@
             } catch (e) {
                 if (tip) tip.textContent = '复制失败，请手动选择文本复制';
             }
+        },
+
+        /* ===================== v2.3.0 前台令牌管理 =====================
+           嵌入代码是群主自己在群聊信息面板里生成的，令牌却原先只能在后台吊销 ——
+           群主想撤掉自己发出去的代码得去找管理员。这里把「本群」这一档放回前台，
+           权限口径与签发一致（服务端同一个守卫：超管 或 该群群主，见 main.php）。 */
+
+        /** 打开令牌管理弹窗（roomId/roomName 由群聊信息面板传入） */
+        tokens: function (roomId, roomName) {
+            w.OwChat._owEmbedRoomName = roomName;
+            injectTokenCss();
+            var html = '<h3>嵌入令牌</h3>'
+                + '<p style="color:var(--ow-text-sub,#999);font-size:13px;margin:0 0 10px">'
+                + escHtml(roomName || ('#' + roomId)) + ' 的嵌入代码令牌。浏览器拦截第三方 Cookie 的跨站场景下，'
+                + '访客靠它维持连接并获得独立身份（可单独禁言）。</p>'
+                + '<div id="owRTokenBox"><p style="color:var(--ow-text-sub,#999);font-size:13px;margin:0">正在读取…</p></div>'
+                + '<p style="color:var(--ow-text-sub,#999);font-size:12.5px;margin:0 0 12px">'
+                + '同一时刻最多只有 1 个有效令牌——重新生成嵌入代码会立刻作废旧令牌。'
+                + '怀疑代码泄露时在这里吊销，对应网站上的聊天窗立即无法连接。</p>'
+                + '<div class="ow-form-row" style="gap:8px">'
+                + '<button class="ow-btn ow-btn-danger" id="owRTokenBatch" disabled'
+                + ' onclick="OwRoomEmbed.tokenRevoke(' + roomId + ')">吊销选中的令牌</button>'
+                + '<button class="ow-btn ow-btn-ghost" onclick="OwChat.closeModal()">关闭</button>'
+                + '</div>';
+            w.OwChat.openModal(html, 520);
+            w.OwRoomEmbed.tokensLoad(roomId);
+        },
+
+        /** 拉本群令牌（只读路由，不敏感） */
+        tokensLoad: function (roomId) {
+            OwApi.post('plugin_room_embed_token_mine', { room_id: roomId }, function (r) {
+                var box = document.getElementById('owRTokenBox');
+                if (!box) return;
+                if (!r || !r.ok) {
+                    box.innerHTML = '<p style="color:var(--ow-red,#C41D1F);font-size:13px;margin:0">'
+                        + escHtml((r && r.msg) || '读取失败') + '</p>';
+                    return;
+                }
+                w.OwRoomEmbed.tokensRender(r.data || []);
+            });
+        },
+
+        /** 渲染列表：有效令牌置顶且默认勾选，历史只读（已吊销/已过期，吊销它们没有意义） */
+        tokensRender: function (rows) {
+            var box = document.getElementById('owRTokenBox');
+            if (!box) return;
+            if (!rows.length) {
+                box.innerHTML = '<p style="color:var(--ow-text-sub,#999);font-size:13px;margin:0">'
+                    + '这个群还没有生成过嵌入代码。</p>';
+                w.OwRoomEmbed.tokenBatch();
+                return;
+            }
+            var h = '';
+            for (var i = 0; i < rows.length; i++) {
+                var t = rows[i];
+                var live = !t.revoked && !t.expired;
+                var st = t.revoked ? '已吊销' : (t.expired ? '已过期' : '有效');
+                var dom = t.domains && t.domains.length
+                    ? (t.domains[0] === '*' ? '任意域名' : t.domains.join('、'))
+                    : '不限制域名';
+                var inner = (live
+                        ? '<input type="checkbox" class="owRTokenChk" value="' + t.id + '" checked'
+                          + ' onchange="OwRoomEmbed.tokenBatch()">'
+                        : '')
+                    + '<span class="ow-rt-main">'
+                    + '<span class="ow-rt-code">' + escHtml(t.token_prefix) + '…</span>'
+                    + '<span class="ow-rt-meta">' + escHtml(dom)
+                    + ' · 签发 ' + fmtTs(t.created_at) + ' · 最近使用 ' + fmtTs(t.last_used_at)
+                    + ' · 由 ' + escHtml(t.created_by_name) + ' 生成</span>'
+                    + '</span>'
+                    + '<span class="ow-rt-st ' + (live ? 'on' : 'offp') + '">' + st + '</span>';
+                // 可勾选的用 label（点整行即勾选），只读的用 div（label 里没控件是语义错误）
+                h += live
+                    ? '<label class="ow-rt-item">' + inner + '</label>'
+                    : '<div class="ow-rt-item off">' + inner + '</div>';
+            }
+            box.innerHTML = h;
+            w.OwRoomEmbed.tokenBatch();
+        },
+
+        /** 勾选数同步按钮文案与可用态 */
+        tokenBatch: function () {
+            var boxes = document.getElementsByClassName('owRTokenChk');
+            var n = 0;
+            for (var i = 0; i < boxes.length; i++) if (boxes[i].checked) n++;
+            var btn = document.getElementById('owRTokenBatch');
+            if (!btn) return;
+            btn.disabled = n === 0;
+            btn.innerHTML = n > 0 ? '吊销选中的令牌（' + n + '）' : '吊销选中的令牌';
+        },
+
+        /** 吊销选中令牌：走 OwChat.confirm 自研确认框（全站禁浏览器原生弹窗） */
+        tokenRevoke: function (roomId) {
+            var boxes = document.getElementsByClassName('owRTokenChk');
+            var ids = [];
+            for (var i = 0; i < boxes.length; i++) if (boxes[i].checked) ids.push(boxes[i].value);
+            if (!ids.length) { toast('请先选择要吊销的令牌'); return; }
+            var go = function () {
+                // 敏感操作：OwApi.secure 自动先取一次性票据
+                OwApi.secure('plugin_room_embed_token_revoke_mine', {
+                    room_id: roomId, ids: ids.join(',')
+                }, function (r) {
+                    toast((r && r.msg) || ((r && r.ok) ? '已吊销' : '吊销失败'));
+                    if (r && r.ok) w.OwRoomEmbed.tokensLoad(roomId);
+                });
+            };
+            var text = '确定吊销选中的 ' + ids.length + ' 个令牌？\n'
+                + '使用它们的嵌入代码会立即失效，对应网站上的聊天窗将无法连接。';
+            // OwChat.confirm 缺失时直接执行——绝不落到浏览器原生 confirm
+            if (typeof w.OwChat.confirm === 'function') w.OwChat.confirm(text, go);
+            else go();
         }
     };
+
+    /** 令牌列表的样式：只在真打开弹窗时注入一次（平时不占聊天页体积），
+     *  颜色一律走 --ow-* 令牌，尺寸随容器自适应，窄屏换行不横向溢出。 */
+    function injectTokenCss() {
+        if (document.getElementById('owReTokenCss')) return;
+        var css = '#owRTokenBox{max-height:340px;overflow-y:auto;-webkit-overflow-scrolling:touch}'
+            + '.ow-rt-item{display:-webkit-flex;display:flex;align-items:flex-start;'
+            + '-webkit-align-items:flex-start;gap:9px;padding:9px 10px;margin:0 0 8px;'
+            + 'border:1px solid var(--ow-border,#eee);border-radius:8px;background:var(--ow-bg-sub,#f7f7f7);'
+            + 'cursor:pointer}'
+            + '.ow-rt-item.off{opacity:.62}'
+            + '.ow-rt-item input{margin:3px 0 0;flex:none;-webkit-flex:none}'
+            + '.ow-rt-main{-webkit-flex:1;flex:1;min-width:0}'
+            + '.ow-rt-code{display:block;font-family:var(--ow-mono,Consolas,monospace);font-size:12.5px;'
+            + 'color:var(--ow-text,#333);word-break:break-all}'
+            + '.ow-rt-meta{display:block;font-size:12px;line-height:1.6;color:var(--ow-text-sub,#999);'
+            + 'margin-top:3px;word-break:break-word}'
+            + '.ow-rt-st{-webkit-flex:none;flex:none;font-size:12px;padding:2px 7px;border-radius:4px;'
+            + 'white-space:nowrap}'
+            + '.ow-rt-st.on{color:var(--ow-green,#237804);background:var(--ow-bg,#fff);'
+            + 'border:1px solid var(--ow-border,#eee)}'
+            + '.ow-rt-st.offp{color:var(--ow-text-sub,#999);background:var(--ow-bg,#fff);'
+            + 'border:1px solid var(--ow-border,#eee)}'
+            + '@media (max-width:520px){.ow-rt-item{-webkit-flex-wrap:wrap;flex-wrap:wrap}'
+            + '.ow-rt-meta{font-size:11.5px}}';
+        var el = document.createElement('style');
+        el.id = 'owReTokenCss';
+        el.textContent = css;
+        document.head.appendChild(el);
+    }
+
+    /** 时间戳 → YYYY-MM-DD HH:MM（0 显示「—」） */
+    function fmtTs(ts) {
+        if (!ts) return '—';
+        var d = new Date(ts * 1000);
+        function p(n) { return (n < 10 ? '0' : '') + n; }
+        return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
+            + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+    }
 
     function escHtml(s) {
         var d = document.createElement('div');
@@ -704,8 +858,27 @@
         return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
     }
 
+    /** 往群聊信息面板追加一行入口（图标 + 文案 + 右箭头，核心 .ow-panel-entry 风格）。
+     *  回车/空格同样可触发——与核心面板里其它可点行保持一致。 */
+    function addPanelEntry(extras, iconPath, text, onclick) {
+        var row = document.createElement('div');
+        row.className = 'ow-panel-entry';
+        row.setAttribute('role', 'button');
+        row.setAttribute('tabindex', '0');
+        row.innerHTML = '<svg class="ow-ico ow-panel-entry-ico" width="16" height="16" viewBox="0 0 24 24" fill="none"'
+            + ' stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+            + iconPath + '</svg><span class="ow-panel-entry-t">' + escHtml(text) + '</span>'
+            + '<span class="ow-panel-entry-arrow">›</span>';
+        row.onclick = onclick;
+        row.onkeydown = function (e) {
+            e = e || w.event;
+            if (e.keyCode === 13 || e.keyCode === 32) { e.preventDefault ? e.preventDefault() : (e.returnValue = false); row.onclick(); }
+        };
+        extras.appendChild(row);
+    }
+
     w.OwChat.onRoomEdit(function (ctx) {
-        // 仅群主 / 超级管理员可见嵌入入口
+        // 仅群主 / 超级管理员可见：签发与管理嵌入令牌的口径一致（服务端也是同一个守卫）
         if (!ctx.isOwner && !ctx.isAdmin) return;
         var extras = document.getElementById('owREExtras');
         if (!extras) return;
@@ -716,22 +889,19 @@
             if (list[i].id === ctx.roomId) { name = list[i].name || ''; break; }
         }
 
-        var row = document.createElement('div');
-        row.className = 'ow-panel-entry';
-        row.setAttribute('role', 'button');
-        row.setAttribute('tabindex', '0');
-        row.innerHTML = '<svg class="ow-ico ow-panel-entry-ico" width="16" height="16" viewBox="0 0 24 24" fill="none"'
-            + ' stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-            + '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>'
-            + '<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>'
-            + '</svg><span class="ow-panel-entry-t">嵌入代码</span>'
-            + '<span class="ow-panel-entry-arrow">›</span>';
-        row.onclick = function () { w.OwRoomEmbed.showSetup(ctx.roomId, name); };
-        row.onkeydown = function (e) {
-            e = e || w.event;
-            if (e.keyCode === 13 || e.keyCode === 32) { e.preventDefault ? e.preventDefault() : (e.returnValue = false); row.onclick(); }
-        };
-        extras.appendChild(row);
+        // 签发（生成代码）
+        addPanelEntry(extras,
+            '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>'
+            + '<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+            '嵌入代码',
+            function () { w.OwRoomEmbed.showSetup(ctx.roomId, name); });
+
+        // v2.3.0 令牌管理：看本群令牌、单个/批量/全部吊销（原先只在后台，群主撤不掉自己发的代码）
+        addPanelEntry(extras,
+            '<circle cx="8" cy="12" r="3.2"/><path d="M11.2 12H20"/><path d="M17.4 12v3.2"/>'
+            + '<path d="M14.6 12v2.2"/>',
+            '嵌入令牌',
+            function () { w.OwRoomEmbed.tokens(ctx.roomId, name); });
     });
 
     // ⚠️ 时序修正：核心在 OwChat.init() 内已调用过 renderRoomPanel()，

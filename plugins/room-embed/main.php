@@ -1,6 +1,6 @@
 <?php
 /**
- * 群聊嵌入插件（room-embed）v2.2.0
+ * 群聊嵌入插件（room-embed）v2.3.0
  *
  * 功能：
  *   - 群主/管理员可在「群聊信息」面板获取该群的嵌入代码（默认浮动手机按钮，
@@ -92,6 +92,14 @@
  *      因此站点主人用 --owlsgo-launcher-* 变量仍能整体覆盖。
  *      按钮的定位/尺寸/色值全部声明为 CSS 变量，仅 3D 高光与投影写死（「光照」本身，
  *      就地注释，属 PLUGIN.md 硬编码例外的图像像素一类）。移动端 ≤480px 自动收边距。
+ * v2.3.0（2026-10-16）：
+ *   17. 前台令牌管理：嵌入代码是群主自己在群聊信息面板里生成的，但令牌列表与吊销原先
+ *      只长在后台「群聊嵌入」页 —— 群主想吊销自己发出去的代码得找管理员。现在群聊信息
+ *      面板新增「嵌入令牌」入口（权限与签发同一个守卫：超管 或 该群群主），可看本群
+ *      令牌（有效 1 个 + 历史，最多 50 条）并吊销选中项。
+ *      ⚠️ 两条新路由都再夹一次 room_id：守卫只证明「你是这个群的群主」，
+ *      不夹这一刀，群主就能拿别群的 id 去吊销别人的令牌。
+ *      令牌表行的字段与哈希裁剪抽成 owReTokenRow()，后台列表与前台共用。
  */
 if (!defined('OWLSGO_VERSION')) exit;
 
@@ -433,6 +441,27 @@ function owReSessUser(string $sess): ?array
 
 /* ===================== 路由 ===================== */
 
+/**
+ * 令牌表行 → 前端结构（后台列表与前台「嵌入令牌」共用同一套字段与哈希裁剪）。
+ * 只回传 token_hash 的前 8 位：完整值库里没有（存的是 sha256），够用于人眼比对即可。
+ */
+function owReTokenRow(array $r, int $now): array
+{
+    return [
+        'id' => (int)$r['id'],
+        'room_id' => (int)$r['room_id'],
+        'room_name' => (string)($r['room_name'] ?? ('#' . $r['room_id'])),
+        'token_prefix' => substr((string)$r['token_hash'], 0, 8),
+        'created_by_name' => (string)$r['created_by_name'],
+        'created_at' => (int)$r['created_at'],
+        'expires_at' => (int)$r['expires_at'],
+        'last_used_at' => (int)$r['last_used_at'],
+        'revoked' => (int)$r['revoked'],
+        'expired' => (int)$r['expires_at'] < $now,
+        'domains' => owReDomainList((string)($r['domains'] ?? '')),
+    ];
+}
+
 /** 群主/管理员守卫：管理员 或 该房间房主 */
 $owReRoomGuard = function (array $ctx, int $roomId): array {
     $actor = $ctx['actor'];
@@ -537,24 +566,67 @@ Plugin::route('plugin_room_embed_token_list', function (array $ctx) {
         . "LEFT JOIN rooms r ON r.id = t.room_id WHERE $wsql ORDER BY t.revoked ASC, t.id DESC LIMIT $psize OFFSET " . (($page - 1) * $psize), $args);
     $out = [];
     $now = time();
-    foreach ($rows as $r) {
-        $domains = owReDomainList((string)($r['domains'] ?? ''));
-        $out[] = [
-            'id' => (int)$r['id'],
-            'room_id' => (int)$r['room_id'],
-            'room_name' => (string)($r['room_name'] ?? ('#' . $r['room_id'])),
-            'token_prefix' => substr((string)$r['token_hash'], 0, 8),
-            'created_by_name' => (string)$r['created_by_name'],
-            'created_at' => (int)$r['created_at'],
-            'expires_at' => (int)$r['expires_at'],
-            'last_used_at' => (int)$r['last_used_at'],
-            'revoked' => (int)$r['revoked'],
-            'expired' => (int)$r['expires_at'] < $now,
-            'domains' => $domains,
-        ];
-    }
+    foreach ($rows as $r) $out[] = owReTokenRow($r, $now);
     Api::json(['ok' => true, 'data' => $out, 'total' => $total, 'pages' => $pages, 'page' => $page, 'psize' => $psize]);
 });
+
+/* ---------- 前台令牌管理（v2.3.0）：群主/超管在群聊信息面板里管本群的令牌 ----------
+ * 为什么要有：嵌入代码是**群主自己**在群聊信息面板里生成的，可令牌列表与吊销原先只
+ * 长在后台「群聊嵌入」页——群主想吊销自己发出去的代码得找管理员。这里把「本群」这一档
+ * 放回前台，权限口径与签发完全一致（同一个 $owReRoomGuard：超管 或 该群群主）。
+ * ⚠️ 两条路由都必须再过一次 room_id：守卫只证明「你是这个群的群主」，
+ *    不代表请求里的 id 属于这个群——不夹这一刀，群主就能吊销别人群里的令牌。 */
+
+/** 本群令牌列表（前台用）。只返回该群、最多 50 条（一生成就作废旧令牌，所以有效令牌至多 1 个，
+ *  其余是历史）；不分页——前台的弹窗里做分页属于过度设计。 */
+Plugin::route('plugin_room_embed_token_mine', function (array $ctx) use ($owReRoomGuard) {
+    $roomId = (int)($ctx['post']['room_id'] ?? 0);
+    $room = $owReRoomGuard($ctx, $roomId);
+    $rows = DB::all('SELECT t.*, r.name AS room_name FROM plugin_room_embed_tokens t '
+        . 'LEFT JOIN rooms r ON r.id = t.room_id WHERE t.room_id=? '
+        . 'ORDER BY t.revoked ASC, t.id DESC LIMIT 50', [$roomId]);
+    $now = time();
+    $out = [];
+    $active = 0;
+    foreach ($rows as $r) {
+        $row = owReTokenRow($r, $now);
+        if (!$row['revoked'] && !$row['expired']) $active++;
+        $out[] = $row;
+    }
+    Api::json([
+        'ok' => true, 'data' => $out, 'active' => $active, 'total' => count($out),
+        'room_id' => $roomId, 'room_name' => (string)($room['name'] ?? ''),
+    ]);
+});
+
+/** 吊销本群令牌（前台用）。ids 逗号分隔，可一次多个（前端一次也只会勾到 1 个，
+ *  但接口按批量做——哪天后台也走这条就不用改契约）。
+ *
+ *  ⚠️ 这里**没有**「全部吊销」开关：签发时会作废该群全部未吊销的行，
+ *  所以同一个群同一时刻最多只有 1 个有效令牌，「吊销全部」与「吊销那一个」是同一件事，
+ *  做成两个按钮只会让群主以为漏了什么。 */
+Plugin::route('plugin_room_embed_token_revoke_mine', function (array $ctx) use ($owReRoomGuard) {
+    $roomId = (int)($ctx['post']['room_id'] ?? 0);
+    $room = $owReRoomGuard($ctx, $roomId);
+
+    $ids = [];
+    foreach (explode(',', (string)($ctx['post']['ids'] ?? '')) as $v) {
+        $v = (int)trim($v);
+        if ($v > 0) $ids[] = $v;
+    }
+    if (!$ids) Api::json(['ok' => false, 'msg' => '请先选择要吊销的令牌']);
+    $ids = array_slice(array_unique($ids), 0, 100);
+
+    $ph = implode(',', array_fill(0, count($ids), '?'));
+    // room_id 夹在 WHERE 里：即使伪造了别群的 id 也改不动任何一行
+    $n = DB::run("UPDATE plugin_room_embed_tokens SET revoked=1 WHERE id IN ($ph) AND room_id=? AND revoked=0",
+        array_merge($ids, [$roomId]))->rowCount();
+    Sec::log('plugin_room_embed_token_revoke_room', (string)($ctx['actor']['nickname'] ?? ''),
+        ['room' => $roomId, 'room_name' => (string)($room['name'] ?? ''),
+         'ids' => implode(',', $ids), 'n' => $n]);
+    Api::json(['ok' => true, 'n' => (int)$n, 'msg' => '已吊销 ' . (int)$n . ' 个令牌，对应嵌入代码立即失效']);
+});
+Plugin::sensitive('plugin_room_embed_token_revoke_mine');
 
 /* ===================== 浮动启动按钮样式（v2.2.0） =====================
  *
@@ -1313,6 +1385,7 @@ Plugin::adminPage('room-embed', '群聊嵌入', function () {
         . '<li>群主或超级管理员进入任意公开群聊，点击右上角「⋮」打开群聊信息面板</li>'
         . '<li>在「群聊信息」下方点击「嵌入代码」——填写域名白名单、选择启动方式与右下角按钮样式，每次点击会重新签发嵌入令牌</li>'
         . '<li>复制生成的代码，粘贴到目标网站的 HTML 中即可</li>'
+        . '<li>同一处还有「嵌入令牌」：群主可查看本群令牌并直接吊销，不必再找管理员。同一时刻只有 1 个有效令牌（重新生成会作废旧令牌）；管理员在下方「令牌管理」可跨群统一处理</li>'
         . '</ol>'
         . '<h3>嵌入效果（v1.3.0 / v2.2.0）</h3>'
         . '<p style="color:var(--ow-text,#333)">默认在网站右下角显示一个圆形手机图标，访客点击才展开聊天室，点聊天室外部自动收回；也可在生成时选择「直接展开」。小窗只保留群名、消息与输入框，站点品牌条与侧栏不进入嵌入页。按钮外观有 5 款预设（经典圆钮 / 立体圆钮 / 渐变胶囊 / 呼吸光环 / 极简线条），在下方「浮动按钮样式」里挑；图标底色可自动适应被嵌入网站的深浅色，站点主人也可用 CSS 变量 <code>--owlsgo-launcher-bg</code>、<code>--owlsgo-launcher-accent</code> 覆盖。</p>'
