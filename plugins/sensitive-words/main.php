@@ -477,6 +477,35 @@ const OWSP_LEX_WORDS_MAX = 600000;
 const OWSP_LEX_WORD_MAX = 300;
 
 /**
+ * 词库**匹配语义**的版本号（v1.4.3）。
+ *
+ * ⚠️ 改了匹配算法就必须 +1：编译缓存（serialize 的映射，落在 data/cache）签名原来只算
+ *    「替换串 + 各词库文件大小/mtime」——算法变了而签名没变，就会继续吃旧缓存里的旧映射，
+ *    表现为「代码明明改了，打码行为一点没变」。签名与缓存校验都带上这个常量即可。
+ *
+ * 历史：1 = 全量 strtr 子串匹配；2 = ASCII 词条改为「按词匹配」（见 owSPlexApply）。
+ */
+const OWSP_LEX_LOGIC = 2;
+
+/**
+ * 按词匹配时**直接忽略**的 ASCII 词条（协议 / 主机前缀）。
+ *
+ * 它们不是违禁词，被当成违禁词只会产生一个后果：用户粘贴的正常链接被打码成
+ * `***s://...`，链接从可点变成不可点（本站的链接预览卡片也因此取不到锚点）。
+ * 域名该不该拦由「域名名单」管，不该在这里做。
+ */
+const OWSP_LEX_ASCII_IGNORE = ['http', 'https', 'www'];
+
+/**
+ * 「按词匹配」的取词正则：一整段 ASCII 词（可含 . _ - ' 这些词内分隔符）。
+ * 左边界要求前面不是同类字符 —— 这一步是修「词条拆词」的关键：
+ *   词条 `p`   不会再去命中 php / app 里的那个 p
+ *   词条 `ma`  不会再去命中 normal 里的 ma
+ *   词条 `http` 不会再去命中 https 里的 http（后面紧跟 s，属于同类字符，不算词尾）
+ */
+const OWSP_LEX_TOKEN_RE = '/(?<![A-Za-z0-9._\-\'])[A-Za-z0-9][A-Za-z0-9._\-\']*/u';
+
+/**
  * 词库目录绝对路径。
  * $GLOBALS['sw_lex_dir'] 可覆盖 —— 与下面 $GLOBALS['sw_words'] 同一套路：
  * 离线自检要往目录里放夹具文件，不能让它去动站点真实的 data/lexicon。
@@ -539,7 +568,8 @@ function owSPlexRep(): string
  */
 function owSPlexSig(): string
 {
-    $parts = [owSPlexRep()];
+    // 第一位就是匹配语义版本：算法一变，全部旧缓存立即作废（见 OWSP_LEX_LOGIC 注释）
+    $parts = ['L' . OWSP_LEX_LOGIC, owSPlexRep()];
     $dis = owSPlexDisabled();
     foreach (owSPlexFiles() as $n => $f) {
         if (in_array($n, $dis, true)) continue;
@@ -557,7 +587,13 @@ function owSPlexBuild(string $sig): array
 {
     $rep = owSPlexRep();
     $dis = owSPlexDisabled();
-    $map = []; $counts = []; $words = 0; $files = 0; $bytes = 0; $skipped = 0; $truncated = false;
+    // 两张表，按「这个词条该怎么匹配」分：
+    //   sub   子串匹配（strtr）：中文没有词边界，只能子串；ASCII 短语（含空格）同理
+    //   latin 按词匹配（正则 + 哈希查表）：纯 ASCII 单词，必须左右有词边界
+    // 分表的理由见 OWSP_LEX_LOGIC 与 owSPlexApply 的注释：词库里混着 `p` / `ma` / `http`
+    // 这类退化条目，子串匹配会把 php / normal / https 一起打碎。
+    $sub = []; $latin = []; $counts = [];
+    $words = 0; $files = 0; $bytes = 0; $skipped = 0; $ignored = 0; $truncated = false;
     foreach (owSPlexFiles() as $n => $f) {
         // 停用的文件也读一遍并统计词数：后台要让管理员看见「这份词库有多少词」再决定要不要启用，
         // 只统计启用中的文件等于把最关键的那个数字藏起来。编译成本只在签名变化时付一次。
@@ -574,15 +610,38 @@ function owSPlexBuild(string $sig): array
                 || preg_match('/[\x00-\x1F\x7F]/', $w)) { $skipped++; continue; }
             $n_words++;
             if (!$enabled) continue;
-            if (isset($map[$w])) continue;
+
+            // ---- 入库前先过「退化条目」闸门（v1.4.3，只对有问题的 ASCII 条目生效）----
+            if (preg_match('/^[\x20-\x7E]+$/', $w)) {
+                // ① 单字符（词库里真的有 p / b / & / 1）：任何「词」都不该是一个字符，
+                //    子串匹配下它会把每个含该字符的词都打碎（php → ***h***）。
+                if (mb_strlen($w) < 2) { $ignored++; continue; }
+                // ② 协议 / 主机前缀：不是违禁词，打码只会废掉正常链接
+                if (in_array(strtolower($w), OWSP_LEX_ASCII_IGNORE, true)) { $ignored++; continue; }
+                // ③ 不像 URL 片段的标点条目：留子串匹配（如 `xi+jin+ping` 这种写法只会命中字面量）。
+                //    像 URL 片段的（含 / 或 @，或以 . 开头，如 `.com` / `http://a/b`）一律丢弃 ——
+                //    它们正是「example.com 变成 example***」的源头；域名拦截请用「域名名单」。
+                if (preg_match('/[\/@]/', $w) || $w[0] === '.') { $ignored++; continue; }
+                // ④ 其余纯 ASCII：能整段当一个「词」的走按词匹配，含空格的短语留子串匹配
+                if (strpos($w, ' ') === false && preg_match('/^[A-Za-z0-9][A-Za-z0-9._\-\']*$/', $w)) {
+                    $k = strtolower($w);          // 统一小写查表 → 大小写不敏感（词库里 Fuck/fuck/FUCK 三条现在只需一条）
+                    if (isset($latin[$k])) continue;
+                    if ($words >= OWSP_LEX_WORDS_MAX) { $truncated = true; break 2; }
+                    $latin[$k] = $rep; $words++;
+                    continue;
+                }
+            }
+            if (isset($sub[$w])) continue;
             if ($words >= OWSP_LEX_WORDS_MAX) { $truncated = true; break 2; }
-            $map[$w] = $rep;
+            $sub[$w] = $rep;
             $words++;
         }
         $counts[$n] = $n_words;
     }
-    $c = ['sig' => $sig, 'map' => $map, 'words' => $words, 'files' => $files, 'counts' => $counts,
-        'bytes' => $bytes, 'skipped' => $skipped, 'truncated' => $truncated, 'built_at' => time()];
+    $c = ['sig' => $sig, 'logic' => OWSP_LEX_LOGIC, 'sub' => $sub, 'latin' => $latin,
+        'latin_n' => count($latin), 'sub_n' => count($sub),
+        'words' => $words, 'files' => $files, 'counts' => $counts, 'bytes' => $bytes,
+        'skipped' => $skipped, 'ignored' => $ignored, 'truncated' => $truncated, 'built_at' => time()];
     // 原子替换：并发请求可能同时重建，写一半的缓存被读到就是 unserialize 失败 → 退回逐行重读
     $tmp = owSPlexCacheFile() . '.' . getmypid() . '.tmp';
     if (@file_put_contents($tmp, serialize($c)) !== false) @rename($tmp, owSPlexCacheFile());
@@ -601,7 +660,8 @@ function owSPlexCompiled(bool $force = false): array
             $raw = @file_get_contents($fp);
             // allowed_classes=false：缓存文件万一被替换成恶意内容，也不许 unserialize 造对象
             $d = $raw === false ? false : @unserialize($raw, ['allowed_classes' => false]);
-            if (is_array($d) && ($d['sig'] ?? '') === $sig && isset($d['map']) && is_array($d['map'])) {
+            if (is_array($d) && ($d['sig'] ?? '') === $sig && ($d['logic'] ?? 0) === OWSP_LEX_LOGIC
+                && isset($d['sub']) && is_array($d['sub']) && isset($d['latin']) && is_array($d['latin'])) {
                 $c = $d;
                 return $c;
             }
@@ -613,21 +673,64 @@ function owSPlexCompiled(bool $force = false): array
 
 /**
  * 打码。返回替换后的文本，$hits 出参给命中数（替换串出现次数）。
- * strtr（数组形态）在**同一位置优先最长匹配**，正是违禁词想要的：
- * 「法网恢恢」不会因为词库里同时有「法网」而被拆成两段打码。
+ *
+ * 两种匹配方式，因为两类「词」的边界规则本就不同（v1.4.3 起，见 OWSP_LEX_LOGIC）：
+ *   ① 子串匹配（strtr）：**中文条目**。中文没有词边界，「法网恢恢」必须能被「法网」命中；
+ *      strtr（数组形态）在同一位置优先最长匹配，正是违禁词想要的。
+ *   ② 按词匹配（正则取词 + 哈希查表）：**纯 ASCII 条目**。不加边界就会把词拆碎 ——
+ *      词条 `p` 命中 php、`ma` 命中 normal、`http` 命中 https（用户粘贴的链接就是这么被废掉的，
+ *      而链接一废，本站的链接预览卡片也拿不到锚点）。取词正则见 OWSP_LEX_TOKEN_RE。
+ *      命中判定另做两次兜底：
+ *        · 词尾带数字（falun123 / falun666）→ 剥掉数字再查一次，堵「拼数字绕过」；
+ *        · 词内含分隔符（sex.com / porn-site）→ 逐段查，只替换命中的段，分隔符与其余段原样保留。
  */
 function owSPlexApply(string $text, ?int &$hits = null): string
 {
     $hits = 0;
     $c = owSPlexCompiled();
-    if (!$c['map'] || $text === '') return $text;
-    $new = strtr($text, $c['map']);
-    if ($new === $text) return $text;
+    $sub = $c['sub'] ?? [];
+    $latin = $c['latin'] ?? [];
+    if ((!$sub && !$latin) || $text === '') return $text;
+
+    $orig = $text;
     $rep = owSPlexRep();
-    // 替换串长度 ≥2 时，出现次数即命中词数；单字符替换串（如改成「*」）会放大计数，
-    // 这只影响日志里的数字，不影响打码结果 —— 不为此再加一遍全量统计
-    $hits = max(1, (int)substr_count($new, $rep));
-    return $new;
+
+    // ① 子串匹配：中文词条 + ASCII 短语
+    if ($sub) $text = strtr($text, $sub);
+
+    // ② 按词匹配：纯 ASCII 单词
+    if ($latin) {
+        $text = preg_replace_callback(OWSP_LEX_TOKEN_RE, function ($m) use ($latin, $rep) {
+            $tok = $m[0];
+            $low = strtolower($tok);
+            if (isset($latin[$low])) return $rep;
+            // 词尾数字：falun123
+            $bare = rtrim($low, '0123456789');
+            if ($bare !== '' && $bare !== $low && isset($latin[$bare])) return $rep;
+            // 词内含分隔符：example.com / porn-site —— 逐段查，只换命中的段
+            if (preg_match('/[._\-\']/', $tok)) {
+                $pieces = preg_split('/([._\-\']+)/', $tok, -1, PREG_SPLIT_DELIM_CAPTURE);
+                if (is_array($pieces)) {
+                    $out = ''; $hit = false;
+                    foreach ($pieces as $i => $piece) {
+                        // 奇数下标是分隔符本身（捕获组），偶数下标是词段
+                        if ($i % 2 === 1 || $piece === '') { $out .= $piece; continue; }
+                        if (isset($latin[strtolower($piece)])) { $out .= $rep; $hit = true; }
+                        else $out .= $piece;
+                    }
+                    if ($hit) return $out;
+                }
+            }
+            return $tok;
+        }, $text);
+        // ⚠️ 正则出错（PCRE 回溯上限等）时返回 null —— 绝不能把整段内容变成空串，
+        //    宁可退回「没打码」也要保住用户的文字。
+        if ($text === null) return $orig;
+    }
+
+    if ($text === $orig) return $orig;
+    $hits = max(1, (int)substr_count($text, $rep));
+    return $text;
 }
 
 /** 词库概况（后台显示；走编译缓存，签名不符时才真读文件） */
@@ -637,6 +740,9 @@ function owSPlexStat(): array
     return ['words' => (int)$c['words'], 'files' => (int)$c['files'], 'bytes' => (int)$c['bytes'],
         'skipped' => (int)($c['skipped'] ?? 0), 'truncated' => !empty($c['truncated']),
         'built_at' => (int)$c['built_at'], 'dir' => OWSP_LEX_REL, 'path' => owSPlexDir(),
+        // v1.4.3：按词匹配 / 子串匹配 / 被忽略的退化条目数，后台要看得见
+        'latin' => (int)($c['latin_n'] ?? 0), 'sub' => (int)($c['sub_n'] ?? 0),
+        'ignored' => (int)($c['ignored'] ?? 0), 'logic' => (int)($c['logic'] ?? 0),
         'total' => count(owSPlexFiles()), 'rep' => owSPlexRep()];
 }
 
@@ -1014,6 +1120,11 @@ function owSPlexStatusText(): string
     $rec = (int)DB::setting('spam_lex_installed_at', '0');
     $t = '本地词库：' . $s['files'] . ' 个文件、' . number_format($s['words']) . ' 条词'
         . '（目录共 ' . $s['total'] . ' 个文件）';
+    // 按词匹配 / 子串匹配的分工，以及被忽略的退化条目 —— 管理员要能看见「为什么某条不生效」
+    $t .= '　其中 ' . number_format($s['latin']) . ' 条按词匹配、' . number_format($s['sub']) . ' 条子串匹配';
+    if ($s['ignored'] > 0) {
+        $t .= '；已忽略 ' . number_format($s['ignored']) . ' 条会误伤链接的条目（单字符 / http、www 等前缀 / 网址片段）';
+    }
     if ($rec > 0) $t .= '　最后下载 ' . date('Y-m-d H:i', $rec);
     $chk = (int)DB::setting('spam_lex_last_check', '0');
     if ($chk > 0) $t .= '　最后检测 ' . date('Y-m-d H:i', $chk);
