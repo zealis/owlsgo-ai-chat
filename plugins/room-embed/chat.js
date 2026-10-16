@@ -1,5 +1,5 @@
 /**
- * 群聊嵌入插件（room-embed）前端脚本 v2.0.0
+ * 群聊嵌入插件（room-embed）前端脚本 v2.2.0
  *
  * 职责：
  *   1. 嵌入模式（?embed=1）：域名白名单守卫 + UI 微调（隐藏音效按钮/拖拽手柄）
@@ -41,6 +41,11 @@
  *   - 会话令牌经 postMessage 交父页面持久化（父页面刷新/重开 iframe 时带上），
  *     iframe 内导航靠 main.php 的 window.name 上下文续命；
  *   - 登出：OwApi.secure 吊销会话 + 广播父页面清令牌重载（退回访客）。
+ * v2.2.0（2026-10-16）：
+ *   - 右下角按钮支持多套样式：参数面板新增「按钮样式」下拉（默认取后台设置），
+ *     选中即用真按钮 1:1 预览（CSS 来自服务端下发的 window.OW_RE_LAUNCHER，
+ *     与嵌入代码同一份来源）；生成的代码按所选样式拼装，不再写死手机图标那一款。
+ *   - autoTheme 多返回一组「界面底色」（minimal 款的白/深底描边按钮要用）。
  */
 (function () {
     var w = window;
@@ -453,9 +458,20 @@
 
     /* ---------- 普通模式：群聊信息面板追加「嵌入代码」入口 ---------- */
     w.OwRoomEmbed = {
-        /** 第一步：参数面板（域名白名单 + 启动方式） */
+        /** 第一步：参数面板（域名白名单 + 启动方式 + 按钮样式） */
         showSetup: function (roomId, roomName) {
             w.OwChat._owEmbedRoomName = roomName;
+            var L = launcherData();
+            var opts = '';
+            var cur = '';
+            if (L) {
+                cur = L.cfg.style || 'classic';
+                for (var i = 0; i < L.order.length; i++) {
+                    var id = L.order[i];
+                    opts += '<option value="' + id + '"' + (id === cur ? ' selected' : '') + '>'
+                        + escHtml(L.presets[id].name) + '</option>';
+                }
+            }
             var html = '<h3>嵌入代码</h3>'
                 + '<p style="color:var(--ow-text-sub,#999);font-size:13px;margin:0 0 10px">生成该群的嵌入代码。每次生成都会重新签发嵌入令牌，旧代码立即失效。</p>'
                 + '<div class="ow-form-item"><label>允许加载的域名（每行一个，留空 = 不限制）</label>'
@@ -466,27 +482,67 @@
                 + '<select class="ow-input" id="owEmbedMode">'
                 + '<option value="launcher">浮动手机按钮（点击展开，点外部收回）</option>'
                 + '<option value="direct">直接展开聊天</option></select></div>'
+                + (opts
+                    ? '<div class="ow-form-item"><label>按钮样式</label>'
+                      + '<select class="ow-input" id="owEmbedStyle" onchange="OwRoomEmbed.preview()">' + opts + '</select>'
+                      + '<div id="owEmbedPv" class="ow-embed-pv" style="height:96px;'
+                      + 'display:-webkit-flex;display:flex;-webkit-align-items:center;align-items:center;'
+                      + '-webkit-justify-content:center;justify-content:center;background:var(--ow-bg-sub);'
+                      + 'border:1px solid var(--ow-border);border-radius:8px;margin-top:8px;'
+                      + 'overflow:hidden;position:relative">'
+                      + '<button type="button" id="owEmbedPvBtn" class="owlsgo-launcher ow-lc-' + cur + '"'
+                      + ' title="在线聊天" aria-label="在线聊天">' + (L.presets[cur] ? L.presets[cur].html : '') + '</button>'
+                      + '</div>'
+                      + '<p style="font-size:12px;color:var(--ow-text-sub);margin-top:6px">上方是真按钮的 1:1 预览（颜色与尺寸跟随后台设置）。'
+                      + '主色、尺寸在后台「群聊嵌入 → 浮动按钮样式」统一调整；样式改动只对之后生成的代码生效。</p></div>'
+                    : '')
                 + '<div class="ow-form-row" style="gap:8px">'
                 + '<button class="ow-btn ow-btn-primary" onclick="OwRoomEmbed.generate(' + roomId + ')">生成代码</button>'
                 + '<button class="ow-btn ow-btn-ghost" onclick="OwChat.closeModal()">取消</button>'
                 + '</div>';
             w.OwChat.openModal(html, 460);
+            w.OwRoomEmbed.preview();
+        },
+
+        /** 预览：只把「当前这一款」的 CSS 注进弹窗作用域，切样式就换一份，不刷页面 */
+        preview: function () {
+            var L = launcherData();
+            var sel = document.getElementById('owEmbedStyle');
+            var btn = document.getElementById('owEmbedPvBtn');
+            if (!L || !sel || !btn) return;
+            var id = sel.value;
+            if (!L.presets[id]) id = L.cfg.style;
+            btn.className = L.presets[id].cls;
+            btn.innerHTML = L.presets[id].html;
+            // 通用盒 + 本款样式 + 预览中和规则（真按钮是右下角 fixed 浮层，摆进弹窗要复位）
+            var css = L.base + L.presets[id].css
+                + '#owEmbedPv .owlsgo-launcher{position:relative!important;left:auto!important;top:auto!important;'
+                + 'right:auto!important;bottom:auto!important;cursor:default!important}';
+            var el = document.getElementById('owEmbedPvCss');
+            if (!el) {
+                el = document.createElement('style');
+                el.id = 'owEmbedPvCss';
+                document.head.appendChild(el);
+            }
+            el.textContent = css;
         },
 
         /** 第二步：签发令牌（敏感操作，一次性票据）并出代码 */
         generate: function (roomId) {
             var dEl = document.getElementById('owEmbedDomains');
             var mEl = document.getElementById('owEmbedMode');
+            var sEl = document.getElementById('owEmbedStyle');
             var domains = dEl ? dEl.value : '';
             var mode = mEl ? mEl.value : 'launcher';
+            var style = sEl ? sEl.value : '';
             OwApi.secure('plugin_room_embed_token', { room_id: roomId, domains: domains }, function (r) {
                 if (!r.ok) { toast(r.msg || '签发嵌入令牌失败'); return; }
-                w.OwRoomEmbed.showCode(roomId, w.OwChat._owEmbedRoomName || '', r.token, r.expires_at, mode);
+                w.OwRoomEmbed.showCode(roomId, w.OwChat._owEmbedRoomName || '', r.token, r.expires_at, mode, style);
             });
         },
 
-        /** 生成并展示嵌入代码（v1.3.0：默认浮动手机按钮启动器） */
-        showCode: function (roomId, roomName, token, expiresAt, mode) {
+        /** 生成并展示嵌入代码（v1.3.0：默认浮动手机按钮启动器；v2.2.0：按钮样式由服务端下发的 CSS 拼装） */
+        showCode: function (roomId, roomName, token, expiresAt, mode, style) {
             var base = (w.OwChat.cfg && w.OwChat.cfg.site_url) ? w.OwChat.cfg.site_url : '';
             if (!base) base = w.location.origin;   // 未配「固定网站地址」时退回当前源
             var direct = mode === 'direct';
@@ -494,29 +550,23 @@
                 + (token ? '&embed_token=' + token + '&embed_visitor=' : '');
             // ⚠️ 例外（PLUGIN.md「图像像素」类）：本串是粘贴到**外部站点**运行的代码，
             // 外部页面没有 --ow-* 变量体系，按钮底色/投影按外部站点装饰处理。
-            // v1.5.0：底色默认**自动适配页面深浅**（见下方 autoTheme），不再写死；
-            // 站点主人仍可用 --owlsgo-launcher-bg / --owlsgo-launcher-fg 覆盖
-            // （设 transparent 即得透明图标，图形色随页面底色反差）。
+            // v2.2.0：按钮的整段 CSS 由服务端生成（main.php 的 owReLauncher* 系列）后在此拼装，
+            // 与后台预览共用同一份来源，不在这里另写一套样式。
+            // 站点主人仍可用 --owlsgo-launcher-bg / -fg / -accent / -size 覆盖。
             // 访客标识在**父页面**（第一方）localStorage 铸造后随 iframe URL 带上——
             // 第三方 iframe 自己的存储可能被浏览器拦掉，父页面不会；每个访客因此有稳定身份。
+            var L = launcherData();
+            var st = null;
+            if (L) st = L.presets[style] || L.presets[L.cfg.style] || null;
+            if (!st) {   // 兜底：页面没注入数据（老浏览器缓存等）时退回经典圆钮的等价样式
+                st = { cls: 'owlsgo-launcher ow-lc-classic', html: '', css: '' };
+            }
+            var launcherCss = direct ? '' : (L ? (L.base + st.css) : '');
             var frameStyle = 'position:fixed;bottom:84px;right:20px;z-index:99998;overflow:hidden;'
                 + 'width:380px;max-width:calc(100vw - 24px);'
                 + 'height:560px;max-height:calc(100vh - 128px);max-height:calc(100dvh - 128px);'
                 + 'border:none;border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,.18)';
-            var phoneSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" '
-                + 'stroke-linecap="round" stroke-linejoin="round">'
-                + '<rect x="7" y="3" width="10" height="18" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/></svg>';
-            var code = '<style>\n'
-                + '#owlsgo-launcher{position:fixed;bottom:20px;right:20px;z-index:99999;width:52px;height:52px;\n'
-                + 'border-radius:50%;cursor:pointer;border:none;padding:0;font-size:0;line-height:0;\n'
-                + 'display:-webkit-flex;display:flex;align-items:center;justify-content:center;\n'
-                + 'background:var(--owlsgo-launcher-bg,var(--owlsgo-launcher-bg-auto,#2b2f36));\n'
-                + 'color:var(--owlsgo-launcher-fg,var(--owlsgo-launcher-fg-auto,#ffffff));\n'
-                + 'box-shadow:0 4px 16px rgba(0,0,0,.22);\n'
-                + '-webkit-transition:transform .15s;transition:transform .15s;}\n'
-                + '#owlsgo-launcher:hover{transform:scale(1.06);}\n'
-                + '#owlsgo-launcher svg{width:24px;height:24px;}\n'
-                + '</style>\n'
+            var code = (launcherCss ? '<style>\n' + launcherCss + '\n</style>\n' : '')
                 + '<div id="owlsgo-chat"></div>\n'
                 + '<script>\n'
                 + '(function(){var k="owlsgo_embed_visitor",v="";\n'
@@ -525,6 +575,7 @@
                 + 'try{window.localStorage.setItem(k,v);}catch(e){}}\n'
                 // 自动配色：沿祖先链找第一个不透明背景色算亮度——浅色页面出深底白图形，
                 // 深色页面出白底深图形；取不到按浅色处理（最常见），并参考 prefers-color-scheme。
+                // v2.2.0：多返回一组「界面底色」（minimal 款的白/深底描边按钮要用）。
                 + 'function autoTheme(){\n'
                 + 'var el=document.body,bg="",n=0,c;\n'
                 + 'while(el&&n<8){c=getComputedStyle(el).backgroundColor;\n'
@@ -533,7 +584,7 @@
                 + 'var light=true,m=/rgba?\\((\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)/.exec(bg||"");\n'
                 + 'if(m){var L=(0.299*(+m[1])+0.587*(+m[2])+0.114*(+m[3]))/255;light=L>=0.55;}\n'
                 + 'else if(window.matchMedia&&matchMedia("(prefers-color-scheme: dark)").matches)light=false;\n'
-                + 'return light?["#2b2f36","#ffffff"]:["#ffffff","#2b2f36"];}\n'
+                + 'return light?["#2b2f36","#ffffff","#ffffff"]:["#ffffff","#2b2f36","#2b2f36"];}\n'
                 + 'var SITE=' + JSON.stringify(base) + ',ROOM=' + roomId + ',TOKEN=' + JSON.stringify(token || '')
                 + ',DIRECT=' + (direct ? 'true' : 'false') + ';\n'
                 // v2.0.0：登录会话令牌持久化（父页面 localStorage——第三方 iframe 自己的
@@ -551,11 +602,14 @@
                 + 'var s=getSess();if(/^[a-f0-9]{32}$/.test(s))q+="&embed_sess="+s;\n'
                 + 'return SITE+q;}\n'
                 + 'var launcher=document.createElement("button");\n'
-                + 'launcher.id="owlsgo-launcher";launcher.type="button";launcher.title="在线聊天";\n'
-                + 'launcher.innerHTML=' + JSON.stringify(phoneSvg) + ';\n'
+                + 'launcher.id="owlsgo-launcher";launcher.className=' + JSON.stringify(st.cls) + ';\n'
+                + 'launcher.type="button";launcher.title="在线聊天";'
+                + 'launcher.setAttribute("aria-label","在线聊天");\n'
+                + 'launcher.innerHTML=' + JSON.stringify(st.html) + ';\n'
                 + 'var _t=autoTheme();\n'
                 + 'launcher.style.setProperty("--owlsgo-launcher-bg-auto",_t[0]);\n'
                 + 'launcher.style.setProperty("--owlsgo-launcher-fg-auto",_t[1]);\n'
+                + 'launcher.style.setProperty("--owlsgo-launcher-surface-auto",_t[2]);\n'
                 + 'var frame=null;\n'
                 + 'function ensureFrame(){\n'
                 + 'if(frame)return frame;\n'
@@ -589,7 +643,9 @@
             var html = '<h3>嵌入代码</h3>'
                 + '<p style="color:var(--ow-text-sub,#999);font-size:13px;margin:0 0 10px">'
                 + (direct ? '将以下代码粘贴到网站 HTML 的合适位置，聊天室将直接展开。'
-                    : '将以下代码粘贴到网站 HTML 的合适位置，右下角即出现手机图标，访客点击展开聊天、点外部自动收回。')
+                    : '将以下代码粘贴到网站 HTML 的合适位置，右下角即出现'
+                      + (st && st.name ? '「' + escHtml(st.name) + '」' : '') + '按钮，'
+                      + '访客点击展开聊天、点外部自动收回。')
                 + '</p>'
                 + '<div class="ow-form-item">'
                 + '<label>群聊：' + escHtml(roomName || ('#' + roomId)) + '</label>'
@@ -600,7 +656,7 @@
                       + fmtDate(expiresAt) + '）：浏览器拦截第三方 Cookie 的跨站场景下靠它维持连接，每位访客会自动获得独立身份（可单独禁言），权力等同该群访客。请勿公开粘贴完整代码，怀疑泄露可到后台「群聊嵌入」页吊销；再次生成会换发新令牌，旧代码立即失效。</p>'
                     : '')
                 + '<p style="color:var(--ow-text-sub,#999);font-size:12px;margin:0 0 10px">'
-                + '图标底色会自动适应你网站的深浅色（也可用 CSS 变量 <code>--owlsgo-launcher-bg</code> 覆盖，设 <code>transparent</code> 即为透明图标）。'
+                + '按钮底色会自动适应你网站的深浅色（也可用 CSS 变量 <code>--owlsgo-launcher-bg</code>、<code>--owlsgo-launcher-accent</code> 覆盖）。'
                 + '访客点聊天窗顶栏的「登录/注册」会弹出主站小窗完成登录/注册（浏览器拦截第三方 Cookie，嵌入窗口内无法直接登录），'
                 + '成功后即用本人身份聊天，会话保持 30 天，可随时登出。</p>'
                 + '<div class="ow-form-row" style="gap:8px">'
@@ -630,6 +686,16 @@
         var d = document.createElement('div');
         d.textContent = String(s == null ? '' : s);
         return d.innerHTML;
+    }
+
+    /** 服务端下发的浮动按钮样式数据（main.php 的 page.head 注入）。
+     *  结构：{ base:通用盒 CSS, presets:{id:{name,desc,css,html,cls}}, order:[id…],
+     *          palette:[…], sizes:[…], cfg:{style,color,size} }。
+     *  缺失（脚本被缓存没刷新、或停在旧版本）时返回 null，调用方各自退回经典圆钮。 */
+    function launcherData() {
+        var L = w.OW_RE_LAUNCHER;
+        if (!L || !L.presets || !L.cfg || !L.order || !L.base) return null;
+        return L;
     }
 
     function fmtDate(ts) {

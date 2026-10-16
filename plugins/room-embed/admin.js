@@ -1,11 +1,12 @@
 /**
- * 群聊嵌入插件 - 后台交互（v2.0.0）
+ * 群聊嵌入插件 - 后台交互（v2.2.0）
  * 全局对象 OwRE / OwRS；依赖主 chat.js 暴露的 OwApi / toast / esc / OwAdmin.confirm / OwAdmin.uiPager。
  * 只在后台运行（OwAdmin 存在才初始化）。
- * OwRE = 嵌入令牌管理（通用列表轮子：搜索 + 状态筛选 + 批量吊销 + 分页）；
+ * OwRE = 嵌入令牌管理（通用列表轮子：搜索 + 状态筛选 + 批量吊销 + 分页）
+ *        + 浮动按钮样式（v2.2.0：预设单选 / 主色 / 尺寸，预览走 OwRE.lpApply 写 CSS 变量）；
  * OwRS = 登录会话管理（v2.0.0 弹窗授权换来的 30 天会话，列表 + 单个/批量吊销）。
  * 后台页 HTML 由 admin_plugin_page 异步注入，仿 attachment-manager 的套路：
- * MutationObserver 盯 #owAdminMain，见到目标表格且未初始化过才加载一次。
+ * MutationObserver 盯 #owAdminMain，见到目标节点且未初始化过才加载一次。
  */
 (function (w, d) {
     'use strict';
@@ -217,7 +218,126 @@
         }
     };
 
-    /* 后台页异步注入：见到 #owRETable / #owRSTable 且未初始化过才加载一次 */
+    /* ===================== 浮动按钮样式（v2.2.0，挂在 OwRE 下） =====================
+       预览不另写一套 CSS：后台页 page.head 已注入「通用盒 + 五个预设」，与嵌入代码同一份
+       来源。这里只做两件事——切换选中态、把主色/尺寸写到 #owReLp 上的 CSS 变量
+       （按钮立刻跟着变，不必重发样式表）。色板值与尺寸值从按钮的 data-hex / data-px 读，
+       数值只在 PHP 里有一份。 */
+    w.OwRE.lp = { style: '', color: '', size: '' };
+
+    /** 颜色提亮（与 PHP owReLighten 同公式，渐变预设的终点色） */
+    function lighten(hex, p) {
+        var h = String(hex).replace('#', '');
+        if (!/^[0-9a-f]{6}$/i.test(h)) return hex;
+        var out = '#';
+        for (var i = 0; i < 3; i++) {
+            var c = parseInt(h.substr(i * 2, 2), 16);
+            c = Math.max(0, Math.min(255, Math.round(c + (255 - c) * p)));
+            var s = c.toString(16);
+            out += s.length === 1 ? '0' + s : s;
+        }
+        return out;
+    }
+
+    /** 读出当前选中项（后台页可能重绘，选中态一律以 DOM 为准） */
+    w.OwRE.lpInit = function () {
+        var card = d.querySelector('#owReLp .ow-re-lp-card.on');
+        w.OwRE.lp.style = card ? (card.getAttribute('data-style') || 'classic') : 'classic';
+        var sw = d.querySelector('.ow-re-sw.on');
+        w.OwRE.lp.color = sw ? (sw.getAttribute('data-color') || 'auto') : 'auto';
+        var cu = $('owReCustomColor');
+        if (cu && /^#[0-9a-f]{6}$/i.test(cu.value || '')) w.OwRE.lp.color = cu.value.toLowerCase();
+        var sz = d.querySelector('.ow-re-sz.on');
+        w.OwRE.lp.size = sz ? (sz.getAttribute('data-size') || 'md') : 'md';
+        w.OwRE.lpApply();
+    };
+
+    /** 把主色/尺寸写到预览容器的变量上（.ow-re-lp 上的变量会被里面每个预览按钮继承） */
+    w.OwRE.lpApply = function () {
+        var wrap = $('owReLp');
+        if (!wrap) return;
+        var hex = '';
+        if (/^#[0-9a-f]{6}$/i.test(w.OwRE.lp.color)) {
+            hex = w.OwRE.lp.color.toLowerCase();
+        } else {
+            var sw = d.querySelector('.ow-re-sw.on');
+            hex = sw ? (sw.getAttribute('data-hex') || '') : '';
+        }
+        var auto = hex === '';
+        // 「跟随网站深浅」的起点：按后台自己这一屏的深浅算，保证预览按钮与预览台总有大反差
+        // （深色后台里若照搬浅色网站的取值，会得到一个浅底按钮压在浅色格里看不清）。
+        // 这两个十六进制与嵌入代码里 autoTheme 用的是同一对常量（浅色页面下的深底 / 深色页面下的白底）。
+        var dark = false;
+        var stage = wrap.querySelector('.ow-re-lp-stage');
+        if (stage && w.getComputedStyle) {
+            var m = /rgba?\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)/.exec(getComputedStyle(stage).backgroundColor || '');
+            if (m) dark = (0.299 * (+m[1]) + 0.587 * (+m[2]) + 0.114 * (+m[3])) / 255 < 0.55;
+        }
+        var fill = dark ? '#ffffff' : '#2b2f36';
+        var onFill = dark ? '#2b2f36' : '#ffffff';
+        var surface = dark ? '#2b2f36' : '#ffffff';
+        wrap.style.setProperty('--owlsgo-launcher-bg-auto', fill);
+        wrap.style.setProperty('--owlsgo-launcher-fg-auto', onFill);
+        wrap.style.setProperty('--owlsgo-launcher-surface-auto', surface);
+        wrap.style.setProperty('--owlsgo-launcher-accent', auto ? fill : hex);
+        wrap.style.setProperty('--owlsgo-launcher-accent-2', auto ? fill : lighten(hex, 0.32));
+        wrap.style.setProperty('--owlsgo-launcher-ink', auto ? onFill : '#ffffff');
+        var szEl = d.querySelector('.ow-re-sz.on');
+        var px = szEl ? (parseInt(szEl.getAttribute('data-px'), 10) || 56) : 56;
+        wrap.style.setProperty('--owlsgo-launcher-size', px + 'px');
+    };
+
+    function toggleGroup(sel, attr, val) {
+        var els = d.querySelectorAll(sel);
+        for (var i = 0; i < els.length; i++) {
+            var cls = els[i].className.replace(/\s*\bon\b/g, '');
+            if (els[i].getAttribute(attr) === val) cls += ' on';
+            els[i].className = cls;
+        }
+    }
+
+    w.OwRE.pickStyle = function (id) {
+        toggleGroup('#owReLp .ow-re-lp-card', 'data-style', id);
+        w.OwRE.lp.style = id;
+    };
+
+    /** v 可以是配色 id（auto/classic/…）或手填的 #RRGGBB；填一半的非法值直接忽略 */
+    w.OwRE.pickColor = function (v) {
+        v = String(v || '').trim();
+        if (v.charAt(0) === '#') {
+            if (!/^#[0-9a-f]{6}$/i.test(v)) return;      // 正在输入，等它完整
+            toggleGroup('.ow-re-sw', 'data-color', '');   // 自定义色不落在任何色板上
+            w.OwRE.lp.color = v.toLowerCase();
+        } else if (v !== '') {
+            toggleGroup('.ow-re-sw', 'data-color', v);
+            w.OwRE.lp.color = v;
+            var cu = $('owReCustomColor');
+            var sw = d.querySelector('.ow-re-sw.on');
+            if (cu && sw && (sw.getAttribute('data-hex') || '') !== '') cu.value = '';
+        } else {
+            return;
+        }
+        w.OwRE.lpApply();
+    };
+
+    w.OwRE.pickSize = function (id) {
+        toggleGroup('.ow-re-sz', 'data-size', id);
+        w.OwRE.lp.size = id;
+        w.OwRE.lpApply();
+    };
+
+    w.OwRE.saveLauncher = function () {
+        var btn = $('owReLpSave');
+        if (btn) btn.disabled = true;
+        OwApi.post('plugin_room_embed_launcher_save', {
+            style: w.OwRE.lp.style, color: w.OwRE.lp.color, size: w.OwRE.lp.size
+        }, function (r) {
+            if (btn) btn.disabled = false;
+            toast((r && r.msg) || ((r && r.ok) ? '已保存' : '保存失败'));
+        });
+    };
+
+    /* 后台页异步注入：见到目标节点且未初始化过才加载一次 */
     function watchInit() {
         var main = $('owAdminMain');
         if (!main) return;
@@ -231,6 +351,12 @@
             if (el2 && el2.getAttribute('data-rs-inited') !== '1') {
                 el2.setAttribute('data-rs-inited', '1');
                 w.OwRS.load();
+            }
+            // v2.2.0：浮动按钮样式（v2.2.0 起本页新增的卡片）
+            var el3 = $('owReLp');
+            if (el3 && el3.getAttribute('data-lp-inited') !== '1') {
+                el3.setAttribute('data-lp-inited', '1');
+                w.OwRE.lpInit();
             }
         };
         if (typeof MutationObserver !== 'undefined') {

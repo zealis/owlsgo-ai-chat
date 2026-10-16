@@ -1,6 +1,6 @@
 <?php
 /**
- * 群聊嵌入插件（room-embed）v2.1.0
+ * 群聊嵌入插件（room-embed）v2.2.0
  *
  * 功能：
  *   - 群主/管理员可在「群聊信息」面板获取该群的嵌入代码（默认浮动手机按钮，
@@ -81,6 +81,17 @@
  *      点开贴纸页签恒 403（面板退回「暂无贴纸」）。放行 stickers（只读本人贴纸）。
  *   15. 修「昵称与登出之间间隔太多」：昵称与登出按钮都带 margin-left:auto，
  *      两个 auto 边距平分剩余空间。改为昵称承担唯一 auto，登出紧跟其后 8px。
+ * v2.2.0（2026-10-16）：
+ *   16. 右下角浮动按钮支持多套样式：新增「浮动按钮样式」后台设置（核心 settings 三个键
+ *      room_embed_launcher_style / _color / _size），5 款预设 —— 经典圆钮（原样）、
+ *      立体圆钮（uiverse jolly-robin-0，原 ☼ 符号换成聊天图标）、渐变胶囊
+ *      （uiverse quick-newt-59，原文案 Send 换成 Chat）、呼吸光环、极简线条；
+ *      主色 6 套内置配色 + 自定义 #RRGGBB + 「跟随网站深浅」，尺寸三档。
+ *      样式由本文件统一生成（owReLauncher* 系列），后台预览与嵌入代码复用同一份 CSS，
+ *      不存在第二套样式；嵌入代码里配置值写在 var() 的 fallback 位，
+ *      因此站点主人用 --owlsgo-launcher-* 变量仍能整体覆盖。
+ *      按钮的定位/尺寸/色值全部声明为 CSS 变量，仅 3D 高光与投影写死（「光照」本身，
+ *      就地注释，属 PLUGIN.md 硬编码例外的图像像素一类）。移动端 ≤480px 自动收边距。
  */
 if (!defined('OWLSGO_VERSION')) exit;
 
@@ -338,6 +349,27 @@ Plugin::route('plugin_room_embed_sess_revoke', function (array $ctx) {
 });
 Plugin::sensitive('plugin_room_embed_sess_revoke');
 
+/** 保存浮动按钮样式（管理员）。写的是核心 settings 表三个键，与「邮箱验证」写 mail_* 同口径。
+ *  ⚠️ 与 admin_settings_save 一样不标 sensitive：这里是配置写入，不是删除/禁用类破坏性操作；
+ *  仍受 POST + 核心签名保护（前端经 OwApi 自动携带）。 */
+Plugin::route('plugin_room_embed_launcher_save', function (array $ctx) {
+    if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);
+    $style = (string)($ctx['post']['style'] ?? '');
+    $color = strtolower(trim((string)($ctx['post']['color'] ?? '')));
+    $size  = (string)($ctx['post']['size'] ?? '');
+    if (!isset(owReLauncherStyles()[$style])) Api::json(['ok' => false, 'msg' => '按钮样式无效']);
+    if (!isset(owReLauncherSizes()[$size])) Api::json(['ok' => false, 'msg' => '按钮尺寸无效']);
+    if (!isset(owReLauncherPalette()[$color]) && preg_match('/^#[0-9a-f]{6}$/', $color) !== 1) {
+        Api::json(['ok' => false, 'msg' => '主色无效：请选择内置配色，或填入 #RRGGBB']);
+    }
+    DB::setSetting('room_embed_launcher_style', $style);
+    DB::setSetting('room_embed_launcher_color', $color);
+    DB::setSetting('room_embed_launcher_size', $size);
+    Sec::log('plugin_room_embed_launcher', (string)($ctx['actor']['nickname'] ?? ''),
+        ['style' => $style, 'color' => $color, 'size' => $size]);
+    Api::json(['ok' => true, 'msg' => '按钮样式已保存（对之后生成的嵌入代码生效）']);
+});
+
 /* ===================== 登录授权辅助（v2.0.0） ===================== */
 // 会话令牌有效期（天）。用户 2026-10-13 定稿「默认 30 天」——先按常量实现，
 // 后续要做成后台可配只需把这里换成配置读取。
@@ -523,6 +555,295 @@ Plugin::route('plugin_room_embed_token_list', function (array $ctx) {
     }
     Api::json(['ok' => true, 'data' => $out, 'total' => $total, 'pages' => $pages, 'page' => $page, 'psize' => $psize]);
 });
+
+/* ===================== 浮动启动按钮样式（v2.2.0） =====================
+ *
+ * 用户可选项由后台「群聊嵌入 → 浮动按钮样式」设置（核心 settings 表三个键），
+ * 在生成嵌入代码时烘焙进代码本身。
+ *
+ * 设计来源（站方指定）：
+ *   · jolly —— uiverse.io/Pradeepsaranbishnoi/jolly-robin-0（原 .label 的 ☼ 符号 → 聊天图标）
+ *   · quick —— uiverse.io/Saad3092003/quick-newt-59（原文案 Send → Chat）
+ *
+ * ⚠️ 硬编码颜色例外说明（PLUGIN.md「图像像素」类）：下面这份 CSS 会被**内联进粘贴到
+ *    外部网站的嵌入代码**——外部页面没有 --ow-* 变量体系，也不存在主题切换。所以按
+ *    「画出来的内容」处理：
+ *      · 界面色一律走 --owlsgo-launcher-* 变量，取不到时才落到后台配置值
+ *        （PHP 生成时把配置值写进 var() 的 fallback 位），站点主人仍可用同名变量整体覆盖；
+ *      · 只有 3D 立体感的高光/投影（半透明白/黑）写死，就地注释 —— 它们是「光照」本身，
+ *        不随主题变化，正如二维码的黑白色不随主题变。
+ *    后台预览复用的就是同一份 CSS（作用域 .ow-re-lp 内），不存在第二套样式。
+ */
+
+/** 内置配色（与 color-schemes 插件同源；'auto' = 跟随被嵌入网站的深浅） */
+function owReLauncherPalette(): array
+{
+    return [
+        'auto'    => ['name' => '跟随网站深浅', 'hex' => ''],
+        'classic' => ['name' => '经典蓝', 'hex' => '#00a0e9'],
+        'emerald' => ['name' => '翡翠绿', 'hex' => '#047857'],
+        'red'     => ['name' => '品牌红', 'hex' => '#fc5531'],
+        'violet'  => ['name' => '紫罗兰', 'hex' => '#7c3aed'],
+        'pink'    => ['name' => '猛男粉', 'hex' => '#fb7299'],
+        'ink'     => ['name' => '雅酷黑', 'hex' => '#24292f'],
+    ];
+}
+
+/** 预设样式：id => [显示名, 一句话说明] */
+function owReLauncherStyles(): array
+{
+    return [
+        'classic' => ['name' => '经典圆钮', 'desc' => '圆形实心底 + 手机图标，底色自动适应网站深浅'],
+        'jolly'   => ['name' => '立体圆钮', 'desc' => '多层高光投影的立体圆钮 + 聊天图标'],
+        'quick'   => ['name' => '渐变胶囊', 'desc' => '渐变长条 + 图标 +「Chat」，悬停收字放大图标'],
+        'pulse'   => ['name' => '呼吸光环', 'desc' => '主色圆钮外圈持续扩散光环，引导访客点击'],
+        'minimal' => ['name' => '极简线条', 'desc' => '浅底描边圆钮，悬停填充主色，最不打扰页面'],
+    ];
+}
+
+/** 尺寸三档 */
+function owReLauncherSizes(): array
+{
+    return ['sm' => ['name' => '小', 'px' => 48], 'md' => ['name' => '中', 'px' => 56], 'lg' => ['name' => '大', 'px' => 64]];
+}
+
+/** 当前配置（读核心 settings；非法值一律回落默认，配置被手改坏了也不至于白屏） */
+function owReLauncherCfg(): array
+{
+    $style = (string)DB::setting('room_embed_launcher_style', 'classic');
+    $color = (string)DB::setting('room_embed_launcher_color', 'auto');
+    $size  = (string)DB::setting('room_embed_launcher_size', 'md');
+    if (!isset(owReLauncherStyles()[$style])) $style = 'classic';
+    if (!isset(owReLauncherPalette()[$color]) && preg_match('/^#[0-9a-f]{6}$/', $color) !== 1) $color = 'auto';
+    if (!isset(owReLauncherSizes()[$size])) $size = 'md';
+    return ['style' => $style, 'color' => $color, 'size' => $size];
+}
+
+/** 主色 → 十六进制；'auto'（或任何非配色值）返回空串表示「跟随网站深浅」 */
+function owReLauncherAccent(string $color): string
+{
+    $pal = owReLauncherPalette();
+    if (isset($pal[$color])) return (string)$pal[$color]['hex'];
+    return preg_match('/^#[0-9a-f]{6}$/', $color) === 1 ? $color : '';
+}
+
+/** 颜色提亮（p = 0~1，向白混合）；渐变预设的终点色。输入非法时原样返回。 */
+function owReLighten(string $hex, float $p): string
+{
+    $h = ltrim($hex, '#');
+    if (preg_match('/^[0-9a-f]{6}$/i', $h) !== 1) return $hex;
+    $out = '#';
+    for ($i = 0; $i < 3; $i++) {
+        $c = (int)hexdec(substr($h, $i * 2, 2));
+        $c = (int)round($c + (255 - $c) * $p);
+        $out .= str_pad(dechex(max(0, min(255, $c))), 2, '0', STR_PAD_LEFT);
+    }
+    return $out;
+}
+
+/**
+ * 变量回退链（全部预设共用）：
+ *   站点覆盖 --owlsgo-launcher-accent  →  后台主色（生成时写死为 fallback）  →  自动深浅底色
+ * 把配置值写进 fallback 位而不是「元素上的变量赋值」，是为了让站点主人的
+ * :root{--owlsgo-launcher-accent:…} 依然能盖过后台设置（继承来的值不会被元素声明压掉）。
+ */
+function owReLauncherVars(array $cfg): array
+{
+    $accent = owReLauncherAccent((string)$cfg['color']);
+    if ($accent === '') {
+        return [
+            'A'   => 'var(--owlsgo-launcher-accent,var(--owlsgo-launcher-bg-auto,#2b2f36))',
+            'A2'  => 'var(--owlsgo-launcher-accent-2,var(--owlsgo-launcher-bg-auto,#2b2f36))',
+            'INK' => 'var(--owlsgo-launcher-ink,var(--owlsgo-launcher-fg-auto,#ffffff))',
+            'SUR' => 'var(--owlsgo-launcher-surface-auto,#ffffff)',
+        ];
+    }
+    return [
+        'A'   => 'var(--owlsgo-launcher-accent,' . $accent . ')',
+        'A2'  => 'var(--owlsgo-launcher-accent-2,' . owReLighten($accent, 0.32) . ')',
+        'INK' => 'var(--owlsgo-launcher-ink,#ffffff)',
+        'SUR' => 'var(--owlsgo-launcher-surface-auto,#ffffff)',
+    ];
+}
+
+/** 通用盒（定位 / 复位 / 过渡）；尺寸走变量，站点与后台预览都能实时改 */
+function owReLauncherBaseCss(array $cfg): string
+{
+    $px = (int)owReLauncherSizes()[$cfg['size']]['px'];
+    return '.owlsgo-launcher{position:fixed;bottom:20px;right:20px;z-index:99999;'
+        . 'display:-webkit-box;display:-webkit-flex;display:flex;'
+        . '-webkit-box-align:center;-webkit-align-items:center;align-items:center;'
+        . '-webkit-box-pack:center;-webkit-justify-content:center;justify-content:center;'
+        . 'width:var(--owlsgo-launcher-size,' . $px . 'px);height:var(--owlsgo-launcher-size,' . $px . 'px);'
+        . 'padding:0;margin:0;border:0;border-radius:0;background:transparent;'
+        . 'font-family:inherit;font-size:0;line-height:0;text-align:center;text-decoration:none;'
+        . 'cursor:pointer;-webkit-appearance:none;appearance:none;outline:none;'
+        . '-webkit-box-sizing:border-box;box-sizing:border-box;'
+        . '-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;'
+        . '-webkit-transition:-webkit-transform .2s cubic-bezier(.23,1,.32,1),box-shadow .25s ease,'
+        . 'background-color .25s ease,padding .3s ease,color .25s ease;'
+        . 'transition:transform .2s cubic-bezier(.23,1,.32,1),box-shadow .25s ease,'
+        . 'background-color .25s ease,padding .3s ease,color .25s ease}'
+        . '.owlsgo-launcher svg{display:block;-webkit-flex-shrink:0;flex-shrink:0}'
+        . '@media (max-width:480px){.owlsgo-launcher{bottom:16px;right:16px}}'
+        . '@media (prefers-reduced-motion:reduce){.owlsgo-launcher,.owlsgo-launcher:before,'
+        . '.owlsgo-launcher:after{-webkit-animation:none!important;animation:none!important}}';
+}
+
+/** 单个预设的样式（不含通用盒） */
+function owReLauncherPresetCss(string $style, array $cfg): string
+{
+    $v = owReLauncherVars($cfg);
+    $px = (int)owReLauncherSizes()[$cfg['size']]['px'];
+    switch ($style) {
+        case 'jolly':
+            // 立体圆钮：jolly-robin 的「球形光泽」。原稿是 100px 大钮配大偏移投影，缩到
+            // 52~64px 后那套偏移会糊成一团，所以保留它的结构（外层投影 + 上缘高光 + 内阴影）
+            // 但把偏移按小尺寸收紧，并用一层**径向渐变高光**当主光源 —— 这样任何尺寸都成立。
+            // 高光/投影是「光照」本身，写死不随主题变（PLUGIN.md 例外的图像像素一类）。
+            return '.owlsgo-launcher.ow-lc-jolly{border-radius:50%;overflow:hidden;'
+                . 'background:var(--owlsgo-launcher-bg,' . $v['A'] . ');'
+                . 'color:var(--owlsgo-launcher-fg,' . $v['INK'] . ');'
+                . 'box-shadow:0 6px 14px -3px rgba(0,0,0,.42),0 1px 2px rgba(0,0,0,.24),'
+                . 'inset 0 -3px 5px -2px rgba(0,0,0,.34),inset 0 2px 3px -1px rgba(255,255,255,.42),'
+                . 'inset 0 0 4px 1px rgba(255,255,255,.42)}'
+                . '.owlsgo-launcher.ow-lc-jolly:before{content:"";position:absolute;left:0;top:0;'
+                . 'width:100%;height:100%;border-radius:50%;'
+                . 'background:-webkit-radial-gradient(circle at 50% 20%,rgba(255,255,255,.62) 0%,'
+                . 'rgba(255,255,255,.16) 38%,rgba(255,255,255,0) 66%);'
+                . 'background:radial-gradient(circle at 50% 20%,rgba(255,255,255,.62) 0%,'
+                . 'rgba(255,255,255,.16) 38%,rgba(255,255,255,0) 66%)}'
+                . '.owlsgo-launcher.ow-lc-jolly svg{position:relative;width:24px;height:24px}'
+                . '.owlsgo-launcher.ow-lc-jolly:hover{-webkit-transform:translateY(-2px);transform:translateY(-2px);'
+                . 'box-shadow:0 10px 18px -3px rgba(0,0,0,.42),0 1px 2px rgba(0,0,0,.24),'
+                . 'inset 0 -3px 5px -2px rgba(0,0,0,.34),inset 0 2px 3px -1px rgba(255,255,255,.5),'
+                . 'inset 0 0 4px 1px rgba(255,255,255,.5)}'
+                . '.owlsgo-launcher.ow-lc-jolly:active{-webkit-transform:scale(.95);transform:scale(.95);'
+                . 'box-shadow:0 3px 8px -3px rgba(0,0,0,.38),'
+                . 'inset 0 4px 10px -2px rgba(0,0,0,.38),inset 0 -2px 6px rgba(255,255,255,.5)}';
+
+        case 'quick':
+            // 渐变胶囊：quick-newt 的「悬停收起文字、图标放大旋转」。原稿用 scale 属性（新语法）
+            // 与 font-size:0%，这里改写成 transform 兼容老浏览器。
+            return '.owlsgo-launcher.ow-lc-quick{width:auto;min-width:var(--owlsgo-launcher-size,' . $px . 'px);'
+                . 'border-radius:999px;padding:0 17px;'
+                . 'background:var(--owlsgo-launcher-bg,linear-gradient(to bottom,' . $v['A'] . ' 0%,' . $v['A2'] . ' 100%));'
+                . 'color:' . $v['INK'] . ';font-size:15px;line-height:1;font-weight:600;letter-spacing:.2px;'
+                . 'box-shadow:0 5px 14px rgba(0,0,0,.22)}'
+                . '.owlsgo-launcher.ow-lc-quick .ow-lq-ic{display:-webkit-box;display:-webkit-flex;display:flex;'
+                . '-webkit-box-align:center;align-items:center;-webkit-box-pack:center;justify-content:center;'
+                . 'width:26px;height:26px;border-radius:50%;background:rgba(255,255,255,.22);'
+                . '-webkit-transition:all .3s ease;transition:all .3s ease}'
+                . '.owlsgo-launcher.ow-lc-quick .ow-lq-ic svg{width:15px;height:15px;fill:currentColor}'
+                . '.owlsgo-launcher.ow-lc-quick .ow-lq-tx{display:block;margin-left:8px;'
+                . '-webkit-transition:all .3s ease;transition:all .3s ease}'
+                . '.owlsgo-launcher.ow-lc-quick:hover{-webkit-transform:translateY(-3px);transform:translateY(-3px);'
+                . 'box-shadow:0 9px 18px rgba(0,0,0,.28);padding:0}'
+                . '.owlsgo-launcher.ow-lc-quick:hover .ow-lq-tx{opacity:0;font-size:0;margin-left:0;'
+                . '-webkit-transform:scale(0);transform:scale(0);'
+                . '-webkit-transition:all .5s ease;transition:all .5s ease}'
+                . '.owlsgo-launcher.ow-lc-quick:hover .ow-lq-ic{width:var(--owlsgo-launcher-size,' . $px . 'px);'
+                . 'height:var(--owlsgo-launcher-size,' . $px . 'px);background:rgba(255,255,255,.3)}'
+                . '.owlsgo-launcher.ow-lc-quick:hover .ow-lq-ic svg{width:22px;height:22px;'
+                . '-webkit-transform:rotate(45deg);transform:rotate(45deg)}'
+                . '.owlsgo-launcher.ow-lc-quick:active{-webkit-transform:scale(.95);transform:scale(.95);'
+                . 'box-shadow:0 2px 6px rgba(0,0,0,.22)}';
+
+        case 'pulse':
+            return '.owlsgo-launcher.ow-lc-pulse{border-radius:50%;'
+                . 'background:var(--owlsgo-launcher-bg,' . $v['A'] . ');'
+                . 'color:var(--owlsgo-launcher-fg,' . $v['INK'] . ');'
+                . 'box-shadow:0 6px 18px rgba(0,0,0,.24)}'
+                . '.owlsgo-launcher.ow-lc-pulse:before,.owlsgo-launcher.ow-lc-pulse:after{content:"";'
+                . 'position:absolute;left:0;top:0;width:100%;height:100%;border-radius:50%;'
+                . 'border:2px solid ' . $v['A'] . ';'
+                . '-webkit-animation:owlsgo-launcher-pulse 2.2s ease-out infinite;'
+                . 'animation:owlsgo-launcher-pulse 2.2s ease-out infinite}'
+                . '.owlsgo-launcher.ow-lc-pulse:after{-webkit-animation-delay:1.1s;animation-delay:1.1s}'
+                . '.owlsgo-launcher.ow-lc-pulse svg{position:relative;width:24px;height:24px}'
+                . '.owlsgo-launcher.ow-lc-pulse:hover{-webkit-transform:scale(1.06);transform:scale(1.06)}'
+                . '@-webkit-keyframes owlsgo-launcher-pulse{0%{opacity:.7;-webkit-transform:scale(1)}'
+                . '100%{opacity:0;-webkit-transform:scale(1.8)}}'
+                . '@keyframes owlsgo-launcher-pulse{0%{opacity:.7;transform:scale(1)}'
+                . '100%{opacity:0;transform:scale(1.8)}}';
+
+        case 'minimal':
+            return '.owlsgo-launcher.ow-lc-minimal{border-radius:50%;'
+                . 'background:var(--owlsgo-launcher-bg,' . $v['SUR'] . ');'
+                . 'color:' . $v['A'] . ';border:1.5px solid ' . $v['A'] . ';'
+                . 'box-shadow:0 3px 12px rgba(0,0,0,.14)}'
+                . '.owlsgo-launcher.ow-lc-minimal svg{width:23px;height:23px}'
+                . '.owlsgo-launcher.ow-lc-minimal:hover{background:' . $v['A'] . ';color:' . $v['INK'] . ';'
+                . '-webkit-transform:scale(1.06);transform:scale(1.06)}';
+
+        case 'classic':
+        default:
+            return '.owlsgo-launcher.ow-lc-classic{border-radius:50%;'
+                . 'background:var(--owlsgo-launcher-bg,' . $v['A'] . ');'
+                . 'color:var(--owlsgo-launcher-fg,' . $v['INK'] . ');'
+                . 'box-shadow:0 4px 16px rgba(0,0,0,.22)}'
+                . '.owlsgo-launcher.ow-lc-classic svg{width:24px;height:24px}'
+                . '.owlsgo-launcher.ow-lc-classic:hover{-webkit-transform:scale(1.06);transform:scale(1.06)}';
+    }
+}
+
+/** 预设的按钮内层标记（SVG）。classic 保留原手机图标；jolly/pulse/minimal 用聊天图标
+ *  （jolly-robin 原稿的 ☼ 符号按站方要求换成聊天图标）；quick 保留原纸飞机图标。 */
+function owReLauncherMarkup(string $style): string
+{
+    $wrap = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" '
+        . 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">%s</svg>';
+    $phone = '<rect x="7" y="3" width="10" height="18" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/>';
+    $chat  = '<path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v8a2.5 2.5 0 0 1-2.5 2.5H9l-5 4z"/>';
+    $plane = '<path d="M0 0h24v24H0z" fill="none"/>'
+        . '<path d="M1.946 9.315c-.522-.174-.527-.455.01-.634l19.087-6.362c.529-.176.832.12.684.638'
+        . 'l-5.454 19.086c-.15.529-.455.547-.679.045L12 14l6-8-8 6-8.054-2.685z"/>';
+    switch ($style) {
+        case 'quick':
+            return '<span class="ow-lq-ic"><svg viewBox="0 0 24 24" aria-hidden="true">' . $plane . '</svg></span>'
+                . '<span class="ow-lq-tx">Chat</span>';
+        case 'jolly':
+        case 'pulse':
+        case 'minimal':
+            return sprintf($wrap, $chat);
+        case 'classic':
+        default:
+            return sprintf($wrap, $phone);
+    }
+}
+
+/** 后台预览容器上的变量（实时改色/改尺寸只动这里，不必重发 CSS）。
+ *
+ *  ⚠️ 这里必须给**具体值**，不能写成 var(--owlsgo-launcher-accent,#xxxx)：
+ *  自定义属性在同一个元素上引用自己会构成循环引用，按 CSS 变量规范整条失效
+ *  （浏览器把它算成 guaranteed-invalid），预览会莫名其妙退回默认色。
+ *  auto 模式下给一组固定的「浅色网站」取值当起点，admin.js 的 lpApply 会在初始化时
+ *  按后台自己的深浅算出真实的大反差取值（深色后台 → 白按钮），避免浅底预览站上出现浅底按钮。 */
+function owReLauncherScopeVars(array $cfg): string
+{
+    $accent = owReLauncherAccent((string)$cfg['color']);
+    $auto = $accent === '';
+    // 下面的十六进制是「启动按钮在被嵌入网站上的取色」，属 PLUGIN.md 硬编码例外的图像内容一类
+    // （外部站点没有 --ow-* 体系）；#2b2f36 / #ffffff 即 v1.5.0 起就用来表达深浅两态的常量。
+    $a   = $auto ? '#2b2f36' : $accent;
+    $a2  = $auto ? '#2b2f36' : owReLighten($accent, 0.32);
+    $ink = $auto ? '#ffffff' : '#ffffff';
+    $px  = (int)owReLauncherSizes()[$cfg['size']]['px'];
+    return '.ow-re-lp{--owlsgo-launcher-size:' . $px . 'px;'
+        . '--owlsgo-launcher-accent:' . $a . ';'
+        . '--owlsgo-launcher-accent-2:' . $a2 . ';'
+        . '--owlsgo-launcher-ink:' . $ink . ';'
+        . '--owlsgo-launcher-bg-auto:#2b2f36;--owlsgo-launcher-fg-auto:#ffffff;'
+        . '--owlsgo-launcher-surface-auto:#ffffff}';
+}
+
+/** 浮动按钮标记（嵌入代码与后台预览共用）。$withId = false 时只给类，避免后台预览出现重复 id。 */
+function owReLauncherButtonHtml(string $style, bool $withId = true): string
+{
+    return '<button type="button"' . ($withId ? ' id="owlsgo-launcher"' : '')
+        . ' class="owlsgo-launcher ow-lc-' . $style . '"'
+        . ' title="在线聊天" aria-label="在线聊天">' . owReLauncherMarkup($style) . '</button>';
+}
 
 /* ===================== 嵌入模式 CSS ===================== */
 // 仅当 URL 带 ?embed=1 时注入，把聊天页精简成适合 iframe 的小窗形态。
@@ -824,27 +1145,177 @@ Plugin::asset('js', 'room-embed/admin.js');
 // 核心全局 reset（* { margin:0; padding:0 }）把 ol 默认左内边距清零，而序号 marker 是
 // outside 定位——数字会挂到卡片内容区左界外（用户报「数字超出标题」）；ul 又被核心的
 // list-style:none 吃掉项目符号。这里只在本插件后台页作用域内补回，不污染别处。
+//
+// v2.2.0：本回调同时负责「浮动按钮样式」预览所需的全部样式——
+//   ① 按钮本体的通用盒 + 五个预设（与嵌入代码同一份生成函数，不是第二套样式）；
+//   ② .ow-re-lp 作用域变量（实时改色/改尺寸只改这里，不必重发 CSS）；
+//   ③ 预览中和规则：按钮在真实站点是 position:fixed 的右下角浮层，摆进预览格子要复位。
 Plugin::on('page.head', function (): void {
     if (($_GET['page'] ?? '') !== 'admin') return;
-    echo '<style>'
+    $cfg = owReLauncherCfg();
+    $css = '<style>'
         . '.ow-re-doc ol{padding-left:24px}'
         . '.ow-re-doc ul{padding-left:24px;list-style:disc}'
+        // 通用盒 + 全部预设（预览一格一款；选择哪款由卡片高亮表达）
+        . owReLauncherBaseCss($cfg)
+        . implode('', array_map(function (string $s) use ($cfg): string {
+            return owReLauncherPresetCss($s, $cfg);
+        }, array_keys(owReLauncherStyles())))
+        . owReLauncherScopeVars($cfg)
+        . '.ow-re-lp .owlsgo-launcher{position:relative!important;left:auto!important;top:auto!important;'
+        . 'right:auto!important;bottom:auto!important;cursor:default!important}'
+        // ---- 样式选择卡片（布局，颜色全部走 --ow-* 令牌）----
+        . '.ow-re-lp{display:-webkit-grid;display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));'
+        . 'gap:10px;margin:0 0 4px;padding:12px;border:1px dashed var(--ow-border,#eee);border-radius:10px}'
+        . '.ow-re-lp-card{position:relative;border:1px solid var(--ow-border,#eee);border-radius:8px;'
+        . 'padding:8px;cursor:pointer;background:var(--ow-bg-sub,#f7f7f7);text-align:center;'
+        . '-webkit-transition:border-color .15s,box-shadow .15s;transition:border-color .15s,box-shadow .15s}'
+        . '.ow-re-lp-card:hover{border-color:var(--ow-primary,#00A0E9)}'
+        . '.ow-re-lp-card.on{border-color:var(--ow-primary,#00A0E9);'
+        . 'box-shadow:0 0 0 1px var(--ow-primary,#00A0E9)}'
+        . '.ow-re-lp-card.on:after{content:"✓";position:absolute;right:6px;top:6px;width:18px;height:18px;'
+        . 'line-height:18px;border-radius:50%;font-size:12px;text-align:center;'
+        . 'background:var(--ow-primary,#00A0E9);color:var(--ow-on-accent,#fff)}'
+        . '.ow-re-lp-stage{height:92px;display:-webkit-flex;display:flex;'
+        . '-webkit-box-align:center;align-items:center;-webkit-box-pack:center;justify-content:center;'
+        . 'background:var(--ow-bg,#fff);border:1px solid var(--ow-border,#eee);border-radius:6px;'
+        . 'margin-bottom:8px;overflow:hidden;position:relative}'
+        . '.ow-re-lp-name{font-size:13px;color:var(--ow-text,#333);font-weight:600}'
+        . '.ow-re-lp-desc{font-size:12px;color:var(--ow-text-sub,#999);line-height:1.5;margin-top:3px;'
+        . 'min-height:36px}'
+        // ---- 主色 / 尺寸 ----
+        . '.ow-re-swatches{display:-webkit-flex;display:flex;-webkit-flex-wrap:wrap;flex-wrap:wrap;'
+        . 'gap:8px;align-items:center}'
+        . '.ow-re-sw{width:28px;height:28px;border-radius:50%;border:1px solid var(--ow-border-control,#ddd);'
+        . 'cursor:pointer;padding:0;-webkit-appearance:none;appearance:none}'
+        . '.ow-re-sw.on{box-shadow:0 0 0 2px var(--ow-bg,#fff),0 0 0 4px var(--ow-primary,#00A0E9)}'
+        // 「跟随网站深浅」用主题令牌画个对角半填充示意（不是固定颜色）
+        . '.ow-re-sw-auto{background:-webkit-linear-gradient(135deg,var(--ow-text,#333) 0 50%,'
+        . 'var(--ow-bg-sub,#f7f7f7) 50% 100%);'
+        . 'background:linear-gradient(135deg,var(--ow-text,#333) 0 50%,var(--ow-bg-sub,#f7f7f7) 50% 100%)}'
+        . '.ow-re-sizes{display:-webkit-flex;display:flex;gap:8px}'
+        . '.ow-re-sz{font-size:12.5px;padding:5px 14px;border-radius:6px;cursor:pointer;'
+        . 'border:1px solid var(--ow-border-control,#ddd);background:var(--ow-bg-sub,#f7f7f7);'
+        . 'color:var(--ow-text,#333)}'
+        . '.ow-re-sz.on{border-color:var(--ow-primary,#00A0E9);color:var(--ow-primary,#00A0E9);'
+        . 'background:var(--ow-blue-light,#e6f7ff)}'
         . '</style>';
+    echo $css;
+});
+
+/* ===================== 浮动按钮样式：前台生成嵌入代码所需的数据 ===================== */
+// 生成嵌入代码的地方是 chat.js（群聊信息面板 →「嵌入代码」），它需要按钮的 CSS 与标记。
+// 这里由 PHP 一次下发（不与嵌入代码各写一套）：base 通用盒 + 每个预设的样式与标记 + 当前配置。
+// 只在聊天页注入——后台页只做预览（上面那段），嵌入页自己不需要。
+Plugin::on('page.head', function (): void {
+    if (isset($_GET['embed']) && $_GET['embed'] === '1') return;
+    $page = (string)($_GET['page'] ?? '');
+    if ($page !== '' && $page !== 'chat') return;
+
+    $cfg = owReLauncherCfg();
+    $presets = [];
+    foreach (owReLauncherStyles() as $id => $meta) {
+        $presets[$id] = [
+            'name' => $meta['name'],
+            'desc' => $meta['desc'],
+            'css'  => owReLauncherPresetCss($id, $cfg),
+            'html' => owReLauncherMarkup($id),
+            'cls'  => 'owlsgo-launcher ow-lc-' . $id,
+        ];
+    }
+    $palette = [];
+    foreach (owReLauncherPalette() as $pid => $p) {
+        $palette[] = ['id' => $pid, 'name' => $p['name'], 'hex' => $p['hex']];
+    }
+    $sizes = [];
+    foreach (owReLauncherSizes() as $sid => $s) {
+        $sizes[] = ['id' => $sid, 'name' => $s['name'], 'px' => $s['px']];
+    }
+    $data = [
+        'base'    => owReLauncherBaseCss($cfg),
+        'presets' => $presets,
+        'order'   => array_keys(owReLauncherStyles()),
+        'palette' => $palette,
+        'sizes'   => $sizes,
+        'cfg'     => $cfg,
+    ];
+    // json_encode 默认把 / 转义成 \/，因此这段 JSON 不会出现 </script>，可以安全内联。
+    echo '<script>window.OW_RE_LAUNCHER=' . json_encode($data, JSON_UNESCAPED_UNICODE) . ';</script>';
 });
 
 /* ===================== 后台说明页 ===================== */
 Plugin::adminPage('room-embed', '群聊嵌入', function () {
+    // ---------- v2.2.0：浮动按钮样式卡片 ----------
+    // 预览与正式生成共用同一份 CSS（本文件顶部的 owReLauncher* 系列），这里只把五个预设
+    // 各摆一格，选中哪款由卡片高亮表达；改色/改尺寸只改 .ow-re-lp 上的变量（见 page.head）。
+    $lpCfg = owReLauncherCfg();
+    $lpAccent = owReLauncherAccent((string)$lpCfg['color']);
+    $lpCustom = ($lpAccent !== '' && !isset(owReLauncherPalette()[$lpCfg['color']])) ? $lpAccent : '';
+
+    $lpStyles = '';
+    foreach (owReLauncherStyles() as $sid => $meta) {
+        $lpStyles .= '<div class="ow-re-lp-card' . ($sid === $lpCfg['style'] ? ' on' : '') . '"'
+            . ' data-style="' . $sid . '" onclick="OwRE.pickStyle(\'' . $sid . '\')">'
+            . '<div class="ow-re-lp-stage">' . owReLauncherButtonHtml($sid, false) . '</div>'
+            . '<div class="ow-re-lp-name">' . Sec::e($meta['name']) . '</div>'
+            . '<div class="ow-re-lp-desc">' . Sec::e($meta['desc']) . '</div></div>';
+    }
+
+    // 色板按钮的 style="background:#…" 是**数据性质的色板**（与 color-schemes 插件同源），
+    // 不是界面配色，按 PLUGIN.md 例外②处理；选中态一律用 --ow-primary 描边，不写死。
+    // data-hex / data-px 供后台 JS 读值（改色改尺寸时把变量写到预览容器上），
+    // 这样色板与尺寸的数值只在 PHP 里有一份，前端不抄第二份。
+    $lpSwatch = '';
+    foreach (owReLauncherPalette() as $pid => $p) {
+        $lpSwatch .= '<button type="button" class="ow-re-sw ow-re-sw-item'
+            . ($p['hex'] === '' ? ' ow-re-sw-auto' : '') . ($lpCfg['color'] === $pid ? ' on' : '')
+            . '" data-color="' . $pid . '" data-hex="' . $p['hex'] . '"'
+            . ($p['hex'] === '' ? '' : ' style="background:' . $p['hex'] . '"')
+            . ' title="' . Sec::e($p['name']) . ($p['hex'] === '' ? '' : '（' . $p['hex'] . '）') . '"'
+            . ' onclick="OwRE.pickColor(\'' . $pid . '\')"></button>';
+    }
+
+    $lpSizes = '';
+    foreach (owReLauncherSizes() as $sid => $s) {
+        $lpSizes .= '<button type="button" class="ow-re-sz' . ($sid === $lpCfg['size'] ? ' on' : '') . '"'
+            . ' data-size="' . $sid . '" data-px="' . (int)$s['px'] . '"'
+            . ' onclick="OwRE.pickSize(\'' . $sid . '\')">'
+            . Sec::e($s['name']) . '　' . (int)$s['px'] . 'px</button>';
+    }
+
+    $lpHtml = '<div class="ow-card"><h3 style="margin-top:0">浮动按钮样式</h3>'
+        . '<p class="ow-admin-desc">访客网站上右下角那个按钮的外观（仅「浮动手机按钮」启动方式下出现）。'
+        . '样式是随嵌入代码一起烘焙的，所以<strong>改动只对之后生成的代码生效</strong>；'
+        . '已经粘贴到网站上的旧代码，请重新生成后替换。</p>'
+        . '<div class="ow-form-item"><label>按钮样式</label>'
+        . '<div class="ow-re-lp" id="owReLp">' . $lpStyles . '</div>'
+        . '<p style="font-size:12px;color:var(--ow-text-sub)">点卡片选中。预览会跟下面的「主色」「尺寸」实时变化，'
+        . '与访客网站上看到的一致。</p></div>'
+        . '<div class="ow-form-item"><label>主色</label>'
+        . '<div class="ow-re-swatches">' . $lpSwatch
+        . '<input class="ow-input" id="owReCustomColor" placeholder="#RRGGBB" maxlength="7"'
+        . ' style="width:104px;font-family:var(--ow-mono,Consolas,monospace)" value="' . Sec::e($lpCustom) . '"'
+        . ' oninput="OwRE.pickColor(this.value)"></div>'
+        . '<p style="font-size:12px;color:var(--ow-text-sub)">「跟随网站深浅」＝按被嵌入页面的背景亮度自动出深底或白底（默认）。'
+        . '也可填 #RRGGBB。站点主人日后仍可用 CSS 变量 <code>--owlsgo-launcher-accent</code> 覆盖这里的设置。</p></div>'
+        . '<div class="ow-form-item"><label>尺寸</label>'
+        . '<div class="ow-re-sizes">' . $lpSizes . '</div>'
+        . '<p style="font-size:12px;color:var(--ow-text-sub)">窄屏（≤480px）会自动贴近屏幕右下角 16px，不压住页面内容。</p></div>'
+        . '<div class="ow-form-row" style="gap:8px">'
+        . '<button class="ow-btn ow-btn-primary" id="owReLpSave" onclick="OwRE.saveLauncher()">保存按钮样式</button>'
+        . '</div></div>';
+
     return '<h2>群聊嵌入</h2>'
         . '<p class="ow-admin-desc">允许用户将自己创建的群聊以 iframe 方式嵌入到博客等网站，作为右下角内置聊天室。本插件不修改主程序（仅 v1.3.97 起核心签名门禁多咨询一次 sign.fallback 钩子），完全复用核心聊天能力。</p>'
         . '<div class="ow-card ow-re-doc">'
         . '<h3 style="margin-top:0">使用方法</h3>'
         . '<ol style="line-height:2;color:var(--ow-text,#333)">'
         . '<li>群主或超级管理员进入任意公开群聊，点击右上角「⋮」打开群聊信息面板</li>'
-        . '<li>在「群聊信息」下方点击「嵌入代码」——填写域名白名单、选择启动方式，每次点击会重新签发嵌入令牌</li>'
+        . '<li>在「群聊信息」下方点击「嵌入代码」——填写域名白名单、选择启动方式与右下角按钮样式，每次点击会重新签发嵌入令牌</li>'
         . '<li>复制生成的代码，粘贴到目标网站的 HTML 中即可</li>'
         . '</ol>'
-        . '<h3>嵌入效果（v1.3.0）</h3>'
-        . '<p style="color:var(--ow-text,#333)">默认在网站右下角显示一个圆形手机图标，访客点击才展开聊天室，点聊天室外部自动收回；也可在生成时选择「直接展开」。小窗只保留群名、消息与输入框，站点品牌条与侧栏不进入嵌入页。图标底色会自动适应 embedding 网站的深浅色，也可用 CSS 变量 <code>--owlsgo-launcher-bg</code> 覆盖。</p>'
+        . '<h3>嵌入效果（v1.3.0 / v2.2.0）</h3>'
+        . '<p style="color:var(--ow-text,#333)">默认在网站右下角显示一个圆形手机图标，访客点击才展开聊天室，点聊天室外部自动收回；也可在生成时选择「直接展开」。小窗只保留群名、消息与输入框，站点品牌条与侧栏不进入嵌入页。按钮外观有 5 款预设（经典圆钮 / 立体圆钮 / 渐变胶囊 / 呼吸光环 / 极简线条），在下方「浮动按钮样式」里挑；图标底色可自动适应被嵌入网站的深浅色，站点主人也可用 CSS 变量 <code>--owlsgo-launcher-bg</code>、<code>--owlsgo-launcher-accent</code> 覆盖。</p>'
         . '<h3>登录与注册（v1.5.0 / v2.0.0）</h3>'
         . '<p style="color:var(--ow-text,#333)">浏览器会拦截第三方 iframe 里的登录 Cookie，嵌入窗口内无法直接登录。v2.0.0 起聊天窗顶栏提供「登录/注册」按钮：访客点击后<strong>弹出主站小窗</strong>完成登录或注册（小窗是主站第一方页面，验证码/两步验证全支持），成功后小窗自动关闭、聊天窗内<strong>直接以本人身份聊天</strong>——发消息、头像、等级全是本人。会话保持 30 天，刷新嵌入页不掉线；顶栏显示昵称和「登出」，登出后退回访客身份。</p>'
         . '<h3>域名白名单（v1.3.0）</h3>'
@@ -858,6 +1329,7 @@ Plugin::adminPage('room-embed', '群聊嵌入', function () {
         . '<li>嵌入代码为响应式尺寸（桌面 380×560，窄屏自动收窄撑满宽度且不超出屏幕高度），无需按设备分别配置</li>'
         . '</ul>'
         . '</div>'
+        . $lpHtml
         . '<div class="ow-card"><h3 style="margin-top:0">令牌管理</h3>'
         . '<p class="ow-admin-desc">吊销后，使用该令牌的嵌入代码立即失效（对应网站的聊天窗将提示无法连接）。重新生成请在群聊信息面板再次点击「嵌入代码」。</p>'
         // 通用列表轮子：搜索栏 + 状态筛选 + 批量操作 + 表格 + 分页（与附件管理等后台页同款）
