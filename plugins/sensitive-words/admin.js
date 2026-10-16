@@ -16,6 +16,9 @@
 
     var state = { page: 1, size: 30, total: 0 };
     var aState = { page: 1, size: 20, total: 0, pending: 0 };
+    /* 词库文件清单的本地副本：只用来渲染表格，真正的启用状态在服务端
+       （启停是即时路由，不随「保存」提交 —— 见 main.php 里 plugin_spam_lex_toggle 的说明） */
+    var lexFiles = [];
 
     /* 每个标签要提交哪些字段。字段 id 统一是 owSpam_<key>，
        白名单在插件后端（plugin_spam_save）也写死了一份 —— 这里只决定「带不带」，
@@ -24,7 +27,10 @@
         flood:  ['rate_win', 'rate_max', 'min_gap'],
         domain: ['domain_on', 'domain_list', 'domain_warn', 'domain_rules'],
         appeal: ['appeal_on', 'appeal_interval', 'appeal_note_limit'],
-        ai:     ['ai_on', 'ai_action', 'ai_timeout', 'ai_daily', 'ai_base', 'ai_key', 'ai_model', 'ai_prompt']
+        ai:     ['ai_on', 'ai_action', 'ai_timeout', 'ai_daily', 'ai_base', 'ai_key', 'ai_model', 'ai_prompt'],
+        lex:    ['lex_on', 'lex_replacement', 'lexapi_on', 'lexapi_skip_local', 'lexapi_id', 'lexapi_key',
+                 'lexapi_action', 'lexapi_timeout', 'lexapi_permin', 'lexapi_daily',
+                 'lex_check_on', 'lex_check_hours', 'lex_notify_on']
     };
 
     w.OwSW = {
@@ -50,6 +56,7 @@
             if (card && w.bindSwitches) w.bindSwitches(card);
             this.list(1);
             this.appealList(1);
+            this.lexList();
         },
 
         /* ---------- 分组保存 ---------- */
@@ -64,8 +71,11 @@
                 else data[k] = el.value;
             }
             if (group === 'ai' && data.ai_key === '') delete data.ai_key;   // 空 = 不改动已存的密钥
+            if (group === 'lex' && data.lexapi_key === '') delete data.lexapi_key;
             OwApi.secure('plugin_spam_save', data, function (r) {
                 toast(r && r.msg ? r.msg : '保存失败');
+                // 违禁词设置改动后词库概况要重算（打码串、启停范围都可能变），顺手刷一次
+                if (r && r.ok && group === 'lex') w.OwSW.lexList();
                 // IP 规则被「防自锁」拦下时不刷新页面：管理员往往要就地改名单再存一次
                 if (r && r.ok && group === 'ip') w.OwSW.reloadSoon();
             });
@@ -263,6 +273,115 @@
                     toast(r.msg);
                     if (r.ok) w.OwSW.list(state.page);
                 });
+            });
+        },
+
+        /* ---------- 违禁词库（v1.4.0） ---------- */
+        lexList: function () {
+            OwApi.post('plugin_spam_lex_list', {}, function (r) {
+                if (!r || !r.ok) return;
+                lexFiles = r.data.files || [];
+                OwSW.lexRender();
+                OwSW.lexStat(r.data.status, r.data.notify_ready);
+            });
+        },
+
+        lexRender: function () {
+            var t = $('owSpamLexTable');
+            if (!t) return;
+            var h = '<tr><th>词库文件</th><th>大小</th><th>词条</th><th>状态</th><th>操作</th></tr>';
+            if (!lexFiles.length) {
+                h += '<tr><td colspan="5" style="color:var(--ow-text-sub)">目录里还没有词库文件：'
+                    + '点上面的「在线下载词库」拉取整套，或自己把 txt 放进 data/lexicon 后点「重新扫描」</td></tr>';
+            }
+            for (var i = 0; i < lexFiles.length; i++) {
+                var f = lexFiles[i];
+                var size = f.size >= 1048576
+                    ? (f.size / 1048576).toFixed(1) + ' MB'
+                    : Math.max(1, Math.round(f.size / 1024)) + ' KB';
+                h += '<tr><td class="ow-spam-lexname">' + esc(f.name) + '</td>'
+                    + '<td>' + size + '</td>'
+                    + '<td>' + (f.words < 0 ? '—' : (f.words || 0)) + '</td>'
+                    + '<td>' + (f.enabled ? '<span class="ow-tag ow-tag-green">生效中</span>'
+                        : '<span class="ow-tag ow-tag-guest">已停用</span>') + '</td>'
+                    // 传下标而不是文件名：中文文件名进 onclick 属性要额外处理引号与转义，
+                    // 下标一定是数字，且清单本来就有本地副本
+                    + '<td><a href="javascript:;" onclick="OwSW.lexToggle(' + i + ',' + (f.enabled ? 0 : 1) + ')">'
+                    + (f.enabled ? '停用' : '启用') + '</a></td></tr>';
+            }
+            t.innerHTML = h;
+        },
+
+        /** 状态行写在**已存在**的 #owSpamLexStat 上：i18n 观察器只看新插入的元素，必须自己过 owTr */
+        lexStat: function (txt, notifyReady) {
+            var el = $('owSpamLexStat');
+            if (!el) return;
+            var s = owTr(txt || '');
+            if (notifyReady === false) s += '　' + owTr('（系统通知类型未注册，更新提醒不会发出）');
+            el.textContent = s;
+        },
+
+        lexToggle: function (i, en) {
+            var f = lexFiles[i];
+            if (!f) return;
+            OwApi.post('plugin_spam_lex_toggle', { name: f.name, enabled: en ? 1 : 0 }, function (r) {
+                toast(r && r.msg ? r.msg : '操作失败');
+                if (r && r.ok) OwSW.lexList();
+            });
+        },
+
+        lexAll: function (en) {
+            if (!lexFiles.length) { toast(owTr('目录里还没有词库文件')); return; }
+            OwApi.post('plugin_spam_lex_all', { enabled: en ? 1 : 0 }, function (r) {
+                toast(r && r.msg ? r.msg : '操作失败');
+                if (r && r.ok) OwSW.lexList();
+            });
+        },
+
+        lexRescan: function () {
+            OwApi.post('plugin_spam_lex_rescan', {}, function (r) {
+                toast(r && r.msg ? r.msg : '扫描失败');
+                if (r && r.ok) OwSW.lexList();
+            });
+        },
+
+        lexCheck: function () {
+            OwApi.post('plugin_spam_lex_check', {}, function (r) {
+                toast(r && r.msg ? r.msg : '检测失败');
+                if (r && r.ok) OwSW.lexList();
+            });
+        },
+
+        /** 下载会覆盖 data/lexicon 下的词库文件 → 敏感接口：一次性票据 + 二次确认 */
+        lexDownload: function () {
+            w.OwAdmin.confirm(owTr('从词库仓库下载整套词库？同名文件会被覆盖。'), function () {
+                OwApi.secure('plugin_spam_lex_download', {}, function (r) {
+                    toast(r && r.msg ? r.msg : '下载失败');
+                    if (r && r.ok) OwSW.lexList();
+                });
+            });
+        },
+
+        lexApiTest: function () {
+            var box = $('owSpamLexApiStat'), t = $('owSpamLexApiTest');
+            if (!box || !t) return;
+            if (!t.value.trim()) { toast(owTr('请先输入一段测试文本')); return; }
+            box.textContent = owTr('检测中…（要等接口回话）');
+            OwApi.post('plugin_spam_lexapi_test', { text: t.value }, function (r) {
+                if (!r || !r.ok) {
+                    box.textContent = owTr('测试失败：{msg}', { msg: (r && r.msg) || owTr('接口无响应') });
+                    return;
+                }
+                var cost = r.ms ? '　' + owTr('本次耗时 {sec} 秒', { sec: (r.ms / 1000).toFixed(1) }) : '';
+                if (!r.api_ok) {
+                    box.textContent = owTr('调用失败（消息照常放行）：{err}', { err: r.raw }) + cost;
+                    return;
+                }
+                var wl = (r.words && r.words.length) ? r.words.join('、') : owTr('（接口未返回具体词）');
+                box.textContent = (r.hit
+                        ? owTr('检出违禁词 {n} 个：{words}', { n: r.word_count, words: wl })
+                        : owTr('未检出违禁词'))
+                    + '　' + owTr('打码后：{text}', { text: r.masked }) + cost;
             });
         }
     };

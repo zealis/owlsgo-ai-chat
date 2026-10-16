@@ -9,6 +9,20 @@
 /* 面板里的名单类 textarea：行高松一点、允许纵向拉伸（公共 .ow-pagetab-panel 不管这个） */
 .ow-spam-pane .ow-form-item textarea.ow-input { line-height: 1.7; resize: vertical; }
 
+/* 面板内的区块分隔线（v1.4.0）：违禁词库那张页里「接口设置」与「词库文件」是两件事，
+   换个标签页不值当，靠一条 1px 线分开。颜色取核心变量，深浅主题自动跟随。 */
+.ow-spam-pane .ow-spam-hr {
+    border: 0;
+    border-top: 1px solid var(--ow-border);
+    margin: 18px 0;
+}
+
+/* 词库文件名那一列：中文文件名较长，窄屏（移动端）下允许折行，不要撑破表格 */
+.ow-spam-lexname {
+    word-break: break-all;
+    max-width: 220px;
+}
+
 /* ---------- 被拦链接 ----------
    v1.3.111 起**不再做任何视觉区分**：以前是警告黄 + 虚下划线，站方要求与普通链接一样。
    区分靠点击后的弹窗（提示文案 + 规则说明 + 申请恢复访问），列表里标黄反而像坏链。

@@ -441,6 +441,553 @@ function owSPaiTimeoutMigrate(): bool
 }
 owSPaiTimeoutMigrate();
 
+/* ============================ 5. 违禁词库（v1.4.0） ============================ */
+
+/**
+ * 「违禁词库」= 本地词库（txt 文件）+ 接口盒子线路二，两者都只做**打码替换**，
+ * 与上面「1. 敏感词」的人工词库同一语义：命中即换掉，不拦发送。
+ *
+ * 为什么另起一套而不并入 sensitive_words 表：
+ *   · 量级差一个数量级 —— 本地词库实测 5.1 万条，人工词库几十条。逐条插表再逐条
+ *     mb_ereg_replace，每次发言要跑 5 万次正则，等于把发言拖成秒级；而且那张表
+ *     （core/db.php 的 sensitive_words）没有 word 索引、没有 updated_at，回表更慢。
+ *   · 词库是**别人维护的外部数据**，会被整体替换，放进业务表既难回滚也难复核。
+ * 所以：txt 是只读数据源，运行时编译成一份 strtr 映射，缓存到 data/cache/。
+ * 实测（2026-10-16，本机 PHP 8.2）：unserialize 5.1 万条映射 7.7ms、strtr 1800 字 3.8ms，
+ * 每次发言多花不到 5ms —— 这就是「编译缓存 + 单次扫描」换来的，逐词替换做不到这个量级。
+ */
+
+/** 仓库与分支（仓主不换仓库就固定；分支从远端 default_branch 取，写在这里只是回落值） */
+const OWSP_LEX_REPO = 'konsheng/Sensitive-lexicon';
+const OWSP_LEX_BRANCH_FALLBACK = 'main';
+
+/** 词库目录（相对站点根）。**刻意不给后台配**：路径可配等于把目录穿越做成功能 */
+const OWSP_LEX_REL = 'data/lexicon';
+
+/** 单个词库文件大小上限：管理员误放一个巨型文件不该把内存打爆（超限即跳过并上报） */
+const OWSP_LEX_FILE_MAX = 8388608;
+/** 编译后的词条总数上限：超出即截断（截断要如实上报，不能假装收录完整） */
+const OWSP_LEX_WORDS_MAX = 600000;
+/** 单个词条长度上限（字节）：词库里混着整句（实测最长 120 字节），太长的不值得匹配 */
+const OWSP_LEX_WORD_MAX = 300;
+
+/**
+ * 词库目录绝对路径。
+ * $GLOBALS['sw_lex_dir'] 可覆盖 —— 与下面 $GLOBALS['sw_words'] 同一套路：
+ * 离线自检要往目录里放夹具文件，不能让它去动站点真实的 data/lexicon。
+ */
+function owSPlexDir(): string
+{
+    $d = (string)($GLOBALS['sw_lex_dir'] ?? '');
+    return $d !== '' ? rtrim($d, '/\\') : dirname(__DIR__, 2) . '/' . OWSP_LEX_REL;
+}
+/** 编译缓存文件（放核心的 cache 目录：后台「清缓存」把它删掉即可，下次请求自动重建） */
+function owSPlexCacheFile(): string
+{
+    $p = (string)($GLOBALS['sw_lex_cache'] ?? '');
+    return $p !== '' ? $p : dirname(__DIR__, 2) . '/data/cache/lexicon.bin';
+}
+
+/**
+ * 词库文件清单：只认一级目录下的 *.txt（不递归 —— 递归等于允许管理员把整个磁盘拖进来）。
+ * 返回 [文件名 => [size, mtime]]，按文件名排序，后台显示顺序才稳定。
+ */
+function owSPlexFiles(): array
+{
+    $out = [];
+    $dir = owSPlexDir();
+    if (!is_dir($dir)) return $out;
+    foreach ((array)glob($dir . '/*.txt') as $p) {
+        if (!is_file($p)) continue;
+        $n = basename($p);
+        if ($n === '' || strncmp($n, '.', 1) === 0) continue;
+        $out[$n] = ['size' => (int)filesize($p), 'mtime' => (int)filemtime($p)];
+    }
+    ksort($out);
+    return $out;
+}
+
+/** 被管理员停用的文件名（默认空 = 目录里所有 txt 都生效，下载完即用） */
+function owSPlexDisabled(): array
+{
+    $out = [];
+    foreach (preg_split('/[\r\n]+/', owSPSet('lex_disabled')) ?: [] as $l) {
+        $l = trim($l);
+        if ($l !== '' && !in_array($l, $out, true)) $out[] = $l;
+    }
+    return $out;
+}
+
+/** 打码串（与人工词库同一默认值；改它要连带重建缓存，见 sig） */
+function owSPlexRep(): string
+{
+    $r = trim(owSPSet('lex_replacement', ''));
+    return $r === '' ? '***' : mb_substr($r, 0, 8);
+}
+
+/**
+ * 缓存签名 = 启用文件的「名字 + 大小 + mtime」+ 打码串。
+ *
+ * 为什么用 mtime/size 而不是内容哈希：签名要回答的正是「要不要重新读一遍」，
+ * 拿内容算哈希等于把要省的成本先花掉。打码串必须进签名 —— 它是烘进映射里的值，
+ * 不进签名的话管理员改了打码串、缓存的还是旧串。
+ */
+function owSPlexSig(): string
+{
+    $parts = [owSPlexRep()];
+    $dis = owSPlexDisabled();
+    foreach (owSPlexFiles() as $n => $f) {
+        if (in_array($n, $dis, true)) continue;
+        $parts[] = $n . ':' . $f['size'] . ':' . $f['mtime'];
+    }
+    return md5(implode('|', $parts));
+}
+
+/**
+ * 编译一份映射（word => 打码串）。词库是**外部内容**，逐行校验：
+ * 非 UTF-8、超长、含控制字符（\t\n 等）的行一律跳过 —— 坏一行不该让整份词库失效，
+ * 但也不能把坏行当真词收进去（含 \t 的「词」永远匹配不到，白占内存）。
+ */
+function owSPlexBuild(string $sig): array
+{
+    $rep = owSPlexRep();
+    $dis = owSPlexDisabled();
+    $map = []; $counts = []; $words = 0; $files = 0; $bytes = 0; $skipped = 0; $truncated = false;
+    foreach (owSPlexFiles() as $n => $f) {
+        // 停用的文件也读一遍并统计词数：后台要让管理员看见「这份词库有多少词」再决定要不要启用，
+        // 只统计启用中的文件等于把最关键的那个数字藏起来。编译成本只在签名变化时付一次。
+        $enabled = !in_array($n, $dis, true);
+        if ($f['size'] > OWSP_LEX_FILE_MAX) { $truncated = true; $counts[$n] = -1; continue; }
+        $body = @file_get_contents(owSPlexDir() . '/' . $n);
+        if ($body === false) { $counts[$n] = -1; continue; }
+        $files++; $bytes += strlen($body);
+        $n_words = 0;
+        foreach (preg_split('/\r\n|\r|\n/', $body) ?: [] as $line) {
+            $w = trim($line);
+            if ($w === '') continue;
+            if (strlen($w) > OWSP_LEX_WORD_MAX || !mb_check_encoding($w, 'UTF-8')
+                || preg_match('/[\x00-\x1F\x7F]/', $w)) { $skipped++; continue; }
+            $n_words++;
+            if (!$enabled) continue;
+            if (isset($map[$w])) continue;
+            if ($words >= OWSP_LEX_WORDS_MAX) { $truncated = true; break 2; }
+            $map[$w] = $rep;
+            $words++;
+        }
+        $counts[$n] = $n_words;
+    }
+    $c = ['sig' => $sig, 'map' => $map, 'words' => $words, 'files' => $files, 'counts' => $counts,
+        'bytes' => $bytes, 'skipped' => $skipped, 'truncated' => $truncated, 'built_at' => time()];
+    // 原子替换：并发请求可能同时重建，写一半的缓存被读到就是 unserialize 失败 → 退回逐行重读
+    $tmp = owSPlexCacheFile() . '.' . getmypid() . '.tmp';
+    if (@file_put_contents($tmp, serialize($c)) !== false) @rename($tmp, owSPlexCacheFile());
+    return $c;
+}
+
+/** 编译结果（进程内静态 + 文件缓存；签名不符才重建） */
+function owSPlexCompiled(bool $force = false): array
+{
+    static $c = null;
+    $sig = owSPlexSig();
+    if (!$force && $c !== null && ($c['sig'] ?? '') === $sig) return $c;
+    if (!$force) {
+        $fp = owSPlexCacheFile();
+        if (is_file($fp)) {
+            $raw = @file_get_contents($fp);
+            // allowed_classes=false：缓存文件万一被替换成恶意内容，也不许 unserialize 造对象
+            $d = $raw === false ? false : @unserialize($raw, ['allowed_classes' => false]);
+            if (is_array($d) && ($d['sig'] ?? '') === $sig && isset($d['map']) && is_array($d['map'])) {
+                $c = $d;
+                return $c;
+            }
+        }
+    }
+    $c = owSPlexBuild($sig);
+    return $c;
+}
+
+/**
+ * 打码。返回替换后的文本，$hits 出参给命中数（替换串出现次数）。
+ * strtr（数组形态）在**同一位置优先最长匹配**，正是违禁词想要的：
+ * 「法网恢恢」不会因为词库里同时有「法网」而被拆成两段打码。
+ */
+function owSPlexApply(string $text, ?int &$hits = null): string
+{
+    $hits = 0;
+    $c = owSPlexCompiled();
+    if (!$c['map'] || $text === '') return $text;
+    $new = strtr($text, $c['map']);
+    if ($new === $text) return $text;
+    $rep = owSPlexRep();
+    // 替换串长度 ≥2 时，出现次数即命中词数；单字符替换串（如改成「*」）会放大计数，
+    // 这只影响日志里的数字，不影响打码结果 —— 不为此再加一遍全量统计
+    $hits = max(1, (int)substr_count($new, $rep));
+    return $new;
+}
+
+/** 词库概况（后台显示；走编译缓存，签名不符时才真读文件） */
+function owSPlexStat(): array
+{
+    $c = owSPlexCompiled();
+    return ['words' => (int)$c['words'], 'files' => (int)$c['files'], 'bytes' => (int)$c['bytes'],
+        'skipped' => (int)($c['skipped'] ?? 0), 'truncated' => !empty($c['truncated']),
+        'built_at' => (int)$c['built_at'], 'dir' => OWSP_LEX_REL, 'path' => owSPlexDir(),
+        'total' => count(owSPlexFiles()), 'rep' => owSPlexRep()];
+}
+
+/* ---------- 接口盒子（线路类型二：普通集群负载 - 域名接口） ---------- */
+
+/** 线路类型二：HTTPS 域名接口，自动分发到普通集群负载均衡；同一份文档里的线路一是 http IP 接口 */
+const OWSP_LEXAPI_URL = 'https://cn.apihz.cn/api/zici/mgc.php';
+const OWSP_LEXAPI_TIMEOUT_MIN = 1;
+const OWSP_LEXAPI_TIMEOUT_MAX = 10;
+const OWSP_LEXAPI_TIMEOUT_DEF = 3;
+/** 免费「注册用户」额度是 10 次/分钟，所以分钟级闸门默认就按它对齐（可调） */
+const OWSP_LEXAPI_PERMIN_DEF = 10;
+const OWSP_LEXAPI_DAILY_DEF = 2000;
+
+function owSPlexApiTimeout(): int
+{
+    return max(OWSP_LEXAPI_TIMEOUT_MIN, min(OWSP_LEXAPI_TIMEOUT_MAX, owSPInt('lexapi_timeout', OWSP_LEXAPI_TIMEOUT_DEF)));
+}
+
+/**
+ * 额度闸门：分钟级（防突发，对齐对方免费额度）+ 日级（防失控循环）两道。
+ * 与 AI 防线同一套口径 —— 超额不是错误，是「这次不判了，照常放行」。
+ */
+function owSPlexApiQuotaOk(): bool
+{
+    $per = max(0, min(600, owSPInt('lexapi_permin', OWSP_LEXAPI_PERMIN_DEF)));
+    if ($per > 0 && !Sec::rateLimit('spam_lex_min', 'all', 60, $per)) return false;
+    $day = owSPInt('lexapi_daily', OWSP_LEXAPI_DAILY_DEF);
+    if ($day > 0 && !Sec::rateLimit('spam_lex_day', 'all', 86400, $day)) return false;
+    return true;
+}
+
+/** 把接口返回的命中词归一成词列表 */
+function owSPlexApiWords($v): array
+{
+    // 文档没写死 mgcwords 的分隔格式（逗号 / 顿号 / 空格 / 数组都可能），全部认下来；
+    // 真实格式由后台「测试」按钮实测确认，不要照猜写死一种分隔符
+    $items = is_array($v) ? $v : (preg_split('/[,，、|;；\s]+/u', (string)$v) ?: []);
+    $out = [];
+    foreach ($items as $w) {
+        $w = trim((string)$w);
+        if ($w === '' || strlen($w) > OWSP_LEX_WORD_MAX || !mb_check_encoding($w, 'UTF-8')) continue;
+        if (preg_match('/[\x00-\x1F\x7F]/', $w)) continue;
+        $out[$w] = true;
+        if (count($out) >= 200) break;
+    }
+    return array_keys($out);
+}
+
+/**
+ * 问一次接口。返回 ['ok','hit','words','raw','ms','code']。
+ * 任何一步不对都 ok=false —— 调用方一律放行，绝不因为审核接口挂着就拦住用户发言
+ * （与 AI 防线同一条底线：宁可漏一条，不能因为第三方抖一下全站发不出消息）。
+ *
+ * ⚠️ 只取 mgcwords（命中词），**不取 replacewords**（替换后的整段文本）：
+ *    那个字段是第三方返回的全文，直接当用户消息内容入库等于让外部服务决定我们库里存什么；
+ *    拿命中词在本地替换，既与本地词库共用同一个打码串，也不必信任对方的转义。
+ */
+function owSPlexApiAsk(string $text, int $budget = 0): array
+{
+    $fail = function (string $raw, int $ms = 0, int $code = 0): array {
+        return ['ok' => false, 'hit' => false, 'words' => [], 'raw' => $raw, 'ms' => $ms, 'code' => $code];
+    };
+    $id  = trim(owSPSet('lexapi_id'));
+    $key = trim(owSPSet('lexapi_key'));
+    if ($id === '' || $key === '') return $fail('未配置接口 ID / KEY');
+    if ($text === '') return $fail('待检文本为空');
+
+    // RFC3986 编码：接口文档明确说「参数不能带 + 号，会被自动替换为空格」。
+    // 默认的 RFC1738 会把空格编成 '+'，于是正文里的 '+' 到对面就成了空格；
+    // RFC3986 把空格编成 %20、把 '+' 编成 %2B，两边都不会被误解。
+    $body = http_build_query([
+        'id' => $id, 'key' => $key,
+        'words' => mb_substr($text, 0, 10000),   // 接口上限 10000 字
+        'mgctype' => '1',                        // 要它回命中词（replacetype 用不上，见上）
+    ], '', '&', PHP_QUERY_RFC3986);
+
+    $timeout = $budget > 0 ? max(1, min(OWSP_LEXAPI_TIMEOUT_MAX, $budget)) : owSPlexApiTimeout();
+    $hdr = ['Content-Type: application/x-www-form-urlencoded', 'Accept: application/json'];
+    $resp = null; $code = 0; $ms = 0;
+
+    if (function_exists('curl_init')) {
+        $ch = curl_init(OWSP_LEXAPI_URL);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => $body,
+            CURLOPT_HTTPHEADER     => $hdr,
+            CURLOPT_CONNECTTIMEOUT => min(3, $timeout),
+            CURLOPT_TIMEOUT        => $timeout,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+        ]);
+        if (class_exists('Upgrade')) {
+            $ca = Upgrade::caBundle();
+            if ($ca !== null) curl_setopt($ch, CURLOPT_CAINFO, $ca);
+        }
+        $t0 = microtime(true);
+        $resp = curl_exec($ch);
+        $ms = (int)round((microtime(true) - $t0) * 1000);
+        $errno = curl_errno($ch);
+        $cerr = $resp === false ? curl_error($ch) : '';
+        $code = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        curl_close($ch);
+        if ($resp === false) {
+            return $fail(owSPlexApiErrText($errno, $cerr, $ms, $timeout), $ms);
+        }
+    } else {
+        if (!ini_get('allow_url_fopen')) return $fail('无 curl 且 allow_url_fopen 关闭');
+        $ctx = stream_context_create(['http' => [
+            'method' => 'POST', 'header' => implode("\r\n", $hdr) . "\r\n",
+            'content' => $body, 'timeout' => $timeout, 'ignore_errors' => true,
+        ], 'ssl' => ['verify_peer' => true, 'verify_peer_name' => true]]);
+        $t0 = microtime(true);
+        $resp = @file_get_contents(OWSP_LEXAPI_URL, false, $ctx);
+        $ms = (int)round((microtime(true) - $t0) * 1000);
+        if ($resp === false) return $fail('请求失败（无 curl 扩展的回落通道也不通，已等 '
+            . number_format($ms / 1000, 1) . ' 秒）', $ms);
+    }
+
+    $j = json_decode((string)$resp, true);
+    if (!is_array($j)) return $fail('响应不是 JSON：' . mb_substr((string)$resp, 0, 200), $ms, $code);
+    if ((int)($j['code'] ?? 0) !== 200) {
+        return $fail('接口报错：' . mb_substr((string)($j['msg'] ?? '未知原因'), 0, 200), $ms, $code);
+    }
+    // jcstatus：0 = 未检出，1 = 含敏感词；缺失时按命中词判定，避免对面改字段就整条失效
+    $words = owSPlexApiWords($j['mgcwords'] ?? '');
+    $hit = (isset($j['jcstatus']) ? (int)$j['jcstatus'] === 1 : false) || $words !== [];
+    return ['ok' => true, 'hit' => $hit, 'words' => $words, 'raw' => mb_substr((string)$resp, 0, 300),
+        'ms' => $ms, 'code' => $code];
+}
+
+/** curl 失败翻译成人话（超时按「没连上 / TLS 卡住 / 对面不回话」分，处置完全不同） */
+function owSPlexApiErrText(int $errno, string $cerr, int $ms, int $budget): string
+{
+    $sec = number_format($ms / 1000, 1);
+    if ($errno === CURLE_OPERATION_TIMEDOUT) {
+        return '接口超时：等了 ' . $sec . ' 秒（上限 ' . $budget . ' 秒）还没返回。'
+            . '把「超时(秒)」调大再试；若一直超时，先确认这台服务器能访问外网。';
+    }
+    if ($errno === CURLE_COULDNT_RESOLVE_HOST) return '域名解析失败：' . mb_substr($cerr, 0, 60);
+    if ($errno === CURLE_COULDNT_CONNECT) return '连不上接口：' . mb_substr($cerr, 0, 80);
+    return '请求失败：' . ($cerr ?: '网络不通') . '（errno ' . $errno . '，已等 ' . $sec . ' 秒）';
+}
+
+/* ---------- 词库更新（检测 / 下载） ---------- */
+
+/** 通用 HTTPS GET（curl 优先、回落 allow_url_fopen），失败返回 null 并写 $err */
+function owSPlexHttpGet(string $url, ?string &$err, array $hdr = [], int $timeout = 20): ?string
+{
+    $err = null;
+    $hdr = array_merge(['User-Agent: Owlsgo-Spam-Lexicon', 'Accept: application/vnd.github+json'], $hdr);
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => true,     // api.github.com/tarball → codeload（跨主机跳转，正好把 Authorization 摘掉）
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_TIMEOUT        => $timeout,
+            CURLOPT_HTTPHEADER     => $hdr,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+        ]);
+        if (class_exists('Upgrade')) {
+            $ca = Upgrade::caBundle();
+            if ($ca !== null) curl_setopt($ch, CURLOPT_CAINFO, $ca);
+        }
+        $body = curl_exec($ch);
+        $code = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        if ($body === false) $err = '网络请求失败：' . curl_error($ch);
+        elseif ($code !== 200) $err = 'HTTP ' . $code . '（仓库地址 / 限流都可能，未认证的 GitHub API 限额是 60 次/小时）';
+        curl_close($ch);
+        return ($body === false || $err !== null) ? null : (string)$body;
+    }
+    if (!ini_get('allow_url_fopen')) { $err = '无 curl 扩展且 allow_url_fopen 关闭'; return null; }
+    $ctx = stream_context_create(['http' => ['timeout' => $timeout, 'header' => implode("\r\n", $hdr) . "\r\n"],
+        'ssl' => ['verify_peer' => true, 'verify_peer_name' => true]]);
+    $body = @file_get_contents($url, false, $ctx);
+    if ($body === false) { $err = '网络请求失败：' . (error_get_last()['message'] ?? '未知'); return null; }
+    return $body;
+}
+
+/**
+ * 远端仓库信息。**用仓库元信息（pushed_at）当版本标记**，一次调用就够：
+ * 拿 tree/blob 去比对要 2 次以上调用，而未认证限额只有 60 次/小时。
+ * 代价是「只改了 README」也会算作有更新 —— 对「该去点一下下载」这个提示来说，
+ * 宁可是多报一次，也不要漏报真有词库变化。
+ */
+function owSPlexRemote(?string &$err = null): ?array
+{
+    $j = owSPlexHttpGet('https://api.github.com/repos/' . OWSP_LEX_REPO, $err);
+    if ($j === null) return null;
+    $d = json_decode($j, true);
+    if (!is_array($d)) { $err = 'GitHub 响应不是 JSON（可能被网关拦截）'; return null; }
+    $at = (string)($d['pushed_at'] ?? '');
+    if ($at === '') { $err = '响应里没有 pushed_at（仓库不存在或已改名）'; return null; }
+    return [
+        'at' => $at,
+        'branch' => (string)($d['default_branch'] ?? OWSP_LEX_BRANCH_FALLBACK),
+        'html' => (string)($d['html_url'] ?? ''),
+    ];
+}
+
+/**
+ * 检查更新。$notify = true 时给所有超级管理员发系统通知（只发超管：词库只有管理员能更新）。
+ * 通知走核心 Notice::push 的 spam_lexicon_update 类型 —— 该类型未在 core/notice.php 注册时
+ * push 会静默丢弃（核心行为，不是这里的 bug），后台会据此给出提示。
+ */
+function owSPlexCheck(bool $notify = true): array
+{
+    $err = null;
+    $r = owSPlexRemote($err);
+    DB::setSetting('spam_lex_last_check', (string)time());
+    if ($r === null) {
+        DB::setSetting('spam_lex_last_msg', '检测失败：' . (string)$err);
+        return ['ok' => false, 'changed' => false, 'msg' => '检测失败：' . (string)$err];
+    }
+    $known = (string)DB::setting('spam_lex_remote_at', '');
+    $changed = ($known !== '' && $known !== $r['at']);
+    $sent = 0;
+    if ($changed && $notify && owSPOn('lex_notify_on')) {
+        $v = substr($r['at'], 0, 10);   // 2026-08-17：一眼能读，比 sha 有用
+        foreach (DB::all("SELECT id FROM users WHERE role='admin'") as $adm) {
+            Notice::push((int)$adm['id'], 'spam_lexicon_update', ['v' => $v]);
+            $sent++;
+        }
+        Sec::log('spam_lexicon_update', '系统', ['v' => $v, 'notified' => $sent]);
+    }
+    $msg = $known === '' ? '尚未下载过词库，远端最新 ' . substr($r['at'], 0, 10)
+        : ($changed ? '远端有更新（' . substr($r['at'], 0, 10) . '），已通知 ' . $sent . ' 位管理员'
+            : '词库已是最新（' . substr($known, 0, 10) . '）');
+    DB::setSetting('spam_lex_last_msg', $msg);
+    return ['ok' => true, 'changed' => $changed, 'msg' => $msg, 'remote_at' => $r['at'], 'notified' => $sent];
+}
+
+/**
+ * 手写 ustar 解析：只取普通文件。零依赖（不引 Phar / Composer），
+ * 输入是 gzdecode 之后的裸 tar 字节。返回 [路径 => 内容]。
+ */
+function owSPlexUntar(string $tar): array
+{
+    $out = []; $pos = 0; $len = strlen($tar);
+    while ($pos + 512 <= $len) {
+        $hdr = substr($tar, $pos, 512);
+        if (trim($hdr, "\0") === '') break;                       // 结束块（全零 512 字节）
+        $name = rtrim(substr($hdr, 0, 100), "\0");
+        $size = (int)octdec(trim(substr($hdr, 124, 12), " \0"));
+        $type = substr($hdr, 156, 1);
+        $prefix = rtrim(substr($hdr, 345, 155), "\0");            // ustar 长名前缀
+        if ($prefix !== '') $name = $prefix . '/' . $name;
+        $pos += 512;
+        if ($type === '0' || $type === '' || $type === "\0") {
+            if ($size > 0) $out[$name] = substr($tar, $pos, $size);
+        }
+        // 目录 / 符号链接 / PAX 头一律跳过：词库只需要普通文件，且不跟随链接（防穿越）
+        $pos += (int)(ceil($size / 512) * 512);
+    }
+    return $out;
+}
+
+/**
+ * 压缩包里的文件名是否可安全落盘。
+ *
+ * 名字来自外部压缩包（第三方仓库，理论上可被投毒），所以单独成函数而不是内联：
+ * 这是**路径穿越**的唯一入口，要能被自检逐条打（`../`、子目录、绝对路径、控制字符）。
+ * 只认「一段普通文件名」—— 不含路径分隔符、不含 `..`、不含控制字符、长度有限。
+ */
+function owSPlexSafeName(string $name): bool
+{
+    if ($name === '' || strlen($name) > 120) return false;
+    if (strpos($name, '..') !== false) return false;
+    if (preg_match('#[/\\\\]#', $name)) return false;
+    if (preg_match('/[\x00-\x1F\x7F]/', $name)) return false;
+    return (bool)preg_match('/^[^\/\\\\]{1,80}$/u', $name);
+}
+
+/**
+ * 在线下载词库。一次 tarball 请求拿全量（实测 544KB / 2.6 秒 / 17 个词库文件），
+ * 比逐文件走 contents API 省 16 次调用 —— 未认证限额 60 次/小时，逐文件下载
+ * 两次就把额度用掉一半，还会因为中途限流留下一半新一半旧。
+ *
+ * 只覆盖同名文件，**不删除**目录里多出来的东西：管理员自己放进去的词库是本地资产，
+ * 远端删了某个文件不代表本地那份该消失。
+ */
+function owSPlexDownload(?string &$err = null): array
+{
+    $err = null;
+    $repo = owSPlexRemote($e1);
+    if ($repo === null) { $err = $e1; return []; }
+    $tgz = owSPlexHttpGet('https://api.github.com/repos/' . OWSP_LEX_REPO . '/tarball/' . $repo['branch'], $e2, [], 120);
+    if ($tgz === null) { $err = $e2; return []; }
+    if (substr($tgz, 0, 2) !== "\x1f\x8b") { $err = '下载到的不是 gzip 包（多半被网关改写成了错误页）'; return []; }
+    $tar = @gzdecode($tgz);
+    if ($tar === false) { $err = 'gzip 解压失败（包不完整）'; return []; }
+    $entries = owSPlexUntar($tar);
+    if (!$entries) { $err = '压缩包里没有文件'; return []; }
+
+    if (!is_dir(owSPlexDir()) && !@mkdir(owSPlexDir(), 0755, true)) { $err = '无法创建词库目录 ' . OWSP_LEX_REL; return []; }
+    $saved = []; $bytes = 0;
+    foreach ($entries as $path => $body) {
+        if (!preg_match('#/Vocabulary/([^/]+\.txt)$#u', $path, $m)) continue;
+        $name = $m[1];
+        if (!owSPlexSafeName($name)) continue;
+        if (strlen($body) > OWSP_LEX_FILE_MAX || $body === '') continue;
+        $dst = owSPlexDir() . '/' . $name;
+        $tmp = $dst . '.tmp';
+        if (@file_put_contents($tmp, $body) === false) continue;
+        if (!@rename($tmp, $dst)) { @unlink($tmp); continue; }   // 原子替换：请求不会读到半份词库
+        $saved[] = $name; $bytes += strlen($body);
+    }
+    if (!$saved) { $err = '压缩包里没找到 Vocabulary/*.txt'; return []; }
+
+    // 缓存签名看 mtime/size，文件刚换过必然失效；显式删掉只是为了不让旧文件留在盘上
+    @unlink(owSPlexCacheFile());
+    DB::setSetting('spam_lex_remote_at', $repo['at']);
+    DB::setSetting('spam_lex_installed_at', (string)time());
+    DB::setSetting('spam_lex_last_msg', '已下载 ' . count($saved) . ' 个词库文件');
+    Sec::log('spam_lexicon_download', '系统', ['files' => count($saved), 'bytes' => $bytes, 'remote_at' => $repo['at']]);
+    return ['files' => $saved, 'bytes' => $bytes, 'remote_at' => $repo['at'], 'branch' => $repo['branch']];
+}
+
+/** 状态行文案（后台与计划任务共用，口径只有一份） */
+function owSPlexStatusText(): string
+{
+    $s = owSPlexStat();
+    $rec = (int)DB::setting('spam_lex_installed_at', '0');
+    $t = '本地词库：' . $s['files'] . ' 个文件、' . number_format($s['words']) . ' 条词'
+        . '（目录共 ' . $s['total'] . ' 个文件）';
+    if ($rec > 0) $t .= '　最后下载 ' . date('Y-m-d H:i', $rec);
+    $chk = (int)DB::setting('spam_lex_last_check', '0');
+    if ($chk > 0) $t .= '　最后检测 ' . date('Y-m-d H:i', $chk);
+    $last = (string)DB::setting('spam_lex_last_msg', '');
+    if ($last !== '') $t .= '　' . $last;
+    return $t;
+}
+
+/**
+ * 计划任务：词库更新检测。
+ *
+ * 注册间隔固定 1 小时，**间隔是否到期在处理器里按后台配置判断** ——
+ * 计划任务的 interval 是注册时写进 cron_tasks 表的，后台改配置不会回头改表，
+ * 做成「注册间隔 = 配置值」等于改了不生效（这个坑 content-report 的 ai_review 踩过）。
+ */
+function owSPlexCronCheck(): string
+{
+    if (!owSPOn('lex_check_on')) return '未启用自动检测';
+    $hours = max(1, min(720, owSPInt('lex_check_hours', 24)));
+    $last = (int)DB::setting('spam_lex_last_check', '0');
+    if ($last > 0 && time() - $last < $hours * 3600) {
+        return '未到期（每 ' . $hours . ' 小时检测一次，上次 ' . date('m-d H:i', $last) . '）';
+    }
+    $r = owSPlexCheck(true);
+    return $r['msg'];
+}
+Plugin::cron('lexicon_check', 3600, 'owSPlexCronCheck', '检测敏感词库是否有更新，有更新则通知超级管理员');
+
 /* ============================ 钩子 ============================ */
 
 /** 词库（static 缓存，进程内只查一次表） */
@@ -450,15 +997,67 @@ $GLOBALS['sw_words'] = function (): array {
     return $words;
 };
 
-/** 1) 敏感词：核心 text.filter 钩子，对所有输入文字生效 */
+/**
+ * 1) 敏感词 / 违禁词：核心 text.filter 钩子，对所有输入文字生效。
+ *
+ * 三段按「代价从低到高」排：人工词库（内存里几十条）→ 本地词库（编译映射，~5ms）
+ * → 接口盒子（一次 HTTP）。后两段各有开关，关掉即整段跳过。
+ */
 Plugin::on('text.filter', function (&$text, $scene, $actor) {
     if (!is_string($text) || $text === '') return;
+
+    // ① 人工词库（sensitive_words 表）：词条少、每条有自己的替换串，保持逐条替换
     foreach (($GLOBALS['sw_words'])() as $w) {
         if ($w['word'] !== '') {
             $text = mb_ereg_replace(preg_quote($w['word'], '/'), $w['replacement'], $text);
         }
     }
+
+    if (!owSPOn('lex_on')) return;
+
+    // ② 本地词库：交给接口的那份用**原始**文本（本地已打码的部分对接口没意义，
+    //    而且 '*' 会干扰它自己的判定），所以先把原文留一份
+    $orig = $text;
+    $hits = 0;
+    $text = owSPlexApply($text, $hits);
+    if ($hits > 0) owSPlexLog('spam_lex_local', $actor, ['n' => $hits, 'scene' => $scene]);
+
+    // ③ 接口盒子：只对**消息正文**调用。一次 HTTP 是真延迟（实测 0.5 秒起），
+    //    改昵称 / 建群 / 群公告这些低频入口不值得为它等；而免费额度只有 10 次/分钟，
+    //    必须花在高频入口上。要做全场景就得先换到付费额度，那是另一个决定。
+    if (!owSPOn('lexapi_on') || $scene !== 'message') return;
+    if (owSPOn('lexapi_skip_local') && $hits > 0) return;   // 本地已命中：省一次调用
+    if (!owSPlexApiQuotaOk()) return;                        // 额度用尽：放行，不拦正常用户
+    $r = owSPlexApiAsk($orig);
+    if (!$r['ok']) {
+        Sec::log('spam_lex_fail', (string)($actor['nickname'] ?? '?'), ['err' => $r['raw']]);
+        return;
+    }
+    if (!$r['hit']) return;
+    if (owSPSet('lexapi_action', 'mask') === 'mask' && $r['words']) {
+        $pair = [];
+        foreach ($r['words'] as $w) $pair[$w] = owSPlexRep();
+        $text = strtr($text, $pair);
+    }
+    owSPlexLog('spam_lex_api', $actor, [
+        'action' => owSPSet('lexapi_action', 'mask'),
+        'words' => mb_substr(implode('、', $r['words']), 0, 200), 'ms' => $r['ms'],
+    ]);
 });
+
+/**
+ * 违禁词命中的安全日志。
+ *
+ * 为什么要按人限速：本地词库 5 万条里混着不少日常词（实测「法网」这类就命中），
+ * 全量记日志会让 security_logs 被常态打码事件淹掉，真正的安全事件反而看不见。
+ * 限速只影响留痕密度，不影响打码本身。
+ */
+function owSPlexLog(string $action, array $actor, array $data): void
+{
+    $ident = (string)($actor['kind'] ?? 'none') . (int)($actor['id'] ?? 0);
+    if (!Sec::rateLimit('spam_lex_log', $ident, 3600, 20)) return;
+    Sec::log($action, (string)($actor['nickname'] ?? '?'), $data + ['ip' => Sec::ip()]);
+}
 
 /**
  * AI 判定入口（可被自检替换）：真跑要密钥和外网，而「命中后做什么」这三条分支
@@ -522,12 +1121,13 @@ Plugin::on('page.footer', function (): void {
 Plugin::adminPage('sensitive-words', '垃圾信息控制', function () {
     $tabs = [
         ['words', '敏感词', '词库打码'],
+        ['lex', '违禁词库', '接口 + 本地词库'],
         ['flood', '刷屏', '窗口条数与最小间隔'],
         ['domain', '链接域名', '点击弹窗不跳转'],
         ['appeal', '访问申诉', '用户申请恢复访问'],
         ['ai', 'AI 防线', '模型判定，默认仅记录'],
     ];
-    $h = '<h2>垃圾信息控制</h2><p class="ow-admin-desc">敏感词、刷屏、链接域名、访问申诉、AI 审核集中在一页管理。'
+    $h = '<h2>垃圾信息控制</h2><p class="ow-admin-desc">敏感词、违禁词库、刷屏、链接域名、访问申诉、AI 审核集中在一页管理。'
         . '每个标签独立保存，改动即时生效。</p>';
     // 分组标签用核心通用轮子 owTabs（v1.3.113）：结构与配色都在 owlsgo.css / chat.js，
     // 这里只出 HTML；点击走标签条上的 onclick 委托，插件侧不再写一份显隐逻辑。
@@ -631,6 +1231,75 @@ Plugin::adminPage('sensitive-words', '垃圾信息控制', function () {
         . '<div id="owSpamAiStat" style="font-size:12px;color:var(--ow-text-sub);margin:4px 0"></div>'
         . '<button class="ow-btn ow-btn-primary" onclick="OwSW.save(\'ai\')">保存 AI 设置</button></div>';
 
+    /* ---------- ⑥ 违禁词库（v1.4.0） ---------- */
+    $lex = owSPlexStat();
+    $h .= '<div class="ow-pagetab-panel ow-spam-pane" data-pane="lex" style="display:none">'
+        . owSPswitch('lex_on', '启用本地词库打码',
+            '对消息、昵称、群名称、群简介、群公告生效；命中即替换为打码串，不拦发送（与上面的人工敏感词同一语义）。')
+        . owSPswitch('lexapi_on', '启用接口检测',
+            '接口盒子「敏感词 / 违禁词检测」线路二（域名接口）。只对消息正文调用：一次请求约 0.5 秒，'
+            . '改昵称 / 建群 / 群公告这些低频入口不值得为它等。接口挂掉、超时或额度用尽一律放行。')
+        . owSPswitch('lexapi_skip_local', '本地已命中时跳过接口',
+            '省调用额度。免费「注册用户」额度是 10 次/分钟，本地词库能认出的文本不必再花一次调用。')
+        . '<div class="ow-form-row">'
+        . '<div class="ow-form-item" style="max-width:160px"><label>打码串</label>'
+        . '<input class="ow-input" id="owSpam_lex_replacement" maxlength="8" value="'
+        . htmlspecialchars(owSPlexRep(), ENT_QUOTES) . '"></div>'
+        . '<div class="ow-form-item"><label>命中后</label><select class="ow-input" id="owSpam_lexapi_action">'
+        . '<option value="mask"' . (owSPSet('lexapi_action', 'mask') === 'mask' ? ' selected' : '') . '>打码替换</option>'
+        . '<option value="record"' . (owSPSet('lexapi_action', 'mask') === 'record' ? ' selected' : '') . '>仅记录（不动消息，只写安全日志）</option>'
+        . '</select><p style="font-size:12px">默认打码替换，与本地词库共用同一个打码串。'
+        . '接口返回的是「命中的词」，替换在本地做 —— 不采用它返回的整段文本，免得外部服务决定我们库里存什么。</p></div>'
+        . '</div>'
+        . '<div class="ow-form-row">'
+        . '<div class="ow-form-item"><label>接口 ID</label><input class="ow-input" id="owSpam_lexapi_id" maxlength="40" value="'
+        . htmlspecialchars(owSPSet('lexapi_id'), ENT_QUOTES) . '"></div>'
+        . '<div class="ow-form-item"><label>接口 KEY</label><input class="ow-input" type="password" id="owSpam_lexapi_key" '
+        . 'maxlength="80" autocomplete="off" placeholder="留空表示不修改"></div>'
+        . '</div>'
+        . '<div class="ow-form-row">'
+        . owSPnum('lexapi_timeout', '超时(秒)', 'spam_lexapi_timeout', (string)OWSP_LEXAPI_TIMEOUT_DEF,
+            '1～10 秒。这期间发送请求要等接口回话，别设太长。', OWSP_LEXAPI_TIMEOUT_MIN, OWSP_LEXAPI_TIMEOUT_MAX)
+        . owSPnum('lexapi_permin', '每分钟上限', 'spam_lexapi_permin', (string)OWSP_LEXAPI_PERMIN_DEF,
+            '免费注册额度是 10 次/分钟，填 0 表示不限制（额度不够请到接口盒子升级会员）。')
+        . owSPnum('lexapi_daily', '每日上限', 'spam_lexapi_daily', (string)OWSP_LEXAPI_DAILY_DEF, '填 0 表示不限量')
+        . '</div>'
+        . '<div class="ow-form-row"><div class="ow-form-item" style="flex:1"><label>接口测试文本</label>'
+        . '<input class="ow-input" id="owSpamLexApiTest" placeholder="粘一段文本，看接口认不认、认出了哪些词"></div>'
+        . '<button class="ow-btn ow-btn-ghost" onclick="OwSW.lexApiTest()">测试接口</button></div>'
+        . '<div id="owSpamLexApiStat" style="font-size:12px;color:var(--ow-text-sub);margin:4px 0"></div>'
+        . '<button class="ow-btn ow-btn-primary" onclick="OwSW.save(\'lex\')">保存违禁词设置</button>'
+        . '<hr class="ow-spam-hr">'
+        . '<div class="ow-form-row" style="align-items:center">'
+        . '<div class="ow-form-item" style="flex:1"><label>词库目录</label>'
+        . '<input class="ow-input" value="' . htmlspecialchars(OWSP_LEX_REL, ENT_QUOTES) . '" readonly>'
+        . '<p style="font-size:12px">把词库 txt 放进这个目录即可生效（一行一个词），目录随站点根走，不随插件升级丢失。'
+        . '也可以直接点「在线下载」从词库仓库拉取整套（下载的是压缩包，一次请求拿全量）。</p></div>'
+        . '</div>'
+        . '<div id="owSpamLexStat" style="font-size:12px;color:var(--ow-text-sub);margin:6px 0">'
+        . htmlspecialchars(owSPlexStatusText(), ENT_QUOTES) . '</div>'
+        . '<div class="ow-form-row" style="margin-bottom:8px">'
+        . '<button class="ow-btn ow-btn-ghost" onclick="OwSW.lexRescan()">重新扫描</button>'
+        . '<button class="ow-btn ow-btn-ghost" onclick="OwSW.lexCheck()">立即检测更新</button>'
+        . '<button class="ow-btn ow-btn-primary" onclick="OwSW.lexDownload()">在线下载词库</button>'
+        . '</div>'
+        . owSPswitch('lex_check_on', '自动检测词库更新',
+            '按下面的间隔检查远端仓库是否有更新；发现更新会给所有超级管理员发一条系统通知。')
+        . owSPnum('lex_check_hours', '检测间隔(小时)', 'spam_lex_check_hours', '24', '1～720 小时。检测只查仓库信息，不下载词库。')
+        . owSPswitch('lex_notify_on', '有更新时通知管理员', '通知只在发现更新时发一次，不会重复打扰。')
+        . ($lex['truncated']
+            ? '<p style="font-size:12px;color:var(--ow-red)">部分词库超出单文件或总词数上限，已被截断，未全部生效。</p>' : '')
+        . (in_array('spam_lexicon_update', Notice::kinds(), true) ? ''
+            : '<p style="font-size:12px;color:var(--ow-yellow)">当前系统通知类型表里没有违禁词库更新这一类，'
+              . '更新提醒暂不会真的发出（需在核心的通知类型表里补一条）。</p>')
+        . '<div class="ow-form-row" style="margin:12px 0 6px">'
+        . '<b style="margin-right:auto">词库文件（未勾选的不会生效）</b>'
+        . '<button class="ow-btn ow-btn-ghost" onclick="OwSW.lexAll(true)">全部启用</button>'
+        . '<button class="ow-btn ow-btn-ghost" onclick="OwSW.lexAll(false)">全部停用</button>'
+        . '</div>'
+        . '<div class="ow-table-wrap"><table class="ow-table" id="owSpamLexTable"></table></div>'
+        . '</div>';
+
     $h .= '</div>';
     return $h;
 });
@@ -714,6 +1383,30 @@ Plugin::route('plugin_spam_save', function (array $ctx) {
         $key = $p('ai_key');
         if ($key !== '') DB::setSetting('spam_ai_key', mb_substr($key, 0, 200));
         DB::setSetting('spam_ai_prompt', mb_substr($p('ai_prompt'), 0, 4000));
+    } elseif ($g === 'lex') {
+        DB::setSetting('spam_lex_on', $p('lex_on') === '1' ? '1' : '0');
+        DB::setSetting('spam_lexapi_on', $p('lexapi_on') === '1' ? '1' : '0');
+        DB::setSetting('spam_lexapi_skip_local', $p('lexapi_skip_local') === '1' ? '1' : '0');
+        DB::setSetting('spam_lex_check_on', $p('lex_check_on') === '1' ? '1' : '0');
+        DB::setSetting('spam_lex_notify_on', $p('lex_notify_on') === '1' ? '1' : '0');
+        // 打码串留空 = 回到默认 ***：空串会让 strtr 把命中词**删掉**（替换成空），
+        // 那是另一件事（等于把词抹了），不是打码，所以不接受空值
+        $rep = trim($p('lex_replacement'));
+        DB::setSetting('spam_lex_replacement', $rep === '' ? '***' : mb_substr($rep, 0, 8));
+        DB::setSetting('spam_lexapi_action', in_array($p('lexapi_action'), ['mask', 'record'], true) ? $p('lexapi_action') : 'mask');
+        DB::setSetting('spam_lexapi_timeout', (string)max(OWSP_LEXAPI_TIMEOUT_MIN,
+            min(OWSP_LEXAPI_TIMEOUT_MAX, (int)$p('lexapi_timeout', (string)OWSP_LEXAPI_TIMEOUT_DEF))));
+        DB::setSetting('spam_lexapi_permin', (string)max(0, min(600, (int)$p('lexapi_permin', (string)OWSP_LEXAPI_PERMIN_DEF))));
+        DB::setSetting('spam_lexapi_daily', (string)max(0, min(1000000, (int)$p('lexapi_daily', (string)OWSP_LEXAPI_DAILY_DEF))));
+        DB::setSetting('spam_lex_check_hours', (string)max(1, min(720, (int)$p('lex_check_hours', '24'))));
+        DB::setSetting('spam_lexapi_id', mb_substr(preg_replace('/\s+/', '', $p('lexapi_id')), 0, 40));
+        // KEY 与 AI 的密钥同一口径：只在非空时覆盖（页面里它是 password 输入框）
+        $lk = $p('lexapi_key');
+        if ($lk !== '') DB::setSetting('spam_lexapi_key', mb_substr($lk, 0, 80));
+        // ⚠️ 词库文件的启用/停用**不在这里**：它走 plugin_spam_lex_toggle 即时生效，
+        // 与「敏感词」那张表的启用/停用同一交互。若在这里再收一份 lex_disabled，
+        // 没带这个字段的保存请求就会把它清空（等于一键把停用过的词库全放出来）。
+        owSPlexCompiled(true);   // 立刻按新设置重建一次：出错在这一步就暴露，而不是等下一个用户发言
     } else {
         Api::json(['ok' => false, 'msg' => '未知的设置分组']);
     }
@@ -899,6 +1592,112 @@ Plugin::route('plugin_sensitive_words_del', function (array $ctx) {
     Sec::log('sensitive_word_del', $ctx['actor']['nickname'], ['id' => (int)($ctx['post']['id'] ?? 0)]);
     Api::json(['ok' => true, 'msg' => '已删除']);
 }, ['sensitive' => true]);
+
+/* ============================ 违禁词库路由（v1.4.0） ============================ */
+
+/** 词库文件清单 + 概况（下载 / 启停之后前端重新拉一次就能刷新，不必整页刷新） */
+Plugin::route('plugin_spam_lex_list', function (array $ctx) {
+    if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);
+    $c = owSPlexCompiled();
+    $dis = owSPlexDisabled();
+    $rows = [];
+    foreach (owSPlexFiles() as $n => $f) {
+        $rows[] = [
+            'name' => $n, 'size' => $f['size'], 'mtime' => $f['mtime'],
+            // -1 = 文件超限被跳过，前端显示成「—」而不是 0（0 会被读成「这份词库是空的」）
+            'words' => (int)($c['counts'][$n] ?? 0),
+            'enabled' => in_array($n, $dis, true) ? 0 : 1,
+        ];
+    }
+    Api::json(['ok' => true, 'data' => [
+        'files' => $rows,
+        'stat' => owSPlexStat(),
+        'status' => owSPlexStatusText(),
+        'installed_at' => (int)DB::setting('spam_lex_installed_at', '0'),
+        'checked_at' => (int)DB::setting('spam_lex_last_check', '0'),
+        'notify_ready' => in_array('spam_lexicon_update', Notice::kinds(), true),
+    ]]);
+});
+
+/** 启用 / 停用单个词库文件 */
+Plugin::route('plugin_spam_lex_toggle', function (array $ctx) {
+    if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);
+    $name = (string)($ctx['post']['name'] ?? '');
+    if (!in_array($name, array_keys(owSPlexFiles()), true)) Api::json(['ok' => false, 'msg' => '词库文件不存在']);
+    $en = (int)($ctx['post']['enabled'] ?? 0) === 1;
+    $dis = owSPlexDisabled();
+    if ($en) $dis = array_values(array_diff($dis, [$name]));
+    elseif (!in_array($name, $dis, true)) $dis[] = $name;
+    DB::setSetting('spam_lex_disabled', implode("\n", $dis));
+    Api::json(['ok' => true, 'msg' => $en ? '已启用' : '已停用']);
+});
+
+/** 全部启用 / 全部停用：一次改完，省得逐个点 */
+Plugin::route('plugin_spam_lex_all', function (array $ctx) {
+    if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);
+    $all = (int)($ctx['post']['enabled'] ?? 1) === 1;
+    DB::setSetting('spam_lex_disabled', $all ? '' : implode("\n", array_keys(owSPlexFiles())));
+    Api::json(['ok' => true, 'msg' => $all ? '已全部启用' : '已全部停用']);
+});
+
+/** 重新扫描：丢掉编译缓存，按当前目录重建（管理员自己往目录里放了 txt 之后点这个） */
+Plugin::route('plugin_spam_lex_rescan', function (array $ctx) {
+    if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);
+    @unlink(owSPlexCacheFile());
+    $c = owSPlexCompiled(true);
+    Sec::log('spam_lexicon_rescan', (string)($ctx['actor']['nickname'] ?? ''),
+        ['files' => count(owSPlexFiles()), 'words' => (int)$c['words']]);
+    Api::json(['ok' => true, 'msg' => '已重新扫描：' . count(owSPlexFiles()) . ' 个文件，'
+        . number_format((int)$c['words']) . ' 条词生效', 'data' => ['stat' => owSPlexStat(), 'status' => owSPlexStatusText()]]);
+});
+
+/**
+ * 在线下载（敏感操作：会覆盖 data/lexicon 下的词库文件）。
+ * 标记 sensitive 是因为它是**覆盖本地数据**的写操作，走一次性票据 + 前端二次确认，
+ * 与后台其它覆盖类动作同一道防线。
+ */
+Plugin::route('plugin_spam_lex_download', function (array $ctx) {
+    if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);
+    $err = null;
+    $r = owSPlexDownload($err);
+    if (!$r) Api::json(['ok' => false, 'msg' => '下载失败：' . (string)$err]);
+    $c = owSPlexCompiled(true);
+    Api::json(['ok' => true, 'msg' => '已下载 ' . count($r['files']) . ' 个词库文件（'
+        . number_format($r['bytes'] / 1024, 0) . ' KB），共 ' . number_format((int)$c['words']) . ' 条词生效',
+        'data' => ['files' => count($r['files']), 'stat' => owSPlexStat(), 'status' => owSPlexStatusText()]]);
+}, ['sensitive' => true]);
+
+/** 立即检测更新（只查仓库信息，不下载） */
+Plugin::route('plugin_spam_lex_check', function (array $ctx) {
+    if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);
+    $r = owSPlexCheck(true);
+    Api::json(['ok' => $r['ok'], 'msg' => $r['msg'], 'data' => [
+        'changed' => !empty($r['changed']), 'notified' => (int)($r['notified'] ?? 0),
+        'notify_ready' => in_array('spam_lexicon_update', Notice::kinds(), true),
+        'status' => owSPlexStatusText(),
+    ]]);
+});
+
+/**
+ * 测试接口配置。回显判定结果、接口认出的词、以及**用本插件打码串替换后的效果** ——
+ * 只报「检出 3 个词」管理员没法判断打码长什么样，而这正是用户会看到的东西。
+ */
+Plugin::route('plugin_spam_lexapi_test', function (array $ctx) {
+    if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);
+    $text = mb_substr(trim((string)($ctx['post']['text'] ?? '')), 0, 500);
+    if ($text === '') Api::json(['ok' => false, 'msg' => '请先输入一段测试文本']);
+    if (!owSPlexApiQuotaOk()) Api::json(['ok' => false, 'msg' => '本分钟或今日的调用额度已用完，稍后再试']);
+    $r = owSPlexApiAsk($text);
+    $masked = $text;
+    if ($r['words']) {
+        $pair = [];
+        foreach ($r['words'] as $w) $pair[$w] = owSPlexRep();
+        $masked = strtr($text, $pair);
+    }
+    Api::json(['ok' => true, 'api_ok' => $r['ok'], 'hit' => $r['hit'],
+        'words' => array_slice($r['words'], 0, 50), 'word_count' => count($r['words']),
+        'masked' => $masked, 'raw' => $r['raw'], 'ms' => $r['ms'], 'budget' => owSPlexApiTimeout()]);
+});
 
 /* ============================ 资源 ============================ */
 
