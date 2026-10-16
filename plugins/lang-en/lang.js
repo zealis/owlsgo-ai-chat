@@ -374,7 +374,8 @@
         /* 通知模板（core/notice.php 的 spam_appeal） */
         '{nick} 申诉被拦截的域名 {domain}，申请恢复访问。请到「后台 → 插件管理 → 垃圾信息控制 → 访问申诉」查看并处理。':
             '{nick} appealed the blocked domain {domain} and asked to restore access. Handle it under Admin → Plugins → Spam control → Access appeals.',
-        /* 通知模板（core/notice.php 的 spam_lexicon_update） */
+        /* 通知模板（core/notice.php 内置的 spam_lexicon_update；核心 v1.3.171 起也支持插件
+           经 notice.kinds 注册自己的模板，翻译口径一样：整句中文模板 => 英文模板） */
         '敏感词库有更新（{v}），可到「后台 → 插件管理 → 垃圾信息控制 → 违禁词库」点「在线下载」更新。':
             'The sensitive-word lexicon has an update ({v}). Download it under Admin → Plugins → Spam control → Banned-word lexicon.',
         /* ---------- 违禁词库（v1.4.0）：接口盒子检测 + 本地词库 ---------- */

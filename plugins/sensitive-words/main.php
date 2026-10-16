@@ -2,7 +2,7 @@
 /**
  * 垃圾信息控制插件（v1.0.104 由核心剥离为「敏感词过滤」，v1.3.104 扩成多件套）
  *
- * 四道控制，各自生效的位置不同 —— 搞错位置等于白做：
+ * 五道控制，各自生效的位置不同 —— 搞错位置等于白做：
  *   1. 敏感词过滤   核心 text.filter 钩子：命中词库即**替换**（打码），对所有输入文字生效
  *                   （发言、昵称、群名称、群简介、群公告）。词库沿用 sensitive_words 表。
  *   2. 刷屏控制     「窗口内条数」直接接管核心键 msg_rate_window / msg_rate_max
@@ -16,6 +16,11 @@
  *                   管理员点「通过」就把该域名从名单里删掉，真的恢复访问）。
  *   4. AI 防线      text.check 钩子：把正文交给可配的 OpenAI 兼容接口判定，
  *                   动作三选一（仅记录 / 打码替换 / 拒发），默认仅记录。
+ *   5. 违禁词库     （v1.4.0）两路叠加，都做打码：本地 txt 词库（data/lexicon）编译成
+ *                   一份映射后 strtr 单次扫描；接口盒子「敏感词/违禁词检测」线路二
+ *                   （只对消息正文调用，超时/报错/额度用尽一律放行）。词库可后台在线下载，
+ *                   也能自己放进目录；更新检测走计划任务，发现更新给超级管理员发系统通知
+ *                   （core/notice.php 内置的 spam_lexicon_update 类型）。
  *
  * v1.3.110 移除「IP 封锁」标签页（站点级 IP 黑白名单）：站方判断这条不值得留 ——
  *   真要拦人用的是后台的封禁用户/禁言，而 IP 段一填错就是把自己和一片人关在门外，
@@ -822,6 +827,11 @@ function owSPlexHttpGet(string $url, ?string &$err, array $hdr = [], int $timeou
  */
 function owSPlexRemote(?string &$err = null): ?array
 {
+    // $GLOBALS['sw_lex_remote'] 可替换（与 $GLOBALS['sw_words'] 同一套路）：
+    // 这条路径要真访问 GitHub，而「检测到更新 → 写状态 → 推通知 → 不重复推」这段逻辑
+    // 必须能离线逐条打 —— 自检机不该依赖外网，也不该消耗站方的 GitHub 限额。
+    $stub = $GLOBALS['sw_lex_remote'] ?? null;
+    if (is_array($stub)) return $stub;
     $j = owSPlexHttpGet('https://api.github.com/repos/' . OWSP_LEX_REPO, $err);
     if ($j === null) return null;
     $d = json_decode($j, true);
@@ -836,11 +846,50 @@ function owSPlexRemote(?string &$err = null): ?array
 }
 
 /**
- * 检查更新。$notify = true 时给所有超级管理员发系统通知（只发超管：词库只有管理员能更新）。
- * 通知走核心 Notice::push 的 spam_lexicon_update 类型 —— 该类型未在 core/notice.php 注册时
- * push 会静默丢弃（核心行为，不是这里的 bug），后台会据此给出提示。
+ * 是否有「已发现但还没处理」的词库更新。返回 [有更新, 远端版本标记]。
+ *
+ * spam_lex_update_to = 已就哪个远端版本提醒过；download 成功后清掉。
+ * 它同时承担两件事：后台状态行据此显示「远端有更新」，检测任务据此保证**同一版本只推一次**。
  */
-function owSPlexCheck(bool $notify = true): array
+function owSPlexUpdatePending(): array
+{
+    $to = (string)DB::setting('spam_lex_update_to', '');
+    if ($to === '') return [false, ''];
+    return [$to !== (string)DB::setting('spam_lex_remote_at', ''), $to];
+}
+
+/**
+ * 给所有超级管理员推一条「词库有更新」系统通知，返回推送条数。
+ *
+ * 单独抽出来是为了能**离线测**：这条路径要在「类型已注册」与「类型未注册」两种核心下
+ * 都能跑（未注册时核心静默丢弃，这里必须如实返回 0 而不是假装发了）。
+ * 只发给超管 —— 词库只有管理员能更新，普通用户收到只会当成系统出了什么事。
+ */
+function owSPlexNotifyAdmins(string $ver): int
+{
+    if (!owSPOn('lex_notify_on')) return 0;
+    // 先问一句类型认不认：核心对未注册的 kind 是**静默丢弃**，不问的话这里会照样数出
+    // 「已发 N 位管理员」，日志就成了一句谎话（旧核心上这条通知其实一条都没出去）。
+    if (!in_array('spam_lexicon_update', Notice::kinds(), true)) return 0;
+    $n = 0;
+    foreach (DB::all("SELECT id FROM users WHERE role='admin'") as $adm) {
+        Notice::push((int)$adm['id'], 'spam_lexicon_update', ['v' => $ver]);
+        $n++;
+    }
+    return $n;
+}
+
+/**
+ * 检查更新。只查仓库信息（1 次 API 调用），不下载。
+ *
+ * 发现更新 → 记下「待更新版本」并给所有超级管理员 push 一条系统通知。
+ * 通知用 `spam_lexicon_update` 类型，**核心 v1.3.171 起内置**（同名以核心为准）；
+ * 插件要发自己另外的类型时才需要经 `notice.kinds` 钩子注册模板（PLUGIN.md「通知类型注册」）。
+ *
+ * 「只推一次」由 spam_lex_update_to 兜住：它就是「已经就这个远端版本提醒过」的标记，
+ * 下载成功后清掉。每小时的检测任务因此不会把同一条更新反复推给管理员。
+ */
+function owSPlexCheck(): array
 {
     $err = null;
     $r = owSPlexRemote($err);
@@ -852,16 +901,18 @@ function owSPlexCheck(bool $notify = true): array
     $known = (string)DB::setting('spam_lex_remote_at', '');
     $changed = ($known !== '' && $known !== $r['at']);
     $sent = 0;
-    if ($changed && $notify && owSPOn('lex_notify_on')) {
+    if ($changed && (string)DB::setting('spam_lex_update_to', '') !== $r['at']) {
+        DB::setSetting('spam_lex_update_to', $r['at']);
+        DB::setSetting('spam_lex_update_at', (string)time());
         $v = substr($r['at'], 0, 10);   // 2026-08-17：一眼能读，比 sha 有用
-        foreach (DB::all("SELECT id FROM users WHERE role='admin'") as $adm) {
-            Notice::push((int)$adm['id'], 'spam_lexicon_update', ['v' => $v]);
-            $sent++;
-        }
+        $sent = owSPlexNotifyAdmins($v);
         Sec::log('spam_lexicon_update', '系统', ['v' => $v, 'notified' => $sent]);
     }
-    $msg = $known === '' ? '尚未下载过词库，远端最新 ' . substr($r['at'], 0, 10)
-        : ($changed ? '远端有更新（' . substr($r['at'], 0, 10) . '），已通知 ' . $sent . ' 位管理员'
+    $v = substr($r['at'], 0, 10);
+    $msg = $known === '' ? '尚未下载过词库，远端最新 ' . $v
+        : ($changed
+            ? '远端有更新（' . $v . '），' . ($sent > 0 ? '已发系统通知给 ' . $sent . ' 位管理员'
+                : (owSPOn('lex_notify_on') ? '通知未发出：核心未注册该通知类型' : '未开启更新通知'))
             : '词库已是最新（' . substr($known, 0, 10) . '）');
     DB::setSetting('spam_lex_last_msg', $msg);
     return ['ok' => true, 'changed' => $changed, 'msg' => $msg, 'remote_at' => $r['at'], 'notified' => $sent];
@@ -948,6 +999,9 @@ function owSPlexDownload(?string &$err = null): array
     @unlink(owSPlexCacheFile());
     DB::setSetting('spam_lex_remote_at', $repo['at']);
     DB::setSetting('spam_lex_installed_at', (string)time());
+    // 「有待更新」这个状态到此消解：后台状态行不再显示「远端有更新」，同一版本也不会被再次提醒
+    DB::setSetting('spam_lex_update_to', '');
+    DB::setSetting('spam_lex_update_at', '');
     DB::setSetting('spam_lex_last_msg', '已下载 ' . count($saved) . ' 个词库文件');
     Sec::log('spam_lexicon_download', '系统', ['files' => count($saved), 'bytes' => $bytes, 'remote_at' => $repo['at']]);
     return ['files' => $saved, 'bytes' => $bytes, 'remote_at' => $repo['at'], 'branch' => $repo['branch']];
@@ -963,6 +1017,8 @@ function owSPlexStatusText(): string
     if ($rec > 0) $t .= '　最后下载 ' . date('Y-m-d H:i', $rec);
     $chk = (int)DB::setting('spam_lex_last_check', '0');
     if ($chk > 0) $t .= '　最后检测 ' . date('Y-m-d H:i', $chk);
+    [$pending, $ver] = owSPlexUpdatePending();
+    if ($pending) $t .= '　远端有更新（' . substr($ver, 0, 10) . '），点「在线下载词库」更新';
     $last = (string)DB::setting('spam_lex_last_msg', '');
     if ($last !== '') $t .= '　' . $last;
     return $t;
@@ -983,7 +1039,7 @@ function owSPlexCronCheck(): string
     if ($last > 0 && time() - $last < $hours * 3600) {
         return '未到期（每 ' . $hours . ' 小时检测一次，上次 ' . date('m-d H:i', $last) . '）';
     }
-    $r = owSPlexCheck(true);
+    $r = owSPlexCheck();
     return $r['msg'];
 }
 Plugin::cron('lexicon_check', 3600, 'owSPlexCronCheck', '检测敏感词库是否有更新，有更新则通知超级管理员');
@@ -1100,8 +1156,7 @@ Plugin::on('text.check', function (&$reason, &$text, $scene, $actor) {
         ['action' => $action, 'why' => $r['why'], 'ip' => Sec::ip()]);
 });
 
-/** 3) 域名名单下发：只在聊天页（page.footer 只在 renderChat 触发），且只带名单不带密钥 */
-Plugin::on('page.footer', function (): void {
+/** 3) 域名名单下发：只在聊天页（page.footer 只在 renderChat 触发），且只带名单不带密钥 */Plugin::on('page.footer', function (): void {
     $list = owSPdomains();
     if (!$list) return;
     $warn = owSPSet('domain_warn', '网页包含不安全内容，被多人投诉，已停止自动跳转。');
@@ -1286,12 +1341,10 @@ Plugin::adminPage('sensitive-words', '垃圾信息控制', function () {
         . owSPswitch('lex_check_on', '自动检测词库更新',
             '按下面的间隔检查远端仓库是否有更新；发现更新会给所有超级管理员发一条系统通知。')
         . owSPnum('lex_check_hours', '检测间隔(小时)', 'spam_lex_check_hours', '24', '1～720 小时。检测只查仓库信息，不下载词库。')
-        . owSPswitch('lex_notify_on', '有更新时通知管理员', '通知只在发现更新时发一次，不会重复打扰。')
+        . owSPswitch('lex_notify_on', '有更新时通知管理员',
+            '发现更新后给每个超级管理员发一条系统通知（在「系统通知」里可读可清），同一版本只提醒一次。')
         . ($lex['truncated']
             ? '<p style="font-size:12px;color:var(--ow-red)">部分词库超出单文件或总词数上限，已被截断，未全部生效。</p>' : '')
-        . (in_array('spam_lexicon_update', Notice::kinds(), true) ? ''
-            : '<p style="font-size:12px;color:var(--ow-yellow)">当前系统通知类型表里没有违禁词库更新这一类，'
-              . '更新提醒暂不会真的发出（需在核心的通知类型表里补一条）。</p>')
         . '<div class="ow-form-row" style="margin:12px 0 6px">'
         . '<b style="margin-right:auto">词库文件（未勾选的不会生效）</b>'
         . '<button class="ow-btn ow-btn-ghost" onclick="OwSW.lexAll(true)">全部启用</button>'
@@ -1615,7 +1668,7 @@ Plugin::route('plugin_spam_lex_list', function (array $ctx) {
         'status' => owSPlexStatusText(),
         'installed_at' => (int)DB::setting('spam_lex_installed_at', '0'),
         'checked_at' => (int)DB::setting('spam_lex_last_check', '0'),
-        'notify_ready' => in_array('spam_lexicon_update', Notice::kinds(), true),
+        'update_pending' => owSPlexUpdatePending()[0],
     ]]);
 });
 
@@ -1670,10 +1723,10 @@ Plugin::route('plugin_spam_lex_download', function (array $ctx) {
 /** 立即检测更新（只查仓库信息，不下载） */
 Plugin::route('plugin_spam_lex_check', function (array $ctx) {
     if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);
-    $r = owSPlexCheck(true);
+    $r = owSPlexCheck();
     Api::json(['ok' => $r['ok'], 'msg' => $r['msg'], 'data' => [
-        'changed' => !empty($r['changed']), 'notified' => (int)($r['notified'] ?? 0),
-        'notify_ready' => in_array('spam_lexicon_update', Notice::kinds(), true),
+        'changed' => !empty($r['changed']),
+        'update_pending' => owSPlexUpdatePending()[0],
         'status' => owSPlexStatusText(),
     ]]);
 });

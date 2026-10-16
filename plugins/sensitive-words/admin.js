@@ -282,7 +282,7 @@
                 if (!r || !r.ok) return;
                 lexFiles = r.data.files || [];
                 OwSW.lexRender();
-                OwSW.lexStat(r.data.status, r.data.notify_ready);
+                OwSW.lexStat(r.data.status);
             });
         },
 
@@ -313,12 +313,10 @@
         },
 
         /** 状态行写在**已存在**的 #owSpamLexStat 上：i18n 观察器只看新插入的元素，必须自己过 owTr */
-        lexStat: function (txt, notifyReady) {
+        lexStat: function (txt) {
             var el = $('owSpamLexStat');
             if (!el) return;
-            var s = owTr(txt || '');
-            if (notifyReady === false) s += '　' + owTr('（系统通知类型未注册，更新提醒不会发出）');
-            el.textContent = s;
+            el.textContent = owTr(txt || '');
         },
 
         lexToggle: function (i, en) {
