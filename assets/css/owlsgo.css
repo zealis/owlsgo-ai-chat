@@ -477,6 +477,10 @@ button { font-family: inherit; cursor: pointer; }
     background: var(--ow-bg-sub);
     color: var(--ow-text);
     transition: background .15s;
+    /* v1.3.166：按钮文字一律不折行。表格里的操作按钮会被窄列挤到「两个字竖排」
+       （维护任务页的状态标签 + 停用按钮就是这么坏的）；按钮是单行控件，
+       宁可让表格把列宽算宽，也不要竖排。 */
+    white-space: nowrap;
 }
 .ow-btn-primary { background: var(--ow-primary-strong); color: #fff; }
 .ow-btn-primary:hover { background: var(--ow-primary-dark); color: #fff; }   /* 显式锁白，防 a:hover 级联吞字 */
@@ -710,6 +714,9 @@ input[type=range] {
     line-height: 16px;
     border-radius: 3px;
     vertical-align: middle;
+    /* v1.3.166：标签文字不折行 —— 它是「一枚小徽标」，被窄列挤成两行就成了竖排方块
+       （维护任务页状态列的启用/停用标签实测如此）。 */
+    white-space: nowrap;
 }
 .ow-tag-green { background: #f6ffed; color: var(--ow-green); border: 1px solid #b7eb8f; }
 /* v1.2.56：危险/禁用标签（与 ow-tag-green 对称；此前没有红色系标签，禁用态只能用文字） */
