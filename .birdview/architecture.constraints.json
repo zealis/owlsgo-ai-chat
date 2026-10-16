@@ -396,7 +396,7 @@
   ],
   "architectureBinding": {
     "mapId": "owlsgo-chat",
-    "mapRevision": 12,
+    "mapRevision": 13,
     "sourceRevision": "3f0e154cbd514eb1730590ebe2a9fb9db4f20761"
   },
   "rules": [
@@ -759,7 +759,7 @@
       "设计文档/开发文档.md",
       "设计文档/前后端代码安全审核AI提示词.md"
     ],
-    "reviewedAt": "2026-10-16T04:23:11.089Z",
+    "reviewedAt": "2026-10-16T07:11:14.539Z",
     "implementationVerification": "unverified"
   }
 }
