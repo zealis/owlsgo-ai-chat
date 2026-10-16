@@ -1,5 +1,5 @@
 /**
- * 批量操作插件 · 聊天页（batch-ops v1.2.0）
+ * 批量操作插件 · 聊天页（batch-ops v1.2.1）
  *
  * ── 两块内容 ──────────────────────────────────────────────────
  * ① 消息多选：消息右键「多选」（或「转发」单条直达）进入选择模式，
@@ -37,6 +37,7 @@
     var esc = w.esc, toast = w.toast, fmtUid = w.fmtUid, owTr = w.owTr;
 
     var MAX_SEL = 20;        // 单次最多选择的消息条数（再多请分次转发）
+    var BATCH = 20;          // 选择器列表单批渲染条数（与核心搜索结果同一档）
     var SEND_GAP = 380;      // 转发队列两条之间的最小间隔（毫秒）
     var RATE_WAIT = 2500;    // 撞上「发言过于频繁」后的重试等待
     var RATE_TRIES = 6;      // 撞限流后的最大重试次数（覆盖 10 秒窗口）
@@ -651,7 +652,9 @@
             memberSet: {},
             code: '', isPublic: true,
             done: {},          // data-k -> 完成文案（已邀请）
-            busy: false
+            busy: false,
+            rows: [],          // 当前视图的完整行集合（HTML 字符串数组，分批插入用）
+            rendered: 0        // 已插入列表的条数
         };
         var defs = tabsFor(opt);
         var actorKind = actor().kind, admin = isAdmin();
@@ -849,77 +852,111 @@
             return roomTarget({ k: 'r:' + r.id, id: r.id, name: r.name, avatar: r.avatar, sub: r.sub });
         }
 
+        /* ---------- 列表渲染：与核心搜索结果同一套分批手法 ----------
+           好友/群聊/会话都是**完整列表**（服务端不分页），一次全量 innerHTML
+           在条目多时既吃性能、长列表也容易把弹窗版面撑乱 —— 所以照抄核心搜索：
+           首批 20 条、滚动到底续批、内容不足一屏自动补；.ow-sr-item 自带
+           content-visibility，屏外条目跳过布局与绘制。 */
+
+        /** 重建当前视图的行集合（HTML 字符串数组；搜索态含分节标题项） */
+        function buildRows() {
+            if (st.q) return searchRows(st.q);
+            if (st.tab === 'recent') return recentRows();
+            if (st.tab === 'friends') return friendsRows();
+            return roomsRows();
+        }
+        function emptyText() {
+            if (st.q) return '没有找到相关内容';
+            if (st.tab === 'recent') return opt.mode === 'invite' ? '暂无最近联系人' : '暂无最近聊天';
+            if (st.tab === 'friends') return isUser() ? '暂无好友' : '登录后才能使用好友功能';
+            return '暂无可转发的群聊';
+        }
         function render(resetScroll) {
             var box = byId('owbList');
-            if (!box || closed) return;
-            if (st.loading > 0) return;
-            var keep = box.scrollTop;
-            var html = '';
-            if (st.q) {
-                html = searchHtml(st.q);
-                box.innerHTML = html || '<div class="ow-sr-empty">没有找到相关内容</div>';
-            } else if (st.tab === 'recent') {
-                html = recentHtml();
-                box.innerHTML = html || '<div class="ow-sr-empty">' + (opt.mode === 'invite' ? '暂无最近联系人' : '暂无最近聊天') + '</div>';
-            } else if (st.tab === 'friends') {
-                html = friendsHtml();
-                box.innerHTML = html || '<div class="ow-sr-empty">' + (isUser() ? '暂无好友' : '登录后才能使用好友功能') + '</div>';
-            } else {
-                html = roomsHtml();
-                box.innerHTML = html || '<div class="ow-sr-empty">暂无可转发的群聊</div>';
+            if (!box || closed || st.loading > 0) return;
+            var prevRendered = st.rendered, prevTop = box.scrollTop;
+            st.rows = buildRows();
+            st.rendered = 0;
+            box.innerHTML = '';
+            if (!st.rows.length) {
+                box.innerHTML = '<div class="ow-sr-empty">' + emptyText() + '</div>';
+                return;
             }
-            box.scrollTop = resetScroll ? 0 : keep;
+            /* 滚动到底续批。⚠️ 用 onclick 式的**赋值**而不是 addEventListener ——
+               每次渲染都会重绑，赋值天然不叠加（核心搜索踩过叠加监听的坑）。 */
+            box.onscroll = function () {
+                if (box.scrollTop + box.clientHeight >= box.scrollHeight - 48) appendMore(BATCH);
+            };
+            if (resetScroll) {
+                appendMore(BATCH);
+                box.scrollTop = 0;
+            } else {
+                /* 非重置的重渲染（如邀请成功后刷新行状态）要保住阅读位置：
+                   把上次已渲染的条数原样补回，否则会把滚到中段的人拽回顶部。 */
+                appendMore(Math.max(BATCH, Math.min(prevRendered, st.rows.length)));
+                box.scrollTop = prevTop;
+            }
+        }
+        function appendMore(count) {
+            var box = byId('owbList');
+            if (!box || closed) return;
+            var to = Math.min(st.rendered + count, st.rows.length);
+            if (to <= st.rendered) return;
+            box.insertAdjacentHTML('beforeend', st.rows.slice(st.rendered, to).join(''));
+            st.rendered = to;
+            /* 内容不足一屏（结果少或弹窗很高）时继续补，否则用户永远滚不到底、
+               后面的批次就永远加载不出来（核心搜索同一处理）。 */
+            if (st.rendered < st.rows.length && box.scrollHeight <= box.clientHeight + 8) appendMore(BATCH);
         }
 
-        function recentHtml() {
-            var out = '', i, c;
+        function recentRows() {
+            var out = [], i, c;
             for (i = 0; i < st.conv.length; i++) {
                 c = st.conv[i];
                 if (opt.mode === 'invite') {
                     if (c.conv !== 'dm') continue;             // 邀请的对象是人，群聊不进这个列表
-                    out += userRow({ id: c.id, name: c.name, avatar: c.avatar, sub: c.last_text || '暂无消息', is_friend: c.is_friend });
+                    out.push(userRow({ id: c.id, name: c.name, avatar: c.avatar, sub: c.last_text || '暂无消息', is_friend: c.is_friend }));
                 } else if (c.conv === 'room') {
-                    out += roomRow({ id: c.id, name: c.name, avatar: c.avatar, sub: c.last_text || '暂无消息' });
+                    out.push(roomRow({ id: c.id, name: c.name, avatar: c.avatar, sub: c.last_text || '暂无消息' }));
                 } else {
-                    out += userRow({ id: c.id, name: c.name, avatar: c.avatar, sub: c.last_text || '暂无消息', is_friend: c.is_friend });
+                    out.push(userRow({ id: c.id, name: c.name, avatar: c.avatar, sub: c.last_text || '暂无消息', is_friend: c.is_friend }));
                 }
             }
             return out;
         }
-        function friendsHtml() {
-            var out = '', i, f;
+        function friendsRows() {
+            var out = [], i, f;
             for (i = 0; i < st.friends.length; i++) {
                 f = st.friends[i];
-                out += userRow({ id: f.user_id, name: f.nickname, avatar: f.avatar, sub: '用户 ID ' + fmtUid(f.user_id) });
+                out.push(userRow({ id: f.user_id, name: f.nickname, avatar: f.avatar, sub: '用户 ID ' + fmtUid(f.user_id) }));
             }
             return out;
         }
-        function roomsHtml() {
-            var out = '', i, r;
+        function roomsRows() {
+            var out = [], i, r;
             for (i = 0; i < st.rooms.length; i++) {
                 r = st.rooms[i];
-                out += roomRow({ id: r.id, name: r.name, avatar: r.avatar, sub: r.description || ('群聊 ID ' + fmtUid(r.id)) });
+                out.push(roomRow({ id: r.id, name: r.name, avatar: r.avatar, sub: r.description || ('群聊 ID ' + fmtUid(r.id)) }));
             }
             return out;
         }
         /** 搜索：同一个关键词同时过滤好友与群聊（分栏小标题分开列，见需求「搜索同时命中两者」） */
-        function searchHtml(qq) {
-            var fh = '', i, f, rh = '', r;
+        function searchRows(qq) {
+            var fh = [], rh = [], i, f, r, out = [];
             for (i = 0; i < st.friends.length; i++) {
                 f = st.friends[i];
                 if (!matchName(f.nickname, f.user_id, qq)) continue;
-                fh += userRow({ id: f.user_id, name: f.nickname, avatar: f.avatar, sub: '用户 ID ' + fmtUid(f.user_id) });
+                fh.push(userRow({ id: f.user_id, name: f.nickname, avatar: f.avatar, sub: '用户 ID ' + fmtUid(f.user_id) }));
             }
             if (opt.mode === 'forward') {
                 for (i = 0; i < st.rooms.length; i++) {
                     r = st.rooms[i];
                     if (!matchName(r.name, r.id, qq)) continue;
-                    rh += roomRow({ id: r.id, name: r.name, avatar: r.avatar, sub: r.description || ('群聊 ID ' + fmtUid(r.id)) });
+                    rh.push(roomRow({ id: r.id, name: r.name, avatar: r.avatar, sub: r.description || ('群聊 ID ' + fmtUid(r.id)) }));
                 }
             }
-            var out = '';
-            if (fh) out += '<div class="owb-sec">好友</div>' + fh;
-            if (rh) out += '<div class="owb-sec">群聊</div>' + rh;
+            if (fh.length) { out.push('<div class="owb-sec">好友</div>'); out = out.concat(fh); }
+            if (rh.length) { out.push('<div class="owb-sec">群聊</div>'); out = out.concat(rh); }
             return out;
         }
 
