@@ -1,0 +1,99 @@
+/**
+ * 链接卡片插件 · 样式（link-card v1.0.0）
+ * 仅后台「链接卡片」页使用；全部颜色引用核心 --ow-* 变量，深浅两套主题自动跟随，
+ * 不写 [data-theme="dark"] 补丁（核心变量机制已覆盖）。
+ * 经 page.head 以 ?action=assets&type=css&plugin=link-card&file=style.css 注入。
+ */
+
+/* ---------- 顶部工具行 ---------- */
+.lc-count { font-size: 12px; color: var(--ow-text-sub); align-self: center; -webkit-align-self: center; }
+
+/* ---------- 卡片列表 ---------- */
+.lc-card {
+    display: flex; display: -webkit-flex;
+    align-items: flex-start; -webkit-align-items: flex-start;
+    gap: 16px;
+    background: var(--ow-bg);
+    border: 1px solid var(--ow-border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    transition: border-color .15s;
+    -webkit-transition: border-color .15s;
+}
+.lc-card:hover { border-color: var(--ow-primary); }
+.lc-card-info { flex: 1; -webkit-flex: 1; min-width: 0; -webkit-min-width: 0; }
+.lc-card-hd { display: flex; display: -webkit-flex; align-items: center; -webkit-align-items: center; flex-wrap: wrap; -webkit-flex-wrap: wrap; gap: 8px; }
+.lc-card-name { font-size: 14px; font-weight: 600; color: var(--ow-text-title); }
+.lc-card.is-off .lc-card-name { color: var(--ow-text-sub); font-weight: 400; }
+.lc-card-url { font-size: 12px; color: var(--ow-text-sub); margin-top: 3px; word-break: break-all; }
+.lc-card-desc {
+    font-size: 12px; color: var(--ow-text); margin-top: 6px; line-height: 1.6;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.lc-card-desc b { font-weight: 600; }
+.lc-card-plats { display: flex; display: -webkit-flex; flex-wrap: wrap; -webkit-flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; -webkit-align-items: center; }
+.lc-plat-off { font-size: 12px; color: var(--ow-text-sub); opacity: .6; }
+
+/* 右侧：开关 + 操作 */
+.lc-card-side { display: flex; display: -webkit-flex; flex-direction: column; -webkit-flex-direction: column; align-items: flex-end; -webkit-align-items: flex-end; gap: 6px; flex: none; -webkit-flex: none; }
+.lc-card-side .ow-switch-row { margin-bottom: 0; min-height: 26px; }
+.lc-card-ops { display: flex; display: -webkit-flex; gap: 12px; }
+.lc-card-ops a { font-size: 12px; color: var(--ow-primary); cursor: pointer; white-space: nowrap; }
+.lc-card-ops a:hover { color: var(--ow-primary-dark); }
+.lc-card-ops a.lc-del { color: var(--ow-red); }
+.lc-card-ops a.lc-del:hover { opacity: .8; }
+
+/* 空态 */
+.lc-empty { text-align: center; color: var(--ow-text-sub); font-size: 13px; padding: 30px 16px; line-height: 1.8; }
+
+/* 多张启用的警示条（借核心 ow-alert 外形，色板走警示变量） */
+.lc-alert { background: var(--ow-warn-bg); border: 1px solid var(--ow-warn-border); color: var(--ow-yellow); }
+
+/* ---------- 编辑弹窗 ---------- */
+.lc-modal-grid { display: flex; display: -webkit-flex; gap: 20px; align-items: flex-start; -webkit-align-items: flex-start; }
+.lc-modal-form { flex: 1; -webkit-flex: 1; min-width: 0; -webkit-min-width: 0; }
+.lc-modal-aside { flex: none; -webkit-flex: none; width: 250px; position: sticky; top: 0; }
+
+/* 内容类型 / 卡片样式 两列 */
+.lc-form-2col { display: flex; display: -webkit-flex; gap: 12px; }
+.lc-form-2col .ow-form-item { flex: 1; -webkit-flex: 1; min-width: 0; -webkit-min-width: 0; }
+
+/* 平台开关 2×2 */
+.lc-plat-grid { display: flex; display: -webkit-flex; flex-wrap: wrap; -webkit-flex-wrap: wrap; gap: 4px 18px; }
+.lc-plat-grid .ow-switch-row { flex: 0 0 45%; margin-bottom: 8px; }
+
+/* ---------- 分享预览（示意） ---------- */
+.lc-pv { border: 1px solid var(--ow-border); border-radius: 8px; overflow: hidden; background: var(--ow-bg-sub); }
+.lc-pv-cap { font-size: 12px; color: var(--ow-text-sub); padding: 8px 12px; border-bottom: 1px solid var(--ow-border); }
+.lc-pv-card { background: var(--ow-bg); }
+.lc-pv-img {
+    height: 132px;
+    background-color: var(--ow-bg-sub);
+    background-position: center; -webkit-background-position: center;
+    background-size: cover; -webkit-background-size: cover;
+    background-repeat: no-repeat;
+    border-bottom: 1px solid var(--ow-border);
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    justify-content: center; -webkit-justify-content: center;
+}
+.lc-pv-img.is-empty::after { content: '未设置封面图'; font-size: 12px; color: var(--ow-text-sub); }
+.lc-pv-body { padding: 10px 12px 12px; }
+.lc-pv-title { font-size: 13px; font-weight: 600; color: var(--ow-text-title); line-height: 1.4; word-break: break-all; }
+.lc-pv-desc {
+    font-size: 12px; color: var(--ow-text-sub); margin-top: 4px; line-height: 1.5;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.lc-pv-host { font-size: 11px; color: var(--ow-text-sub); margin-top: 6px; opacity: .8; }
+.lc-pv-note { font-size: 11px; color: var(--ow-text-sub); padding: 8px 12px; border-top: 1px solid var(--ow-border); line-height: 1.5; }
+
+/* ---------- 移动端（与后台 720px 断点一致） ---------- */
+@media (max-width: 720px) {
+    .lc-card { flex-direction: column; -webkit-flex-direction: column; gap: 10px; padding: 12px 14px; }
+    .lc-card-side { flex-direction: row; -webkit-flex-direction: row; align-items: center; -webkit-align-items: center; justify-content: space-between; -webkit-justify-content: space-between; width: 100%; }
+    .lc-modal-grid { flex-direction: column; -webkit-flex-direction: column; gap: 14px; }
+    .lc-modal-aside { width: 100%; position: static; }
+    .lc-form-2col { flex-direction: column; -webkit-flex-direction: column; gap: 0; }
+    .lc-plat-grid .ow-switch-row { flex: 0 0 100%; }
+}
