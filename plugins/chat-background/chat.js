@@ -92,13 +92,9 @@
             + 'body.ow-chat-body .ow-main > .ow-messages,'
             + 'body.ow-chat-body .ow-main > .ow-inputbar{position:relative;z-index:1;}'
             + 'body.ow-chat-body .ow-messages{background-color:transparent;background-image:none;}'
-            // 顶栏与输入栏半透明，让背景图/叠加色在其下若隐若现（与 main.php 的 page.head 注入保持一致）。
-            // color-mix 从主题变量 --ow-bg-chat 派生半透明色：不写死颜色、深浅模式各自成立；
-            // 不支持时该声明被丢弃、自动回退核心的不透明底色。输入框加 :not(:focus) 以保住聚焦态底色。
-            // 不用 backdrop-filter（毛玻璃）：项目样式规范明确「禁毛玻璃」。
-            + 'body.ow-chat-body .ow-main .ow-topbar,'
-            + 'body.ow-chat-body .ow-main .ow-inputbar{background-color:color-mix(in srgb, var(--ow-bg-chat) 78%, transparent);}'
-            + 'body.ow-chat-body .ow-main .ow-inputbar .ow-input:not(:focus){background-color:color-mix(in srgb, var(--ow-bg-chat) 72%, transparent);}'
+            // 顶栏与输入栏**不做任何覆盖**：按用户要求完全恢复核心的不透明底色（--ow-bg-chat），
+            // 连一点点透明也不要。故这里既没有 color-mix 半透明规则，也没有配套的
+            // .ow-input:not(:focus) 规则（那条是为了保住聚焦态底色，随半透明一起去掉）。
             // 左侧图标条与侧栏同样半透明。⚠️ 它们不在 .ow-main 内（是兄弟节点），
             // 选择器不能带 .ow-main；透出来的是 .ow-layout 的 --ow-bg，
             // 即「没有背景图在下面」，效果是朝页面底色略提亮。

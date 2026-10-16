@@ -1589,6 +1589,10 @@
             // 这里只补「监听系统主题变化」。再次 applyTheme 是幂等的，不会闪。
             this.initTheme();
 
+            // P1（WS 实时层）：按服务端开关尝试连一条 WS 加速层（心跳 / 在线状态）。
+            // 失败、断开、未启用一律静默 —— 消息与成员仍由长轮询照常拉取，这里纯并行加速。
+            this.rt.start();
+
             // 地址路由：私聊 ?dm=user:12 优先（v1.1.0），否则规范化为 ?room=当前群聊（replace）
             var dmFromUrl = this.dmFromUrl();
             // 前进/后退（或手动改 URL 回车）→ 切换到对应群聊 / 私聊
@@ -1668,6 +1672,95 @@
             };
             load('');
             this._fireRoomSwitch();   // 首次进入也通知插件（公告等按群拉取）
+        },
+
+        /* ============ P1：WS 实时加速层（可选） ============
+           只做两件事：① 连接即在线（心跳保活，私聊页停留也不再掉线）；
+           ② 在线集合变化时收 wake 帧、立刻用**既有** room_members 接口刷成员
+           （可见性布尔仍由服务端算 —— 口径零复制）。
+           刻意不做：消息推送（P2）、发送迁移（P3）、停长轮询 —— P1 的消息仍走长轮询，
+           这里纯并行加速。因此：连不上 / 断开 / 服务未启用 → 什么都不做，聊天不受任何影响。
+           生命周期形状与参考实现对齐：onopen 开心跳、onclose 退避重连（5s×5 → 60s）。 */
+        rt: {
+            ws: null, on: false, opening: false, attempts: 0, hbTimer: 0, reTimer: 0,
+            lastPong: 0, room: -1, _wmAt: 0,
+
+            /** 入口：服务端 rt_enabled=0 时永不连接（后台一键切回长轮询靠它） */
+            start: function () {
+                var self = this;
+                if (!OwChat.cfg || !OwChat.cfg.rt_enabled) return;
+                if (this.ws || this.opening) return;
+                this.opening = true;
+                OwApi.post('ws_ticket', {}, function (r) {
+                    self.opening = false;
+                    if (!r || !r.ok || !r.url) return;   // 未启用 / 限速 / 站点地址缺失：静默
+                    var s;
+                    try { s = new WebSocket(r.url); } catch (e) { return; }   // 老内核无 WebSocket：静默
+                    self.ws = s;
+                    s.onopen = function () { self.onOpen(); };
+                    s.onmessage = function (ev) { self.onMsg(ev); };
+                    s.onclose = function () { self.onClose(); };
+                    s.onerror = function () {};   // 出错后必随 onclose，收口只写一处
+                });
+            },
+            onOpen: function () {
+                this.on = true; this.attempts = 0;
+                this.lastPong = new Date().getTime();
+                this.hb();
+                this.sub(OwChat.room || 0);
+            },
+            /** 应用层心跳 25s：服务端 60s 无帧判死；25s 让「单帧丢失」也落在 45s 在线窗口内 */
+            hb: function () {
+                var self = this;
+                clearTimeout(this.hbTimer);
+                this.hbTimer = setTimeout(function () {
+                    if (!self.on || !self.ws) return;
+                    self.send({ t: 'hb' });
+                    if (new Date().getTime() - self.lastPong > 75000) {   // 链路假死（代理吞包等）
+                        try { self.ws.close(); } catch (e) {}
+                        return;
+                    }
+                    self.hb();
+                }, 25000);
+            },
+            /** 订阅房间 = 在线状态归属哪个群；进私聊不调用（保持最后房间，人在线不掉） */
+            sub: function (room) {
+                room = parseInt(room, 10) || 0;
+                if (room === this.room) return;
+                this.room = room;
+                this.send({ t: 'sub', room: room });
+            },
+            send: function (obj) {
+                if (!this.on || !this.ws) return;
+                try { this.ws.send(JSON.stringify(obj)); } catch (e) {}
+            },
+            onMsg: function (ev) {
+                var m = null;
+                try { m = JSON.parse(ev.data); } catch (e) { return; }
+                if (!m || !m.t) return;
+                if (m.t === 'pong') { this.lastPong = new Date().getTime(); return; }
+                if (m.t === 'wake') {
+                    // 在线集合变了 → 立刻刷成员；500ms 客户端合并挡连上/断开高峰的扇出
+                    var now = new Date().getTime();
+                    if (now - this._wmAt < 500) return;
+                    if (parseInt(m.room, 10) === (OwChat.room || 0) && OwChat.room > 0 && !OwChat.dm) {
+                        this._wmAt = now;
+                        try { OwChat.loadMembers(); } catch (e) {}
+                    }
+                }
+            },
+            onClose: function () {
+                this.on = false;
+                clearTimeout(this.hbTimer);
+                this.ws = null;
+                this.room = -1;   // 重连后 onOpen 会重新 sub 当前房间
+                if (!OwChat.cfg || !OwChat.cfg.rt_enabled) return;
+                var self = this;
+                this.attempts++;
+                var delay = this.attempts <= 5 ? 5000 : 60000;
+                clearTimeout(this.reTimer);
+                this.reTimer = setTimeout(function () { self.start(); }, delay);
+            }
         },
 
         /** 从已加载的会话列表里取私聊对方昵称（供 URL 直达 / 前进后退时补名） */
@@ -3285,6 +3378,8 @@
             this._fireViewChange();   // v1.1.0：回到群聊视图 → 插件按 roomId 复原群级装饰
             // v1.2.27：立即渲染「所有成员」并校准发言闸门，不等首次 poll 返回（最长 20 秒）
             this.loadMembers();
+            // P1（WS 实时层）：订阅房间 = 在线状态归属哪个群；未启用/未连接时是空操作
+            this.rt.sub(id);
         },
 
         /* ---------- 长轮询（主通道）+ 断线降级短轮询 ----------
@@ -7876,6 +7971,17 @@
                             + '开启后记录 debug 级日志、出错页显示详细报错。仅用于排错，用完请及时关闭 —— 报错细节可能暴露路径、SQL 与配置信息。<br>'
                             + '日志文件：data/logs/debug.log（页面报错实时显示；接口请求只落日志、不回显，避免破坏前端数据）。'
                             + '也可在「安全日志 → 系统日志」查看与清空。</p>'
+                            // P1（WS 实时层）：实时通道开关与守护进程端口。
+                            // 默认关闭 = 与长轮询时代完全一致（容器/虚拟主机跑不了常驻进程就别开）；
+                            // 开启前先部署守护进程与 nginx /ws 反代（步骤见 ws-server.php 头部说明）。
+                            + sw('ws_enable', 'WS 实时通道', '0')
+                            + fld('ws_port', 'WS 守护进程端口', '8790')
+                            + note('开启后前端会并行连一条 wss 做心跳与在线状态加速（消息仍走长轮询），'
+                                + '连不上自动退回、关闭即一键切回，聊天功能不受影响。启用两步：'
+                                + '① Linux 上用 PM2 起守护进程 —— pm2 start "php ws-server.php" --name owlsgo-ws，'
+                                + '再执行 pm2 save（配合 pm2 startup 实现开机自启）；'
+                                + '② 确认 nginx 已有 /ws 反代（nginx-server.conf 自带，容器部署需手动同步）。'
+                                + '改端口需重启守护进程，并同步改 nginx 里的同一端口。')
                             // v1.3.167 执行日志保留期：维护任务页的「清理过期日志」按钮
                             // 与每天一次的 purge_cron_logs 任务共用这一项（一处改、两处生效）。
                             + fld('cron_log_retain_days', '执行日志保留期(天)', '90')
@@ -8405,6 +8511,9 @@
                 sound_default: swv('owS_sound_default'),
                 // v1.2.51 调试模式（v1.2.52 起也是开关）
                 debug_mode: swv('owS_debug_mode'),
+                // P1（WS 实时层）：实时通道开关 + 守护进程端口
+                ws_enable: swv('owS_ws_enable'),
+                ws_port: $('owS_ws_port') ? $('owS_ws_port').value : '',
                 // v1.3.44 站点默认语言（语言组未渲染时给空串，后端跳过该键）
                 ow_lang_default: $('owS_ow_lang_default') ? $('owS_ow_lang_default').value : ''
             }, function (r) {

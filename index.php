@@ -777,6 +777,32 @@ if ($action !== '') {
             ] + Chat::allMembers($room, $actor)
               + ['is_member' => $actor['kind'] === 'user' && Chat::isMember($room, $actor)]);
 
+        case 'ws_ticket':
+            /* P1（WS 实时层）：签发一次性 WS 连接票据（不建立连接本身）。
+               - 60 秒时效 + 用后即焚（守护进程读到即删）——防重放靠这两条，不引入新表；
+               - 开关/端口都读 DB settings：后台可一键切回长轮询（关掉后这里直接拒绝）；
+               - URL 用站点地址拼 wss://（https 环境自动 wss），由 nginx /ws 反代到本机守护进程。 */
+            if (DB::setting('ws_enable', '0') !== '1') {
+                Api::json(['ok' => false, 'msg' => '实时通道未启用', 'disabled' => true]);
+            }
+            if ($actor['kind'] === 'none') Api::json(['ok' => false, 'msg' => '请先刷新页面建立身份']);
+            // 本接口会写票据文件：限速别缺席（每 60 秒最多 30 次/身份）
+            if (!Sec::rateLimit('ws_ticket', $actor['kind'] . $actor['id'], 60, 30)) {
+                Api::json(['ok' => false, 'msg' => '请求过于频繁，请稍后再试']);
+            }
+            $wsBase = ow_site_url();
+            if ($wsBase === '') Api::json(['ok' => false, 'msg' => '站点地址不可用']);
+            $wsUrl = preg_replace('#^https#i', 'wss', $wsBase);
+            if ($wsUrl === $wsBase) $wsUrl = preg_replace('#^http#i', 'ws', $wsBase);
+            $wsToken = bin2hex(random_bytes(32));   // 64 位十六进制，守护进程按同一规则校验
+            $wsDir = (string)($CFG['data_dir'] ?? __DIR__ . '/data') . '/ws-tickets';
+            if (!is_dir($wsDir)) @mkdir($wsDir, 0775, true);
+            $wsPayload = (string)json_encode(['kind' => $actor['kind'], 'id' => (int)$actor['id'], 'exp' => time() + 60]);
+            if (@file_put_contents($wsDir . '/' . $wsToken . '.json', $wsPayload) === false) {
+                Api::json(['ok' => false, 'msg' => '实时通道暂不可用']);
+            }
+            Api::json(['ok' => true, 'url' => $wsUrl . '/ws?ticket=' . $wsToken, 'expires' => 60]);
+
         case 'room_invite':
             $room = Chat::room((int)$p('room_id'));
             if (!$room) Api::json(['ok' => false, 'msg' => '群聊不存在']);
@@ -1844,6 +1870,9 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
         // v1.3.1：游客未点选任何群时下发 0，前端据此禁用输入区（进入后才解锁）
         'room' => $entered ? (int)$first['id'] : 0,
         'site_url' => ow_site_url(),
+        // P1（WS 实时层）：前端是否尝试连 WS 加速层。默认 0 = 不连，行为与长轮询时代完全一致；
+        // 开启后前端并行连一条 WS 只做心跳 / 在线状态加速 —— 消息仍走长轮询，回退免费。
+        'rt_enabled' => DB::setting('ws_enable', '0') === '1',
         'settings' => $settings,
         // v1.3.64：改密码是否要邮箱验证码，前端按它决定要不要渲染那一栏。
         // 判定必须与 Auth::changePassword 完全同源（开关 + 真有可投递的通道 + 本人邮箱可用）：
