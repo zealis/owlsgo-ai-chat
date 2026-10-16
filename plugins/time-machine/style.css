@@ -1,0 +1,252 @@
+/**
+ * 时光机插件（time-machine v1.0.0）
+ *
+ * 全部颜色只引用核心 --ow-* 变量，深浅两套主题自动跟随（不写 [data-theme] 覆盖块）。
+ * 布局基准：波文卡片浮在 --ow-bg-chat 灰底上（与聊天气泡同一底色语境），
+ * 卡片用 --ow-surface 白面 + --ow-border 细边；品牌交互色只用于选中态与主按钮。
+ * 前缀 ow-tm-，不触碰任何核心通用类。
+ */
+
+/* ---------- rail 入口图标（站方指定的填充式字形，fill=currentColor 跟随按钮态） ---------- */
+.ow-tm-ricon { display: block; }
+
+/* ---------- 侧栏面板 ---------- */
+.ow-tm-side { padding: 14px 12px; }
+.ow-tm-side-h { font-size: 15px; font-weight: 600; color: var(--ow-text-title); margin-bottom: 6px; }
+.ow-tm-side-d { font-size: 12.5px; color: var(--ow-text-sub); line-height: 1.7; margin: 0 0 12px; }
+.ow-tm-side-stats { margin-top: 12px; font-size: 12px; color: var(--ow-text-sub); line-height: 1.6; }
+.ow-tm-side-stats b { color: var(--ow-text-title); }
+
+/* ---------- 主区：时间流 ---------- */
+.ow-tm { max-width: 640px; margin: 0 auto; }
+
+/* 顶栏（分栏 + 发波文）：sticky 常驻在 #owMessages 滚动容器顶部（与 batch-ops 操作条同一手法） */
+.ow-tm-head {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    justify-content: space-between; -webkit-justify-content: space-between;
+    gap: 8px;
+    margin: -12px -16px 10px;          /* 抵消 #owMessages 的内边距，做成通栏 */
+    padding: 0 16px;
+    background: var(--ow-bg-chat);
+    border-bottom: 1px solid var(--ow-border);
+}
+.ow-tm-tabs { display: flex; display: -webkit-flex; gap: 2px; }
+.ow-tm-tab {
+    position: relative;
+    padding: 11px 10px 9px;
+    border: none;
+    background: none;
+    font-size: 14px;
+    color: var(--ow-text-sub);
+    cursor: pointer;
+    white-space: nowrap;
+}
+.ow-tm-tab:hover { color: var(--ow-text); }
+/* 选中态：品牌色 + 底部短横条（自绘，不依赖核心下划线控件） */
+.ow-tm-tab.is-on { color: var(--ow-primary-dark); font-weight: 600; }
+.ow-tm-tab.is-on::after {
+    content: "";
+    position: absolute;
+    left: 50%; bottom: 0;
+    width: 22px; height: 2.5px;
+    margin-left: -11px;
+    border-radius: 2px;
+    background: var(--ow-primary);
+}
+.ow-tm-sendbtn {
+    flex-shrink: 0; -webkit-flex-shrink: 0;
+    padding: 6px 14px;
+    border: none;
+    border-radius: 16px;
+    background: var(--ow-primary-strong);
+    color: var(--ow-on-accent);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.ow-tm-sendbtn:hover { background: var(--ow-primary-dark); }
+
+/* 空态 / 加载态 */
+.ow-tm-empty { padding: 48px 16px; text-align: center; font-size: 13px; color: var(--ow-text-sub); }
+.ow-tm-foot { padding: 4px 0 12px; text-align: center; }
+
+/* ---------- 波文卡片 ---------- */
+.ow-tm-card {
+    display: flex; display: -webkit-flex;
+    gap: 10px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    background: var(--ow-surface);
+    border: 1px solid var(--ow-border);
+    border-radius: 14px;
+}
+.ow-tm-card-av { flex-shrink: 0; -webkit-flex-shrink: 0; }
+.ow-tm-card-main { flex: 1 1 auto; -webkit-flex: 1 1 auto; min-width: 0; }
+
+.ow-tm-card-top {
+    display: flex; display: -webkit-flex;
+    align-items: baseline; -webkit-align-items: baseline;
+    gap: 8px;
+}
+.ow-tm-nick {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ow-text-title);
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 60%;
+}
+.ow-tm-nick:hover { text-decoration: underline; }
+.ow-tm-nick-s { font-size: 13px; }
+.ow-tm-time { font-size: 12px; color: var(--ow-text-sub); flex: 1 1 auto; -webkit-flex: 1 1 auto; }
+/* 删除：桌面悬停浮现，触屏设备常显（无 hover 可言，不玩隐藏） */
+.ow-tm-del {
+    flex-shrink: 0; -webkit-flex-shrink: 0;
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    justify-content: center; -webkit-justify-content: center;
+    width: 26px; height: 26px;
+    border: none;
+    border-radius: 50%;
+    background: none;
+    color: var(--ow-text-sub);
+    cursor: pointer;
+    opacity: 0;
+}
+.ow-tm-del:hover { background: var(--ow-hover-bg); color: var(--ow-red); }
+.ow-tm-card:hover .ow-tm-del { opacity: 1; }
+@media (hover: none) {
+    .ow-tm-del { opacity: .72; }
+}
+
+.ow-tm-text {
+    margin-top: 5px;
+    font-size: 14.5px;
+    line-height: 1.75;
+    color: var(--ow-text);
+    word-break: break-word;
+    overflow-wrap: break-word;
+}
+
+/* ---------- 配图九宫格 ---------- */
+.ow-tm-imgs { display: flex; display: -webkit-flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.ow-tm-img {
+    display: block;
+    border-radius: 8px;
+    border: 1px solid var(--ow-border);
+    cursor: zoom-in;
+    background: var(--ow-bg-sub);
+}
+/* 1 张：大图自由比例；2~4 张：两列；5 张起：三列（方格裁切） */
+.ow-tm-imgs.g1 .ow-tm-img { max-width: 320px; max-height: 320px; }
+.ow-tm-imgs.g2 .ow-tm-img,
+.ow-tm-imgs.g3 .ow-tm-img {
+    width: 31.5%;
+    height: 96px;
+    object-fit: cover;
+}
+.ow-tm-imgs.g2 .ow-tm-img { width: 47.5%; height: 128px; }
+
+/* ---------- 动作条 ---------- */
+.ow-tm-acts {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    gap: 4px;
+    margin-top: 10px;
+}
+.ow-tm-act {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    gap: 5px;
+    padding: 5px 9px;
+    border: none;
+    border-radius: 14px;
+    background: none;
+    font-size: 12.5px;
+    color: var(--ow-text-sub);
+    cursor: pointer;
+    white-space: nowrap;
+}
+.ow-tm-act:hover { background: var(--ow-hover-bg); color: var(--ow-text); }
+.ow-tm-act:disabled { opacity: .5; cursor: default; }
+.ow-tm-act.is-on { color: var(--ow-red); }
+.ow-tm-act.is-on:hover { background: var(--ow-hover-bg); color: var(--ow-red); }
+/* 非按钮的展示项（浏览数）：去手型、不上浮色 */
+.ow-tm-plain { cursor: default; }
+.ow-tm-plain:hover { background: none; color: var(--ow-text-sub); }
+.ow-tm-act i, .ow-tm-plain i { font-style: normal; }
+
+/* ---------- 评论区 ---------- */
+.ow-tm-cmts {
+    margin-top: 10px;
+    padding: 10px 12px;
+    background: var(--ow-bg-sub);
+    border-radius: 10px;
+}
+.ow-tm-cmt-load { font-size: 12.5px; color: var(--ow-text-sub); padding: 4px 0; }
+.ow-tm-cmt { display: flex; display: -webkit-flex; gap: 8px; padding: 5px 0; }
+.ow-tm-cmt-main { flex: 1 1 auto; -webkit-flex: 1 1 auto; min-width: 0; }
+.ow-tm-cmt-meta { display: flex; display: -webkit-flex; align-items: baseline; -webkit-align-items: baseline; gap: 8px; }
+.ow-tm-cmt-text { font-size: 13.5px; line-height: 1.65; color: var(--ow-text); word-break: break-word; margin-top: 1px; }
+.ow-tm-cmt-row { display: flex; display: -webkit-flex; gap: 8px; margin-top: 8px; }
+.ow-tm-cmt-row .ow-input { flex: 1 1 auto; -webkit-flex: 1 1 auto; min-width: 0; }
+.ow-tm-cmt-row .ow-btn { flex-shrink: 0; -webkit-flex-shrink: 0; }
+
+/* ---------- 发波文编辑器（弹窗内） ---------- */
+.ow-tm-ta { width: 100%; resize: vertical; min-height: 96px; line-height: 1.7; }
+.ow-tm-cmp-meta { text-align: right; font-size: 12px; color: var(--ow-text-sub); margin-top: 4px; }
+.ow-tm-cmp-imgs { display: flex; display: -webkit-flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.ow-tm-thumb {
+    position: relative;
+    width: 72px; height: 72px;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid var(--ow-border);
+}
+.ow-tm-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+/* 缩略图上的移除按钮：图像像素语义的半透明黑底白叉（唯一允许写死的一处，见 PLUGIN.md 例外 1） */
+.ow-thumb-x {
+    position: absolute;
+    top: 3px; right: 3px;
+    width: 20px; height: 20px;
+    border: none;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, .55);
+    color: #fff;
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    justify-content: center; -webkit-justify-content: center;
+    cursor: pointer;
+}
+.ow-tm-addimg {
+    width: 72px; height: 72px;
+    border: 1px dashed var(--ow-border-control);
+    border-radius: 8px;
+    background: none;
+    color: var(--ow-text-sub);
+    cursor: pointer;
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    justify-content: center; -webkit-justify-content: center;
+}
+.ow-tm-addimg:hover { border-color: var(--ow-primary); color: var(--ow-primary-dark); background: var(--ow-hover-bg); }
+.ow-tm-cmp-tip { font-size: 12px; color: var(--ow-text-sub); margin-top: 10px; }
+
+/* ---------- 移动端（≤720px，与核心断点一致） ---------- */
+@media (max-width: 720px) {
+    .ow-tm { max-width: none; }
+    .ow-tm-head { padding: 0 12px; margin: -12px -12px 8px; }
+    .ow-tm-tab { padding: 10px 8px 8px; font-size: 13.5px; }
+    .ow-tm-card { padding: 12px; border-radius: 12px; }
+    .ow-tm-nick { max-width: 48%; }
+    .ow-tm-imgs.g3 .ow-tm-img { width: 47.5%; height: 104px; }
+    .ow-tm-imgs.g2 .ow-tm-img { width: 47.5%; height: 104px; }
+    .ow-tm-text { font-size: 14px; }
+    .ow-tm-act { padding: 5px 7px; }
+}
