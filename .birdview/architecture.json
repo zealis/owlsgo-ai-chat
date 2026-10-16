@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "mapId": "owlsgo-chat",
-  "revision": 11,
+  "revision": 12,
   "language": "zh",
   "project": {
     "id": "owlsgo-chat",
@@ -208,10 +208,10 @@
     },
     {
       "id": "ws-gateway",
-      "name": "WebSocket 实时网关（拟建，未实现）",
+      "name": "WebSocket 实时网关（P1/P2 已上线：心跳/在线状态 + 消息推送扇出）",
       "kind": "local",
       "role": "backend",
-      "responsibility": "拟建的零依赖 WS 常驻推送进程（PHP CLI，手写握手 / 帧解析 / 事件循环）：承载连接保活心跳（前端 startHeartbeat 形状）、在线状态（连接即在线/断开即离线，保留 45 秒窗口剔除半死连接）、按房间与会话的消息推送扇出（复用 Chat::visible()/pack()/allMembers() 口径，不复制任何可见性规则）、PHP→daemon 控制口（消息 nudge 与缓存失效）。发送 P1/P2 期间仍走 HTTP，P3 迁入 WS（收 = 发；须以子进程隔离插件同步长任务，Linux 生产用 pcntl/fork）；长轮询端点保留为兜底，前端断线自动回落、开关一键切回。运维：Linux 用 PM2 守护启动（自启 + 崩溃自动重启）。部署形态参考 ttt 站点（nginx /ws 反代 + wss 同源 + 客户端 30s 心跳 + 5s×5→60s 重连），但不复制其把业务规则搬进中继进程的做法。",
+      "responsibility": "零依赖 WS 常驻推送进程（PHP CLI，手写握手 / 帧解析 / 事件循环），P1+P2 已落地：连接保活心跳（复用 Chat::heartbeat）、在线状态（连接即在线 / 断开即离线，保留 45 秒窗口兜底半死连接）、presence wake 合帧扇出；消息推送扇出 —— 每房间 1s 水位 watcher（索引探询，命中才逐座位拉包）、DM 逐座位单查、订阅即补齐（重连不丢消息）；hidden/visible/pack 逐条复用 Chat::roomFetchSince / dmFetchSince（拉增量唯一实现，与长轮询逐字同口径，不复制可见性规则）；PHP→daemon nudge 控制口（同端口 POST /ctl，X-Ow-Ctl 密钥读 data/ws-ctl.key，fire-and-forget 加速器、失败由 watcher 兜底）；撤回推送（按房间 / 私聊双向 nudge 扇出 {t:recall}）；cronTick 承接（长轮询流量下降后计划任务由 daemon 驱动）；票据走 Sec-WebSocket-Protocol 子协议（URL 兼容期保留）；安全：sub 订阅鉴权 / 每连接令牌桶 / Origin≡Host。前端主通道切换：rt.on 时停消息长轮询（startPoll/dmPollLoop 守卫），断开按世代号回落长轮询并 5s×5→60s 退避重连；后台开关一键切回。发送仍走 HTTP（P3 迁入 WS，须以子进程隔离插件同步长任务，Linux 生产用 pcntl/fork）。运维：Linux 用 PM2 守护启动。",
       "ownership": [
         {
           "kind": "file",
@@ -220,6 +220,10 @@
         {
           "kind": "file",
           "path": "core/realtime_ws.php"
+        },
+        {
+          "kind": "file",
+          "path": "core/realtime_push.php"
         }
       ],
       "evidence": [
@@ -242,11 +246,11 @@
           "quote": "长轮询须知（本项目实时通道是 AJAX 长轮询，不是 WebSocket）"
         }
       ],
-      "status": "uncertain",
+      "status": "supported",
       "openQuestions": [
-        "P1（骨架 / 一次性票据握手 / 心跳 / 在线状态）尚未实现；消息推送扇出与 cronTick 接管为后续阶段规划。",
-        "实现载体未定稿：零依赖约束下的候选是纯 PHP 手写事件循环，需经方案评审后落地。",
-        "发送迁移（P3）的子进程隔离方案未定稿（pcntl/fork 或 proc_open 池，Linux 生产）。"
+        "P3 立项（逐个独立评估）：typing、已读回执（现有的是已读水位，回执属新增）、插件实时扩展点、发送迁移（子进程隔离方案未定稿：pcntl/fork 或 proc_open 池，Linux 生产）。",
+        "「用户可见的 XX 上线提示」未立项。",
+        "上线前完整安全清单全量输出（c-security-audit-before-prod）仍属发布前动作。"
       ],
       "layout": {
         "row": 0,
@@ -2289,7 +2293,7 @@
     {
       "id": "c-ws-realtime-plan",
       "name": "方向已定：实时通道转向 WebSocket（零依赖常驻进程实现；长轮询保留为兜底与开关；发送暂留 HTTP）",
-      "note": "来源：用户 2026-10-15 会话方向（sanitized），2026-10-16 对照架构文件定稿、同日二次修订（发送迁移改回 P3；运维定 PM2）。用户基数增长后长轮询会被 php-cgi 进程墙卡死，须以 WebSocket 承载心跳（startHeartbeat）/ 在线状态 / 消息推送；实现保持零依赖（手写 WS）。分期：P1 骨架 + 一次性票据握手 + 心跳/在线状态（含上线/下线事件——属在线状态本体，随成员列表即时下发，保留「超管/群主才见在线点」口径）→ P2 消息推送扇出（复用 Chat::visible/pack/allMembers 口径）+ PHP→daemon 控制口（nudge/缓存失效）+ cronTick 承接 → P3 逐个立项：typing、已读回执、插件实时扩展点、发送迁移（收 = 发；须以子进程隔离插件同步长任务——Linux 生产用 pcntl/fork）。运维：Linux 用 PM2 守护启动（pm2 startup + pm2 save 开机自启、崩溃自动重启、pm2 logs 日志轮转；Windows 仅本地 bat 辅助）。「用户可见的 XX 上线提示」未立项。长轮询端点全期保留为兜底，每期独立上线、可一键切回。",
+      "note": "来源：用户 2026-10-15 会话方向（sanitized），2026-10-16 对照架构文件定稿、同日二次修订（发送迁移改回 P3；运维定 PM2）。用户基数增长后长轮询会被 php-cgi 进程墙卡死，须以 WebSocket 承载心跳（startHeartbeat）/ 在线状态 / 消息推送；实现保持零依赖（手写 WS）。分期：P1 骨架 + 一次性票据握手 + 心跳/在线状态（含上线/下线事件——属在线状态本体，随成员列表即时下发，保留「超管/群主才见在线点」口径）→ P2 消息推送扇出（复用 Chat::visible/pack/allMembers 口径）+ PHP→daemon 控制口（nudge/缓存失效）+ cronTick 承接 → P3 逐个立项：typing、已读回执、插件实时扩展点、发送迁移（收 = 发；须以子进程隔离插件同步长任务——Linux 生产用 pcntl/fork）。运维：Linux 用 PM2 守护启动（pm2 startup + pm2 save 开机自启、崩溃自动重启、pm2 logs 日志轮转；Windows 仅本地 bat 辅助）。「用户可见的 XX 上线提示」未立项。长轮询端点全期保留为兜底，每期独立上线、可一键切回。 2026-10-16 P2 落地（同日完成并验收）：拉增量收敛（Chat::roomFetchSince/dmFetchSince 为唯一实现，poll/dmPoll 循环体改用）；daemon 消息扇出（watcher+nudge 双路径）；控制口（core/realtime_push.php，send/recall 成功后 fire-and-forget）；cronTick 承接；前端主通道切换（rt.on 停长轮询、断线回落、重连重订）；撤回推送改为双向 nudge（修掉「只推发送方侧、接收方收不到」）。发送迁移仍按 P3。",
       "origin": "user",
       "strength": "required",
       "applicability": "applicable",
@@ -2307,7 +2311,7 @@
           "quote": "WebSocket 实时推送，心跳保活，断线自动降级轮询"
         }
       ],
-      "verification": "P1 验收：一次性票据握手、30s 心跳、断开即下线、长轮询回落、开关一键切回、零第三方依赖评审通过。"
+      "verification": "P1 验收：票据握手 / 心跳 / 断开即下线 / 长轮询回落 / 开关切回；全栈浏览器 12/12 真 wss 经 nginx；加固冒烟 9/9（sub 鉴权 / 令牌桶 1008 / Origin / access_log off）。P2 验收（2026-10-16）：协议冒烟 31/31 —— watcher 兜底（~700ms）/ nudge 加速（~50ms 全链）/ hidden 过滤与恢复 / DM 推送与第三方隔离 / 撤回帧双向（群+DM）/ 停机期消息重连补齐 / 控制口 401/200 / 子协议与 URL 票据 / Origin / 令牌桶；浏览器 E2E 32/32 —— 群与私聊秒收（23ms/5ms）+ network 断言 rt.on 后无新长挂起 poll / 撤回对端气泡实时移除 / 杀 daemon 回落长轮询 437ms / 重启自动重连推送恢复 / 开关关=现状（游客页面 rt 不启动）/ 全部页面零 JS 报错。"
     }
   ]
 }

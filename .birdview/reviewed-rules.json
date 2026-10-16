@@ -3,7 +3,7 @@
   "scope": "本次仅审阅与 WS 实时层改造直接相关的规则（实时通道、依赖与部署、安全与可见性、计划任务、回归口径、上线自查）；README 与两份设计文档的其余章节未逐条审阅。",
   "architectureBinding": {
     "mapId": "owlsgo-chat",
-    "mapRevision": 11,
+    "mapRevision": 12,
     "sourceRevision": "3f0e154cbd514eb1730590ebe2a9fb9db4f20761"
   },
   "groups": [
