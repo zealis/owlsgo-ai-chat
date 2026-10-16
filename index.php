@@ -801,7 +801,9 @@ if ($action !== '') {
             if (@file_put_contents($wsDir . '/' . $wsToken . '.json', $wsPayload) === false) {
                 Api::json(['ok' => false, 'msg' => '实时通道暂不可用']);
             }
-            Api::json(['ok' => true, 'url' => $wsUrl . '/ws?ticket=' . $wsToken, 'expires' => 60]);
+            // P2：URL 不带票——票据随 Sec-WebSocket-Protocol 子协议传递（浏览器 WS API 不能加请求头，
+            // 放查询串会进访问日志）；前端连 'wss://…/ws' 时附 ['owt', 'owt.<ticket>']。
+            Api::json(['ok' => true, 'url' => $wsUrl . '/ws', 'ticket' => $wsToken, 'expires' => 60]);
 
         case 'room_invite':
             $room = Chat::room((int)$p('room_id'));

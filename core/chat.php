@@ -2,6 +2,10 @@
 /**
  * 聊天核心：房间、消息、长轮询、撤回、历史分页、敏感词、禁言、公告、在线列表
  */
+// P2（WS 实时层）：send/recall 尾部要发本机 nudge 加速器，确保类在场。
+// 纯静态类、无副作用；require_once 幂等，任何入口单独加载 chat.php 也安全。
+require_once __DIR__ . '/realtime_push.php';
+
 class Chat
 {
     /**
@@ -905,6 +909,13 @@ class Chat
         // （长度、纯表情、纯链接、内容去重），只有 id 就得回查一次 messages，
         // 每条消息多一发 SQL 不划算。参数是**追加**，老插件的多余形参不受影响。
         Plugin::fire('message.after_send', [$id, $actor, $roomId, $content, $type, $toUserId]);
+        // P2（WS 实时层）：本机 nudge 加速器——告诉守护进程「这批有新料」，让它立即扇出。
+        // 只是加速：丢失 / 守护不在 → 它每 tick 的水位探询会在 1 秒内补上；全静默，绝不冒泡。
+        if ($isDm) {
+            RealtimePush::nudgeDm('user:' . (int)$toUserId);
+        } else {
+            RealtimePush::nudgeRoom($roomId);
+        }
         // v1.3.23：返回**完整消息行**（pack 后的形态），让前端能立即本地回显。
         // 为什么必须由服务端给：消息行里有十几处派生字段 —— 时间戳、role、
         // 头像最终 URL、引用快照、被敏感词插件替换过的正文（text.filter 钩子
@@ -1085,6 +1096,54 @@ class Chat
         return [true, $tip];
     }
 
+    // ---------- 增量拉取（长轮询与 WS 推送共用的唯一实现，P2） ----------
+    /**
+     * 拉一批房间增量并打包 —— **拉增量的唯一实现**。
+     *
+     * 为什么单独立出来：WS 推送必须与长轮询逐字同口径（hidden 过滤 → visible 过滤 →
+     * pack 打包，一步都不能少），谁都不许再写第二份——口径漂移就是从这里开始的。
+     * poll() 的循环体已改为调用它；realtime_ws 守护进程扇出时也调用它。
+     *
+     * @param array|null $hidden 预载的 hiddenIds()（poll 一轮复用一份，避免 0.5s 一次查询）；传 null 时自取
+     * @return array [int $since, array $items]
+     *               ⚠️ 即使整批都被 hidden/visible 过滤掉，since 也必须推进（v1.1.14：
+     *               否则这条会被下一次轮询重新捞出来反复判断）
+     */
+    public static function roomFetchSince(array $actor, int $roomId, int $sinceId, ?array $hidden = null): array
+    {
+        $rows = DB::all('SELECT * FROM messages WHERE room_id=? AND id>? ORDER BY id LIMIT 200', [$roomId, $sinceId]);
+        if (!$rows) return [$sinceId, []];
+        if ($hidden === null) $hidden = self::hiddenIds($actor);
+        $avMap = self::avatarMap($rows);   // v1.3.20：与 history 同一口径（见 pack），批量查不产生 N+1
+        $out = [];
+        foreach ($rows as $m) {
+            if (!isset($hidden[(int)$m['id']]) && self::visible($m, $actor)) $out[] = self::pack($m, $actor, $avMap);
+            $sinceId = max($sinceId, (int)$m['id']);
+        }
+        return [$sinceId, $out];
+    }
+
+    /**
+     * 私聊版增量拉取（与 roomFetchSince 同构；dmPoll 的循环体与 WS 扇出共用）。
+     * ⚠️ 头像映射必须在拿到行后立刻建：这行原先直接引用 $avMap 而函数从没定义它——
+     *    PHP 8 下「未定义变量」传进 pack() 声明为 array 的第三参就是 TypeError（一有私信就 500）。
+     */
+    public static function dmFetchSince(array $actor, array $peer, int $sinceId, ?array $hidden = null): array
+    {
+        [$pk, $pid] = $peer;
+        [$cond, $args] = self::dmPairSql($actor, $pk, $pid, 'id>?', [$sinceId]);
+        $rows = DB::all("SELECT * FROM messages WHERE room_id=0 AND to_user_id > 0 AND $cond ORDER BY id LIMIT 200", $args);
+        if (!$rows) return [$sinceId, []];
+        if ($hidden === null) $hidden = self::hiddenIds($actor);
+        $avMap = self::avatarMap($rows);
+        $out = [];
+        foreach ($rows as $m) {
+            if (!isset($hidden[(int)$m['id']]) && self::visible($m, $actor)) $out[] = self::pack($m, $actor, $avMap);
+            $sinceId = max($sinceId, (int)$m['id']);
+        }
+        return [$sinceId, $out];
+    }
+
     // ---------- 长轮询（主通道，零依赖替代 WebSocket） ----------
     public static function poll(array $actor, int $roomId, int $sinceId, int $timeout = 20): array
     {
@@ -1100,15 +1159,14 @@ class Chat
             $hit = '';
             Plugin::fire('poll.hint', [&$hit, $roomId, $sinceId]);
             if ($hit !== '1') {
-                $rows = DB::all('SELECT * FROM messages WHERE room_id=? AND id>? ORDER BY id LIMIT 200', [$roomId, $sinceId]);
-                if ($rows) {
-                    $avMap = self::avatarMap($rows);   // v1.3.20：与 history 同一口径（见 pack）
-                    foreach ($rows as $m) {
-                        // v1.1.14：隐藏的消息不下发，但仍要推进 sinceId，
-                        // 否则这条会被下一次轮询重新捞出来反复判断。
-                        if (!isset($hidden[(int)$m['id']]) && self::visible($m, $actor)) $new[] = self::pack($m, $actor, $avMap);
-                        $sinceId = max($sinceId, (int)$m['id']);
-                    }
+                // P2：拉增量收敛进 roomFetchSince()（WS 推送共用同一实现）。
+                // 判断要同时看「有没有包」与「since 有没有推进」：原实现查询到行就 break
+                // （哪怕整批都被 hidden/visible 过滤掉）；只判 $batch 会让「一批全被过滤」
+                // 的情形继续空转。since 推进 ⇔ 确实查到过行。
+                $pre = $sinceId;
+                [$sinceId, $batch] = self::roomFetchSince($actor, $roomId, $sinceId, $hidden);
+                if ($batch || $sinceId !== $pre) {
+                    $new = array_merge($new, $batch);
                     break;
                 }
             }
@@ -1972,25 +2030,17 @@ class Chat
     /** 私聊增量轮询：与 poll 同构（长挂起），返回新消息 */
     public static function dmPoll(array $actor, array $peer, int $sinceId, int $timeout = 20): array
     {
-        [$pk, $pid] = $peer;
-        [$cond, $args] = self::dmPairSql($actor, $pk, $pid, 'id>?', [$sinceId]);
-        $sql = "SELECT * FROM messages WHERE room_id=0 AND to_user_id > 0 AND $cond ORDER BY id LIMIT 200";
         $deadline = time() + max(5, min(30, $timeout));
         $new = [];
         $hidden = self::hiddenIds($actor);
         while (time() < $deadline) {
-            $rows = DB::all($sql, $args);
-            if ($rows) {
-                // ⚠️ 头像映射必须在这里建：这行原先直接引用 $avMap，而本函数从没定义它 ——
-                //   PHP 8 下「未定义变量」是 warning（值 null），传给 pack() 声明为
-                //   array 的第三参就是 TypeError → 整个 dm_poll 500。
-                //   只在「本轮真有新私信」时触发，所以平时看不出来，一来私信就炸。
-                //   与 poll()（见上）和 dmList() 同一口径：批量查，不产生 N+1。
-                $avMap = self::avatarMap($rows);
-                foreach ($rows as $m) {
-                    if (!isset($hidden[(int)$m['id']]) && self::visible($m, $actor)) $new[] = self::pack($m, $actor, $avMap);
-                    $sinceId = max($sinceId, (int)$m['id']);
-                }
+            // P2：与 poll 同款，拉增量收敛进 dmFetchSince()（WS 推送共用）。
+            // 逐轮重新取 sinceId（单查版内部现算条件），与原实现「SQL 固定、命中才 break」等价：
+            // 命中 ⇔ since 推进，用同一判据收口。
+            $pre = $sinceId;
+            [$sinceId, $batch] = self::dmFetchSince($actor, $peer, $sinceId, $hidden);
+            if ($batch || $sinceId !== $pre) {
+                $new = array_merge($new, $batch);
                 break;
             }
             Plugin::cronTick();
@@ -2376,6 +2426,10 @@ class Chat
             'mod'  => $isModerator,   // 是否为管理动作（撤他人违规内容）
         ]);
         Plugin::fire('msg.after_recall', [$msgId, $m, $actor]);
+        // P2：撤回也推——它是全局物理删除，所有端（含发送方其他标签页）应立刻把气泡
+        // 变成「此消息已撤回」占位（前端复用 markRecalled）。nudge-only：
+        // 丢失退化为「留到刷新」，与旧行为持平；不做 watcher 复查（探测 DELETE 要扫窗口，不值）。
+        RealtimePush::nudgeRecall($msgId, (int)$m['room_id'], (int)($m['user_id'] ?? 0), (int)($m['to_user_id'] ?? 0));
         return [true, '已撤回'];
     }
 

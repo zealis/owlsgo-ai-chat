@@ -1684,6 +1684,8 @@
         rt: {
             ws: null, on: false, opening: false, attempts: 0, hbTimer: 0, reTimer: 0,
             lastPong: 0, room: -1, _wmAt: 0,
+            lastRoom: 0,   // 最近订阅过的房间（私聊视图重连时只订它、不补内容）
+            dmSets: {},    // peer => 已知水位（P2 私聊多会话订阅；重连时原样重发）
 
             /** 入口：服务端 rt_enabled=0 时永不连接（后台一键切回长轮询靠它） */
             start: function () {
@@ -1693,9 +1695,13 @@
                 this.opening = true;
                 OwApi.post('ws_ticket', {}, function (r) {
                     self.opening = false;
-                    if (!r || !r.ok || !r.url) return;   // 未启用 / 限速 / 站点地址缺失：静默
+                    if (!r || !r.ok || !r.url || !r.ticket) return;   // 未启用 / 限速 / 站点地址缺失：静默
                     var s;
-                    try { s = new WebSocket(r.url); } catch (e) { return; }   // 老内核无 WebSocket：静默
+                    try {
+                        // P2：票据走 Sec-WebSocket-Protocol 子协议（浏览器 WS API 不能加请求头，
+                        // 放 URL 会进访问日志）；服务端取 'owt.<ticket>' 并回选 'owt'。
+                        s = new WebSocket(r.url, ['owt', 'owt.' + r.ticket]);
+                    } catch (e) { return; }   // 老内核无 WebSocket / 不支持子协议：静默
                     self.ws = s;
                     s.onopen = function () { self.onOpen(); };
                     s.onmessage = function (ev) { self.onMsg(ev); };
@@ -1706,8 +1712,28 @@
             onOpen: function () {
                 this.on = true; this.attempts = 0;
                 this.lastPong = new Date().getTime();
+                // P2 主通道切换：WS 在线 → 停消息长轮询（群聊与私聊都停；世代号让在途请求自毁）
+                try {
+                    if (OwChat._roomPollRunning) { OwChat._roomPollRunning = false; OwChat.pollGen = (OwChat.pollGen || 0) + 1; }
+                    OwChat.dmGen = (OwChat.dmGen || 0) + 1;
+                } catch (e) {}
                 this.hb();
-                this.sub(OwChat.room || 0);
+                // 重订：**不走 sub() 的去重早退**。原因（实测踩过）：连接建立前的
+                // switchRoom 会调 sub() —— send 静默丢弃（!on），但 this.room 已置为新值；
+                // 连接建立后 onOpen 再用 sub() 重订就被「room === this.room」早退吞掉，
+                // 服务端从未收到订阅 → 该端收不到任何房间推送，直到某次断线重连把
+                // room 清 -1 才自愈。这里无条件重发（重连后服务端订阅本就随旧连接销毁）。
+                // 私聊视图只订最后所在房间（用户没在看它，不补内容——房间新消息由推送触发列表前置）。
+                if (OwChat.dm) {
+                    if (this.lastRoom > 0) { this.room = this.lastRoom; this.send({ t: 'sub', room: this.lastRoom, since: 0 }); }
+                } else {
+                    var r0 = OwChat.room || 0;
+                    this.room = r0;
+                    this.send({ t: 'sub', room: r0, since: OwChat.since || 0 });
+                }
+                for (var p in this.dmSets) {
+                    if (this.dmSets.hasOwnProperty(p)) this.send({ t: 'dmsub', peer: p, since: this.dmSets[p] });
+                }
             },
             /** 应用层心跳 25s：服务端 60s 无帧判死；25s 让「单帧丢失」也落在 45s 在线窗口内 */
             hb: function () {
@@ -1723,12 +1749,21 @@
                     self.hb();
                 }, 25000);
             },
-            /** 订阅房间 = 在线状态归属哪个群；进私聊不调用（保持最后房间，人在线不掉） */
-            sub: function (room) {
+            /** 订阅房间 = 在线状态归属哪个群 + 消息推送范围；进私聊不调用（保持最后房间，人在线不掉） */
+            sub: function (room, since) {
                 room = parseInt(room, 10) || 0;
+                since = parseInt(since, 10) || 0;
+                if (room > 0 && room !== this.lastRoom) this.lastRoom = room;
                 if (room === this.room) return;
                 this.room = room;
-                this.send({ t: 'sub', room: room });
+                this.send({ t: 'sub', room: room, since: since });
+            },
+            /** 私聊会话订阅（P2）：多会话累积；记录该会话已知水位，重连时原样重发 */
+            dmsub: function (peer, since) {
+                if (!peer) return;
+                since = parseInt(since, 10) || 0;
+                this.dmSets[peer] = Math.max(this.dmSets[peer] || 0, since);
+                this.send({ t: 'dmsub', peer: peer, since: this.dmSets[peer] });
             },
             send: function (obj) {
                 if (!this.on || !this.ws) return;
@@ -1739,6 +1774,16 @@
                 try { m = JSON.parse(ev.data); } catch (e) { return; }
                 if (!m || !m.t) return;
                 if (m.t === 'pong') { this.lastPong = new Date().getTime(); return; }
+                if (m.t === 'msg' || m.t === 'msgdm') { this.onPush(m); return; }
+                if (m.t === 'recall') {
+                    // 撤回推送（P2）：与本地撤回同款收尾——直接移除气泡 + 清缓存 + 侧栏摘要刷新
+                    var rid = parseInt(m.id, 10) || 0;
+                    var el = document.getElementById('owMsg' + rid);
+                    if (el && el.parentNode) el.parentNode.removeChild(el);
+                    try { delete OwChat.msgCache[rid]; } catch (e) {}
+                    try { OwChat.loadConversations(); } catch (e) {}
+                    return;
+                }
                 if (m.t === 'wake') {
                     // 在线集合变了 → 立刻刷成员；500ms 客户端合并挡连上/断开高峰的扇出
                     var now = new Date().getTime();
@@ -1749,11 +1794,45 @@
                     }
                 }
             },
+            /**
+             * 推送增量渲染（P2）：与长轮询回调同款语义——addMessage 自带按 id 去重
+             * （发送方主标签页 HTTP 回显与其他标签页推送并发到达也不会双气泡）。
+             * 非当前会话的推送不渲染内容，只刷新会话列表（前置 / 未读）。
+             */
+            onPush: function (m) {
+                var list = (m && m.items) || [], i, n = list.length;
+                if (!n) return;
+                var isDm = (m.t === 'msgdm');
+                var viewMatch = isDm
+                    ? (!!OwChat.dm && OwChat.dm.peer === m.peer)
+                    : ((parseInt(m.room, 10) || 0) === (OwChat.room || 0) && !OwChat.dm && !OwChat.noticeMode);
+                if (!viewMatch) {
+                    try { OwChat.loadConversations(); } catch (e) {}   // 其他会话：前置 / 未读
+                    return;
+                }
+                for (i = 0; i < n; i++) {
+                    try { OwChat.addMessage(list[i]); } catch (e) {}
+                    if (list[i].id > OwChat.since) OwChat.since = list[i].id;
+                }
+                // 滚动与提示音：与长轮询回调同一口径（用户停在未读定位点时不打断）
+                if (OwChat._unreadJumpVisible()) OwChat.showUnreadJump(0);
+                else OwChat.scrollBottom();
+                if (OwChat.sound) { try { beep(); } catch (e) {} }
+                try { OwChat.loadConversations(); } catch (e) {}
+            },
             onClose: function () {
+                var wasOn = this.on;   // 真连上过才需要把长轮询拉回来（失败尝试 = 轮询从未停）
                 this.on = false;
                 clearTimeout(this.hbTimer);
                 this.ws = null;
                 this.room = -1;   // 重连后 onOpen 会重新 sub 当前房间
+                if (wasOn) {
+                    // P2 回落：WS 断开 → 消息长轮询拉回来（startPoll/dmPollLoop 自带世代号自愈，重复调用安全）
+                    try {
+                        if (OwChat.dm) OwChat.dmPollLoop();
+                        else if (OwChat.room > 0) { OwChat._roomPollRunning = true; OwChat.startPoll(); }
+                    } catch (e) {}
+                }
                 if (!OwChat.cfg || !OwChat.cfg.rt_enabled) return;
                 var self = this;
                 this.attempts++;
@@ -3086,6 +3165,9 @@
                 }
                 for (var i = 0; i < r.data.length; i++) self.addMessage(r.data[i], true);
                 if (r.data.length) self.since = r.data[r.data.length - 1].id;
+                // P2：私聊订阅（带刚确立的水位；服务端 watcher/nudge 据此推增量。
+                // 重连时 onOpen 会用 dmSets 里的同值原样重发 → 掉线缺口补齐）
+                if (self.rt) self.rt.dmsub(myPeer, self.since);
                 // v1.3.21：与群聊一致，滚动交给 jumpToUnread 决定（见 switchRoom 同处注释）
                 if (r.data.length < 30) self.historyDone = true;
                 if (!r.data.length) self.historyDone = true;
@@ -3110,6 +3192,7 @@
         dmPollLoop: function () {
             var self = this;
             if (!this.dm) return;
+            if (OwChat.rt && OwChat.rt.on) return;   // P2：WS 主通道在线 → 不启动私聊长轮询
             if (this._dmPollTimer) { clearTimeout(this._dmPollTimer); this._dmPollTimer = 0; }
             if (this._dmPollBusy) return;
             var myGen = this.dmGen = (this.dmGen || 0) + 1;
@@ -3378,8 +3461,10 @@
             this._fireViewChange();   // v1.1.0：回到群聊视图 → 插件按 roomId 复原群级装饰
             // v1.2.27：立即渲染「所有成员」并校准发言闸门，不等首次 poll 返回（最长 20 秒）
             this.loadMembers();
-            // P1（WS 实时层）：订阅房间 = 在线状态归属哪个群；未启用/未连接时是空操作
-            this.rt.sub(id);
+            // P1/P2（WS 实时层）：订阅房间（presence 归属 + 消息推送范围）。
+            // since 传 0：此刻 history 还没回来；服务端对 since<=0 只对齐水位、不补内容，
+            // 期间到达的新消息由推送带来（与 history 返回段靠 addMessage 去重，不重不漏）。
+            this.rt.sub(id, 0);
         },
 
         /* ---------- 长轮询（主通道）+ 断线降级短轮询 ----------
@@ -3387,6 +3472,8 @@
            两条长轮询必须互斥——切换视图时自增世代号，旧循环醒来即自杀，
            避免两个 in-flight 请求同时刷新同一个 #owMessages、互相覆盖 since。 */
         startPoll: function () {
+            // P2：WS 主通道在线 → 不启动消息长轮询（WS 断开时 onClose 会把它拉回来）
+            if (OwChat.rt && OwChat.rt.on) return;
             var self = this;
             var myGen = this.pollGen = (this.pollGen || 0) + 1;
             var alive = function () { return self.pollGen === myGen && !self.dm; };
