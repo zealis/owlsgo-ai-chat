@@ -79,22 +79,29 @@
             if (!/^https?:\/\//i.test(href)) continue;
             var h = hostOf(href);
             if (!h || blocked(h)) continue;
-            if (out.indexOf(href) < 0) out.push(href);
+            var dup = false;
+            for (var k = 0; k < out.length; k++) if (out[k].url === href) { dup = true; break; }
+            // 连锚点一起带出来：出卡后要把这个链接藏掉（卡片已经表达了同一件事）
+            if (!dup) out.push({ url: href, el: a });
         }
         return out;
     }
 
-    /** 入队并安排发车 */
-    function enqueue(msg, urls) {
+    /** 入队并安排发车。items = [{url, el}] */
+    function enqueue(msg, items) {
         var added = false;
-        for (var i = 0; i < urls.length; i++) {
-            var u = urls[i];
+        for (var i = 0; i < items.length; i++) {
+            var u = items[i].url, at = { msg: msg, el: items[i].el };
             if (cache[u]) {                                   // 已有结果：直接出卡，不再请求
-                if (cache[u].ok) mount(msg, cache[u].data);
+                if (cache[u].ok) mount(at, cache[u].data);
                 continue;
             }
             if (!waiting[u]) { waiting[u] = []; }
-            if (waiting[u].indexOf(msg) < 0) waiting[u].push(msg);
+            var seen = false;
+            for (var j = 0; j < waiting[u].length; j++) {
+                if (waiting[u][j].msg === msg && waiting[u][j].el === items[i].el) { seen = true; break; }
+            }
+            if (!seen) waiting[u].push(at);
             if (queue.indexOf(u) < 0) { queue.push(u); added = true; }
         }
         if (added) schedule();
@@ -139,9 +146,47 @@
         for (var i = 0; i < list.length; i++) mount(list[i], r.data);
     }
 
+    /**
+     * 出卡后把原始链接藏掉（卡片表达的已是同一件事，一条消息里链接 + 卡片是重复）。
+     * 只藏**被出卡的那个锚点**；消息里还有别的内容时气泡照留，
+     * 若气泡里只剩空白（正文就只有这个链接）连气泡一起收起来，免得留一个空气泡。
+     * 标记 data-lc-hidden 记下「是我们藏的」：撤回时好原样还原。
+     */
+    function hideLink(msg, el) {
+        if (!el || !el.parentNode) return;
+        el.style.display = 'none';
+        el.setAttribute('data-lc-hidden', '1');
+        var holder = el.parentNode;   // .ow-msg-content / .ow-msg-plain
+        if (!holder || !holder.className || holder.className.indexOf('ow-msg-') < 0) return;
+        // 正文里除了已藏的链接还剩不剩文字？
+        // ⚠️ 不能直接用 textContent 判空：display:none 的锚点文本仍算在 textContent 里，
+        //    会得出「还有内容」的结论，于是纯链接的消息留一个空气泡（实测踩过）。
+        var rest = holder.textContent || '';
+        var hidden = holder.querySelectorAll('a.ow-msg-link[data-lc-hidden]');
+        for (var i = 0; i < hidden.length; i++) {
+            var t = hidden[i].textContent || '';
+            if (t !== '') rest = rest.split(t).join('');
+        }
+        if (rest.replace(/\s+/g, '') === '') {
+            holder.style.display = 'none';
+            holder.setAttribute('data-lc-hidden', '1');
+        }
+    }
+
+    /** 还原被藏起来的链接与气泡（卡片被摘掉时调用） */
+    function restoreLink(msg) {
+        var hs = msg.querySelectorAll('[data-lc-hidden]');
+        for (var i = 0; i < hs.length; i++) {
+            hs[i].style.display = '';
+            hs[i].removeAttribute('data-lc-hidden');
+        }
+    }
+
     /** 出卡：全部用 createElement + textContent，远端数据不进 innerHTML */
-    function mount(msg, p) {
+    function mount(at, p) {
         if (!p || !p.title) return;
+        var msg = at.msg;
+        if (!msg) return;
         var body = msg.querySelector('.ow-msg-body');
         if (!body || body.querySelector('.lc-msgcard')) return;
         if (msg.className && (msg.className.indexOf('recalled') >= 0 || msg.className.indexOf('deleted') >= 0)) return;
@@ -152,17 +197,23 @@
         card.setAttribute('target', '_blank');
         card.setAttribute('rel', 'noopener noreferrer nofollow');
 
-        // 封面图：只接受 https（本站强制 https，http 图会被混合内容策略拦掉）；
-        // referrerpolicy=no-referrer 不把聊天页地址透露给图片站；加载失败就退回纯文字卡
+        // 图区**恒占同样高度**：没有封面图时放一个站名首字母占位块 ——
+        // 卡片是固定尺寸的（多张卡在消息里排下来要一样大，不能有图一张没图一张）
         if (p.image && /^https:\/\//i.test(p.image)) {
+            // 只接受 https（本站强制 https，http 图会被混合内容策略拦掉）；
+            // referrerpolicy=no-referrer 不把聊天页地址透露给图片站；加载失败换成占位块
             var im = d.createElement('img');
             im.className = 'lc-msgcard-img';
             im.alt = '';
             im.setAttribute('loading', 'lazy');
             im.setAttribute('referrerpolicy', 'no-referrer');
-            im.onerror = function () { if (im.parentNode) im.parentNode.removeChild(im); };
+            im.onerror = function () {
+                if (im.parentNode) im.parentNode.replaceChild(placeholder(p), im);
+            };
             im.src = p.image;
             card.appendChild(im);
+        } else {
+            card.appendChild(placeholder(p));
         }
 
         var bx = d.createElement('div');
@@ -175,23 +226,35 @@
         title.className = 'lc-msgcard-title';
         title.textContent = p.title;
         bx.appendChild(title);
-        if (p.description) {
-            var desc = d.createElement('div');
-            desc.className = 'lc-msgcard-desc';
-            desc.textContent = p.description;
-            bx.appendChild(desc);
-        }
+        // 描述即使为空也占位（固定高度靠它撑住：标题/描述都恒占两行的位置）
+        var desc = d.createElement('div');
+        desc.className = 'lc-msgcard-desc';
+        desc.textContent = p.description || '';
+        bx.appendChild(desc);
         card.appendChild(bx);
         body.appendChild(card);
+
+        hideLink(msg, at.el);
     }
 
-    /** 撤回 / 删除后摘掉陈旧卡片 */
+    /** 无封面图（或图挂了）时的占位块：与封面图同高，取站名首字母 */
+    function placeholder(p) {
+        var ph = d.createElement('div');
+        ph.className = 'lc-msgcard-img lc-msgcard-ph';
+        var host = p.site || hostOf(p.url) || '?';
+        var ch = (host.replace(/^www\./i, '').charAt(0) || '?').toUpperCase();
+        ph.textContent = ch;
+        return ph;
+    }
+
+    /** 撤回 / 删除后摘掉陈旧卡片，并还原被藏起来的链接 */
     function sweep(msg) {
         var card = msg.querySelector('.lc-msgcard');
         if (!card) return;
         var cls = msg.className || '';
         if (cls.indexOf('recalled') >= 0 || cls.indexOf('deleted') >= 0) {
             card.parentNode.removeChild(card);
+            restoreLink(msg);
         }
     }
 

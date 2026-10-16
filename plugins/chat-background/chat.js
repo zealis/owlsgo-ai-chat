@@ -80,17 +80,21 @@
                 ? "background-image:url('" + url + "');background-repeat:repeat;background-size:auto;"
                 : "background-image:url('" + url + "');background-repeat:no-repeat;background-size:cover;background-position:center;")
             : '';
-        return 'body.ow-chat-body .ow-main{position:relative;' + (hasImg ? 'background-color:transparent;' : '') + '}'
-            + (hasImg ? 'body.ow-chat-body .ow-main::before{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;' + bgCss + '}' : '')
-            + (ovr !== 'none' ? 'body.ow-chat-body .ow-main::after{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;background:' + ovr + ';opacity:' + op + ';}' : '')
-            // ⚠️ 只抬 .ow-topbar / .ow-messages / .ow-inputbar 这三个固定布局子级，
-            // 绝不能写成 > * —— .ow-main 同时是 flex 容器，核心的表情面板 #owEmojiPanel
-            // 与 gif-stickers 插件的 .ow-gif-panel 都挂在它下面，靠 position:absolute +
-            // z-index:30 浮在输入栏上方；被 > * 命中后 position 会被改写成 relative，
-            // 面板立刻掉进文档流并错位（表现为「一开启聊天背景，gif 面板样式就乱」）。
-            + 'body.ow-chat-body .ow-main > .ow-topbar,'
-            + 'body.ow-chat-body .ow-main > .ow-messages,'
-            + 'body.ow-chat-body .ow-main > .ow-inputbar{position:relative;z-index:1;}'
+        // 背景层用**负 z-index**，并让 .ow-main 自成层叠上下文（position:relative + z-index:0）：
+        // 在 .ow-main 的层叠上下文里，z-index:-1 的伪元素排在「自身底色之后、一切常规流内容之前」，
+        // 于是背景图/遮罩自动落在**所有**子级底下 —— 顶栏、输入栏、消息区，以及任何插件往
+        // .ow-main 里插的直接子级（announcements 插件就是 main.insertBefore(公告条, #owMessages) 插进去的）。
+        //
+        // ⚠️ 为什么不逐个枚举子级抬 z-index（写 > * 或点名清单）—— 那种写法已经连出两次事故：
+        //   ① 写成 > * 会连表情面板 #owEmojiPanel、GIF 面板 .ow-gif-panel 一起命中，
+        //      把它们的 position:absolute 改写成 relative，面板掉进文档流并错位；
+        //   ② 收窄成只抬 .ow-topbar/.ow-messages/.ow-inputbar 后，不在名单里的公告条 #oaBar
+        //      又被背景图盖住（z-index:0 的定位伪元素按绘制顺序排在普通流内容之上）——
+        //      用户看到的是「群公告条变透明」，其实是它整条被背景图压住了。
+        //   负 z-index 方案不依赖任何名单，子级增删都不必再维护。
+        return 'body.ow-chat-body .ow-main{position:relative;z-index:0;' + (hasImg ? 'background-color:transparent;' : '') + '}'
+            + (hasImg ? 'body.ow-chat-body .ow-main::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;' + bgCss + '}' : '')
+            + (ovr !== 'none' ? 'body.ow-chat-body .ow-main::after{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;background:' + ovr + ';opacity:' + op + ';}' : '')
             + 'body.ow-chat-body .ow-messages{background-color:transparent;background-image:none;}'
             // 顶栏与输入栏**不做任何覆盖**：按用户要求完全恢复核心的不透明底色（--ow-bg-chat），
             // 连一点点透明也不要。故这里既没有 color-mix 半透明规则，也没有配套的

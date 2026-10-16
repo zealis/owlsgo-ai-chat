@@ -63,6 +63,12 @@
        落在同一水平线上**（见文件末尾 v1.1.17 的桌面端对齐块）。
        改这个值只需改这一处，两侧同时跟随，不会各自漂移。 */
     --ow-topbar-h: 57px;
+    /* 顶部品牌条 .ow-brand 的高度带（与 --ow-topbar-h **不是同一个元素**：
+       那条是主区内 .ow-topbar 自己算出来的 57，这条是全宽品牌条）。
+       实测 = padding 9+9 + 头像胶囊 28 + 下边框 1 = 47px。
+       抽成变量是因为窄屏有三处 fixed 浮层要「让开品牌条」（.ow-mask / .ow-online /
+       .ow-sidebar 的 top），原先各写各的 57px，改高度必漏一处。 */
+    --ow-brand-h: 47px;
     /* v1.3.25：以下是**为了深/浅色切换**补的语义变量。
        原先这些位置写死 #FFFFFF / #F5F5F5，深色模式无法覆盖 —— 只能靠逐个
        选择器重写，既啰嗦又容易漏。收进变量后，深色只需在 [data-theme="dark"]
@@ -1139,7 +1145,7 @@ input[type=range] {
     display: flex; display: -webkit-flex;
     align-items: center; -webkit-align-items: center;
     gap: 8px;
-    padding: 14px 16px;
+    padding: 9px 16px;
     border-bottom: 1px solid var(--ow-border);
     font-size: 16px;
     /* v1.3.6：品牌条移到布局顶层后横跨全宽，防止被 flex 压缩；
@@ -1152,17 +1158,20 @@ input[type=range] {
     background: var(--ow-brand-bg);
     font-weight: 600;
     color: var(--ow-text-title);
-    /* v1.3.48：搜索入口挪进侧栏后，这条高度不再有任何 28px 的子元素撑着 ——
-       原先条高 = 14px×2 padding + 搜索按钮 28px = 56 + 1px 下边框 = 57，
-       只剩 logo(26px) 时会塌到 54。57 是承重数值：窄屏 .ow-sidebar 的 top:57px、
-       以及「顶栏 / 侧栏 / rail 三线齐平」的对齐关系都按它算，所以在这里显式钉住。 */
-    min-height: 57px;
+    /* 条高真源见文件头 --ow-brand-h。v1.3.48 搜索入口挪进侧栏后这条不再有 28px 子元素撑着，
+       当时用 min-height 钉住 57；v1.3.142 品牌条右侧补了头像胶囊（28px，flex:none），
+       于是自然高度重新成立 = 9+28+9+1 = 47。这里保留 min-height 只为止住内容异常时的塌陷，
+       它必须等于 --ow-brand-h，否则窄屏三处 top:var(--ow-brand-h) 的浮层会盖住品牌条。
+       v1.4.1：站方要求改矮，57 → 47（padding 14 → 9），胶囊仍是 28px 不动。 */
+    min-height: var(--ow-brand-h);
 }
 /* v1.2.25：28px → 22px。品牌条总高 57px（14px 上下内边距 + 28px 内容），
    28px 的图标在条内基本顶满，与旁边 16px 的站点名并排偏大。
    缩到 22px 后图标不再压住站点名，但**品牌条高度不变** ——
-   条高原先由 .ow-brand-search 的 28px 撑住，v1.3.48 起由上面的 min-height 钉住，
-   所以顶栏与左侧栏的分隔线仍在 y=56/57，三线齐平不受影响。 */
+   条高原先由 .ow-brand-search 的 28px 撑住，v1.3.48 起由上面的 min-height 钉住。
+   ⚠️ v1.4.1 更正：品牌条是横跨全宽的最上层，它自己的下边框跟着 --ow-brand-h 一起
+   从 y=56 抬到了 y=46；「顶栏 / 侧栏第一行 / rail 三线齐平」说的是 .ow-body 内部的
+   另一组线（走 --ow-topbar-h，仍是 57），两者从来不是同一条，别当成被这次改动带偏。 */
 /* v1.2.26：光学居中补偿 translateY(1.5px)。
    为什么盒子已经居中了还是看着歪：本 logo 的造型是「上方实心方块 + 下方伸出一个尖角」，
    而 flex 的 align-items:center 是按**包围盒**居中 —— 尖角把包围盒撑满，
@@ -1191,10 +1200,11 @@ input[type=range] {
    样式参考本站 参考文献/forum 的顶栏 user-chip：整块就是「我的主页」入口、
    胶囊形、窄屏不许被压缩（flex:none，否则头像被挤扁）、**不加 title 悬浮提示**
    （气泡会挡住旁边的元素）。
-   ⚠️ 高度是承重的：品牌条 content box = 57 - padding 28 - 下边框 1 = 28px，
-     顶栏/侧栏/rail「三线齐平」与窄屏 .ow-sidebar{top:57px} 都按 57 算，
-     所以这颗胶囊必须正好 28px：头像 20(.ow-avatar-xs) + padding 3×2 + border 1×2 = 28。
-     改任何一档都要重算，别把品牌条顶高。
+   ⚠️ 高度是承重的：这颗胶囊**就是**品牌条内容区的唯一支点 ——
+     条高 = padding 9×2 + 胶囊 28 + 下边框 1 = 47 = --ow-brand-h，
+     窄屏三处浮层（.ow-mask / .ow-online / .ow-sidebar）的 top 直接引用同一个变量。
+     胶囊 28px 一动整条就跟着动：头像 20(.ow-avatar-xs) + padding 3×2 + border 1×2 = 28。
+     （主区那条 .ow-topbar 的 57px 走 --ow-topbar-h，与这条无关，别顺手一起改。）
    ⚠️ 常态**不填底色**：品牌条本身就是 #E4E4E4 那档灰，再涂一张白上去就像浮起来的纸
      （项目里踩过同款）；hover 用 --ow-brand-hover(#D2D2D2) —— 比底色深一档，
      通用 --ow-bg-chat-hover(#EBEBEB) 在这里会变成「越悬停越浅」。 */
@@ -1228,7 +1238,8 @@ input[type=range] {
      · 全小写带降部（oygs）8/4 → 需 -1.8px ← 站方自己这个账号，头像才 20px，最刺眼
    取 -1px 落在中间：三档都收在 ±0.8px 内。补到 -2px 能把全小写压平，但占多数的汉字
    昵称会反过来偏高 1.2px，等于换个方向歪；再往上的残差是降部（y/g 的尾巴）本身，CSS 改不动。
-   ⚠️ transform 不参与布局：胶囊仍 28px、品牌条仍 57px，「三线齐平」与窄屏 top:57px 都不受影响。
+   ⚠️ transform 不参与布局：胶囊仍 28px、品牌条仍由 --ow-brand-h 钉住（v1.4.1 起 47px），
+     窄屏三处浮层的 top 引用同一变量，都不受这两条 transform 影响。
    ⚠️ 与 .ow-brand > img 的 translateY(1.7px) 同一套路，但方向相反 —— 那颗是图标下沉去追文字，
       这里是文字追图标，两者不叠加（选择器互斥，一个 > img、一个 .ow-brand-me-n）。
    长昵称截断，不把胶囊撑出屏幕（头像那侧的 padding 只有 3px，靠这里收）。 */
@@ -1237,9 +1248,10 @@ input[type=range] {
 /* v1.2.31：站点名右侧的**搜索按钮**（原竖三点菜单已删除）。
    v1.2.32 位置修正：原来用 line-height 顶行 + 继承 .ow-icon-btn 的 padding，
    图标在 28px 方框里偏上、按钮也显得偏左。改为 flex 双向居中 + 加大右间距。
-   ⚠️ 这个 28px 同时是**品牌条高度的支点**：logo 26px（v1.3.3）、站点名 16px 之后，
-   整条的高度就靠它撑着（实测 57px）。别再顺手改小，否则品牌条会跟着变矮，
-   与顶栏、侧栏第一行的分隔线错位（下方「首行分隔线与顶栏下边框水平对齐」一节有说明）。 */
+   ⚠️ 历史注：这个 28px 曾经是**品牌条高度的支点**（v1.3.48 之前搜索按钮还在这条上）。
+   搜索入口挪进 .ow-sidebar 之后，支点换成了下面的 .ow-brand-me 胶囊（同样 28px），
+   条高由 --ow-brand-h 单点定义（v1.4.1 起 47px）；窄屏浮层的 top 引用同一变量，
+   改高度只需改变量，别再回到「两处各写一个像素值」。 */
 /* ---------- 侧栏顶部搜索框（v1.3.48）----------
    由品牌条上的搜索图标改造而来：位置从全宽顶栏挪进 .ow-sidebar 第一行，
    形态从「28px 图标按钮」变成「看着能输入的搜索框」。
@@ -2587,15 +2599,15 @@ span.ow-panel-entry-ico.ow-avatar { width: 24px; height: 24px; line-height: 24px
     .ow-mask {
         display: none;
         position: fixed;
-        left: 0; right: 0; top: 57px; bottom: 0;
+        left: 0; right: 0; top: var(--ow-brand-h); bottom: 0;
         background: rgba(0, 0, 0, .25);
         z-index: 85;
     }
     .ow-mask.show { display: block; }
     .ow-online {
         position: fixed;
-        /* 顶部留出工具栏高度，避免浮层盖住「群聊信息」按钮导致无法收起 */
-        right: -260px; top: 57px; bottom: 0;
+        /* 顶部留出品牌条高度，避免浮层盖住「群聊信息」按钮导致无法收起 */
+        right: -260px; top: var(--ow-brand-h); bottom: 0;
         z-index: 90;
         transition: right .2s;
         width: 240px;
@@ -2662,7 +2674,7 @@ span.ow-panel-entry-ico.ow-avatar { width: 24px; height: 24px; line-height: 24px
     .ow-sidebar {
         position: fixed;
         /* 顶部留出品牌条高度，避免侧栏盖住「菜单」按钮导致无法收起 */
-        left: -260px; top: 57px; bottom: 0;
+        left: -260px; top: var(--ow-brand-h); bottom: 0;
         z-index: 90;
         transition: left .2s;
         width: 250px;

@@ -293,8 +293,24 @@ function owLCPublicIp(string $ip): bool
 }
 
 /**
+ * 函数真的可以调用吗（v1.2.0）。
+ * ⚠️ function_exists 不够：共享主机常把 gethostbynamel / dns_get_record 放进
+ *    disable_functions —— 那种情况下函数「存在」但一调用就是 Fatal error，
+ *    预览接口直接 500（线上反馈过的那类环境差异）。这里把禁用名单也算上。
+ */
+function owLCCallable(string $fn): bool
+{
+    if (!function_exists($fn)) return false;
+    $dis = ini_get('disable_functions');
+    if ($dis === '' || $dis === false) return true;
+    return !in_array($fn, array_map('trim', explode(',', (string)$dis)), true);
+}
+
+/**
  * 解析主机名并校验：返回可用公网 IP 列表；**任一**解析结果为内网即整体拒绝
  * （多 A 记录里混一个内网地址，是绕过单点校验的常见手法）。
+ * ⚠️ DNS 函数在共享主机常被 disable_functions 禁用 —— 不可用就当「解析不了」处理
+ *    （fail-closed：宁可不出卡，也不能跳过 IP 校验直接连）。
  */
 function owLCResolveHost(string $host): array
 {
@@ -302,9 +318,11 @@ function owLCResolveHost(string $host): array
     if (filter_var($host, FILTER_VALIDATE_IP) !== false) {
         $ips[] = $host;
     } else {
-        $a = @gethostbynamel($host);
-        if (is_array($a)) $ips = array_merge($ips, $a);
-        if (function_exists('dns_get_record')) {
+        if (owLCCallable('gethostbynamel')) {
+            $a = @gethostbynamel($host);
+            if (is_array($a)) $ips = array_merge($ips, $a);
+        }
+        if (owLCCallable('dns_get_record')) {
             $rec = @dns_get_record($host, DNS_AAAA);
             if (is_array($rec)) {
                 foreach ($rec as $r) if (!empty($r['ipv6'])) $ips[] = (string)$r['ipv6'];
@@ -555,6 +573,14 @@ function owLCCachePut(string $url, array $d): void
  *   ['ok' => true, 'data' => ['url','title','description','image','site']]
  *   ['ok' => false, 'reason' => 文案]
  * 失败同样入库（短 TTL），避免每次渲染都对同一个坏地址重试。
+ *
+ * ⚠️ 两站方规则（2026-10-17 反馈）：
+ *   ① **没有可用封面图就不出卡** —— 链接卡片的价值就在那张图，没图的「卡片」只剩
+ *      一个突兀的占位块（透明 / 自定义配色主题下尤其难看），不如让链接保持普通消息原样。
+ *      缓存记为失败（短 TTL）：站点以后补了 og:image，卡片自然会出现。
+ *   ② 本函数**永不抛异常**：预览是聊天页的增强功能，线上任何环境差异（DB 权限、
+ *      disable_functions、curl 缺失、内存不足）都不能变成 500 —— 全部退化为
+ *      「无卡片」，真实原因写进安全日志（action=link_card_error，后台可查）。
  */
 function owLCGetPreview(string $url): array
 {
@@ -568,33 +594,47 @@ function owLCGetPreview(string $url): array
         return ['ok' => false, 'reason' => '该域名在黑名单中'];
     }
 
-    $c = owLCCacheGet($url);
-    if ($c) {
-        if ((int)$c['status'] !== 1) return ['ok' => false, 'reason' => (string)$c['reason']];
-        return ['ok' => true, 'data' => [
-            'url' => (string)$c['url'], 'title' => (string)$c['title'],
-            'description' => (string)($c['description'] ?? ''), 'image' => (string)$c['image'],
-            'site' => (string)$c['site'],
-        ]];
-    }
+    try {
+        $c = owLCCacheGet($url);
+        if ($c) {
+            if ((int)$c['status'] !== 1) return ['ok' => false, 'reason' => (string)$c['reason']];
+            // 旧版本缓存过的无图条目（v1.1.1 及以前 status=1 但 image 为空）：按新规则不出卡
+            if ((string)$c['image'] === '') return ['ok' => false, 'reason' => '目标页没有可用的封面图'];
+            return ['ok' => true, 'data' => [
+                'url' => (string)$c['url'], 'title' => (string)$c['title'],
+                'description' => (string)($c['description'] ?? ''), 'image' => (string)$c['image'],
+                'site' => (string)$c['site'],
+            ]];
+        }
 
-    $r = owLCFetchPage($url);
-    if (isset($r['err'])) {
-        $reason = $r['err'] === 'blocked' ? '该域名在黑名单中' : (string)$r['err'];
-        owLCCachePut($url, ['status' => 0, 'reason' => $reason]);
-        return ['ok' => false, 'reason' => $reason];
+        $r = owLCFetchPage($url);
+        if (isset($r['err'])) {
+            $reason = $r['err'] === 'blocked' ? '该域名在黑名单中' : (string)$r['err'];
+            owLCCachePut($url, ['status' => 0, 'reason' => $reason]);
+            return ['ok' => false, 'reason' => $reason];
+        }
+        $og = owLCParseOg((string)$r['body'], (string)$r['url']);
+        if ($og['title'] === '') {
+            owLCCachePut($url, ['status' => 0, 'reason' => '目标页没有可用的标题信息']);
+            return ['ok' => false, 'reason' => '目标页没有可用的标题信息'];
+        }
+        if ($og['image'] === '') {
+            owLCCachePut($url, ['status' => 0, 'reason' => '目标页没有可用的封面图']);
+            return ['ok' => false, 'reason' => '目标页没有可用的封面图'];
+        }
+        $og['status'] = 1;
+        owLCCachePut($url, $og);
+        return ['ok' => true, 'data' => [
+            'url' => $url, 'title' => $og['title'], 'description' => $og['description'],
+            'image' => $og['image'], 'site' => $og['site'],
+        ]];
+    } catch (Throwable $e) {
+        // 预览永远不该把聊天页拖出 500：真实原因进安全日志（后台「安全日志」页可查）
+        try {
+            Sec::log('link_card_error', '', ['url' => mb_substr($url, 0, 120), 'err' => mb_substr($e->getMessage(), 0, 200)]);
+        } catch (Throwable $e2) {}   // 连日志本身都失败（如 DB 不可用）也不再往外抛
+        return ['ok' => false, 'reason' => '读取失败，详情见安全日志（link_card_error）'];
     }
-    $og = owLCParseOg((string)$r['body'], (string)$r['url']);
-    if ($og['title'] === '') {
-        owLCCachePut($url, ['status' => 0, 'reason' => '目标页没有可用的标题信息']);
-        return ['ok' => false, 'reason' => '目标页没有可用的标题信息'];
-    }
-    $og['status'] = 1;
-    owLCCachePut($url, $og);
-    return ['ok' => true, 'data' => [
-        'url' => $url, 'title' => $og['title'], 'description' => $og['description'],
-        'image' => $og['image'], 'site' => $og['site'],
-    ]];
 }
 
 /* ============================ 钩子 ============================ */
@@ -627,6 +667,24 @@ Plugin::on('page.footer', function (): void {
 /* ============================ 后台页面 ============================ */
 
 Plugin::adminPage('link-card', '链接卡片', function () {
+    try {
+        return owLCAdminHtml();
+    } catch (Throwable $e) {
+        // 后台页不能 500：把真实原因给管理员看（多半是数据库账号无建表权限这类环境问题），
+        // 完整堆栈进安全日志（action=link_card_error）
+        try {
+            Sec::log('link_card_error', '', ['where' => 'admin', 'err' => mb_substr($e->getMessage(), 0, 200)]);
+        } catch (Throwable $e2) {}
+        return '<h2>链接卡片</h2>'
+            . '<div class="ow-card"><p style="margin:0 0 8px"><b>初始化失败：</b>' . Sec::e(mb_substr($e->getMessage(), 0, 200)) . '</p>'
+            . '<p style="margin:0;font-size:12px;color:var(--ow-text-sub)">常见原因：数据库账号无建表权限、数据目录不可写。'
+            . '完整信息见「安全日志」（action=link_card_error）。</p></div>';
+    }
+});
+
+/** 后台页面主体（拆出来是为了让上面的 try/catch 兜得住整个渲染过程） */
+function owLCAdminHtml(): string
+{
     owLCBoot();
     $msgOn = owLCmsgOn();
     $cacheN = (int)DB::val('SELECT COUNT(*) FROM plugin_link_card_preview');
@@ -642,7 +700,7 @@ Plugin::adminPage('link-card', '链接卡片', function () {
         . '<input type="checkbox" class="ow-switch-input" id="lcMsgOn"' . ($msgOn ? ' checked' : '') . '>'
         . '<label class="ow-switch' . ($msgOn ? ' is-on' : '') . '" for="lcMsgOn"></label>'
         . '<p class="ow-switch-hint">开启后，消息里的链接会由服务器读取目标页的 Open Graph 信息并缓存，'
-        . '在消息下方展示预览卡片；关闭则完全不抓取。</p></div>'
+        . '在消息下方展示预览卡片；目标页没有可用封面图、或读取失败时不展示卡片（链接保持原样）；关闭则完全不抓取。</p></div>'
 
         . '<div class="ow-form-item"><label>域名黑名单</label>'
         . '<textarea class="ow-input lc-mono" id="lcBlocked" rows="6" placeholder="每行一个，例如&#10;spam-site.com&#10;ads.example.net">'
@@ -667,7 +725,7 @@ Plugin::adminPage('link-card', '链接卡片', function () {
         . '<div id="lcNotice"></div>'
         . '<div id="lcList"><div class="lc-empty">加载中…</div></div>'
         . '</div>';
-});
+}
 
 /* ============================ API 路由 ============================ */
 
@@ -676,11 +734,18 @@ $lcGuard = function (array $ctx): void {
     if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);
 };
 
-/** 卡片列表（按排序，供后台渲染） */
+/** 卡片列表（按排序，供后台渲染）。任何环境异常都返回可读错误，不给后台 500 */
 Plugin::route('plugin_link_card_list', function (array $ctx) use ($lcGuard): void {
     $lcGuard($ctx);
-    owLCBoot();
-    Api::json(['ok' => true, 'cards' => DB::all("SELECT * FROM plugin_link_card ORDER BY sort ASC, id ASC")]);
+    try {
+        owLCBoot();
+        Api::json(['ok' => true, 'cards' => DB::all("SELECT * FROM plugin_link_card ORDER BY sort ASC, id ASC")]);
+    } catch (Throwable $e) {
+        try {
+            Sec::log('link_card_error', (string)($ctx['actor']['nickname'] ?? ''), ['where' => 'list', 'err' => mb_substr($e->getMessage(), 0, 200)]);
+        } catch (Throwable $e2) {}
+        Api::json(['ok' => false, 'msg' => '读取失败：' . mb_substr($e->getMessage(), 0, 120) . '（详见安全日志 link_card_error）']);
+    }
 });
 
 /** 新建 / 保存卡片 */
@@ -808,35 +873,45 @@ Plugin::sensitive('plugin_link_card_cache_clear');
  * 批量取链接预览（聊天页调用，所有访客可用）。
  * 安全：除签名门禁（页面会话密钥）外，还有按 IP 的频率限制 —— 这个接口会让服务器出网，
  * 不限流就成了免费代理 / 内网扫描器。缓存命中的 URL 不消耗配额。
+ * ⚠️ 整体兜 try/catch：这个接口在聊天页每条带链接的消息都会调，线上任何环境异常
+ *    （DB 权限、disable_functions、curl 缺失）都返回可读的 ok:false，绝不能 500 ——
+ *    否则用户看到的就是一串「网络错误（500）」。
  */
 Plugin::route('plugin_link_card_preview', function (array $ctx): void {
-    if (!owLCmsgOn()) Api::json(['ok' => true, 'data' => [], 'off' => 1]);
-    owLCPreviewBoot();
+    try {
+        if (!owLCmsgOn()) Api::json(['ok' => true, 'data' => [], 'off' => 1]);
+        owLCPreviewBoot();
 
-    $list = json_decode((string)($ctx['post']['urls'] ?? ''), true);
-    if (!is_array($list) || !$list) Api::json(['ok' => false, 'msg' => '参数错误'], 400);
-    $list = array_slice($list, 0, OWLC_MAX_PER_CALL);
+        $list = json_decode((string)($ctx['post']['urls'] ?? ''), true);
+        if (!is_array($list) || !$list) Api::json(['ok' => false, 'msg' => '参数错误'], 400);
+        $list = array_slice($list, 0, OWLC_MAX_PER_CALL);
 
-    $need = 0;
-    foreach ($list as $u) {
-        $u = (string)preg_replace('/#.*$/', '', trim((string)$u));
-        if ($u !== '' && !owLCCacheGet($u)) $need++;
-    }
-    if ($need > 0) {
-        $ip = Sec::ip();
-        if (!Sec::rateLimit('lc_preview', $ip, 60, 20)) {
-            $left = Sec::rateRemaining('lc_preview', $ip, 60);
-            Api::json(['ok' => false, 'msg' => '取链接预览过于频繁，请 ' . max(1, $left) . ' 秒后再试'], 429);
+        $need = 0;
+        foreach ($list as $u) {
+            $u = (string)preg_replace('/#.*$/', '', trim((string)$u));
+            if ($u !== '' && !owLCCacheGet($u)) $need++;
         }
-    }
+        if ($need > 0) {
+            $ip = Sec::ip();
+            if (!Sec::rateLimit('lc_preview', $ip, 60, 20)) {
+                $left = Sec::rateRemaining('lc_preview', $ip, 60);
+                Api::json(['ok' => false, 'msg' => '取链接预览过于频繁，请 ' . max(1, $left) . ' 秒后再试'], 429);
+            }
+        }
 
-    $out = [];
-    foreach ($list as $u) {
-        $u = trim((string)$u);
-        if ($u === '' || mb_strlen($u) > 512) continue;
-        $out[$u] = owLCGetPreview($u);
+        $out = [];
+        foreach ($list as $u) {
+            $u = trim((string)$u);
+            if ($u === '' || mb_strlen($u) > 512) continue;
+            $out[$u] = owLCGetPreview($u);
+        }
+        Api::json(['ok' => true, 'data' => $out]);
+    } catch (Throwable $e) {
+        try {
+            Sec::log('link_card_error', (string)($ctx['actor']['nickname'] ?? ''), ['where' => 'preview', 'err' => mb_substr($e->getMessage(), 0, 200)]);
+        } catch (Throwable $e2) {}
+        Api::json(['ok' => false, 'msg' => '链接预览暂时不可用（原因见安全日志 link_card_error）']);
     }
-    Api::json(['ok' => true, 'data' => $out]);
 });
 
 /* ============================ 静态资源 ============================ */
