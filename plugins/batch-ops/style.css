@@ -1,5 +1,5 @@
 /**
- * 批量操作插件（batch-ops v1.0.1）
+ * 批量操作插件（batch-ops v1.1.0）
  *
  * 全部颜色只引用核心 --ow-* 变量，深浅两套主题自动跟随（不写 [data-theme] 覆盖块）。
  * 涉及的类都在核心语义内挑过：选中态「比底色深一档」用 --ow-active-bg，
@@ -44,10 +44,12 @@
 }
 .ow-msg.owb-on .owb-chk::after { content: "✓"; }
 
-/* ---------- 消息区底部的悬浮操作条 ----------
+/* ---------- 消息区底部的操作条（仿参考样式：圆形图标按钮 + 文字） ----------
    sticky 挂在消息区（#owMessages 是滚动容器）的最后一个子节点上：
    滚到哪它就贴在哪的底部，不需要自己算位置；每次追加新消息后 JS 会把它重新挪到队尾。
-   纯边框 + 底色区分，不加投影 —— 与表情面板 / 聊天脚本面板同一约定。 */
+   纯边框 + 底色区分，不加投影 —— 与表情面板 / 聊天脚本面板同一约定。
+   圆形底用 --ow-active-bg（品牌条那一档）：不在灰底上再摞纯白块，
+   按钮 hover 比底色深一档（--ow-hover-bg），禁用态只降透明度。 */
 .owb-bar {
     position: sticky;
     bottom: 4px;
@@ -56,15 +58,56 @@
     align-items: center; -webkit-align-items: center;
     gap: 10px;
     width: -webkit-max-content; width: max-content;
+    max-width: 100%;
     margin: 6px auto 2px;
-    padding: 7px 12px;
+    padding: 6px 12px;
     background: var(--ow-bg);
     border: 1px solid var(--ow-border);
-    border-radius: 10px;
+    border-radius: 12px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
 }
-.owb-bar-n { font-size: 13px; color: var(--ow-text); }
+.owb-bar-n { font-size: 13px; color: var(--ow-text); white-space: nowrap; }
 .owb-bar-n b { color: var(--ow-text-title); }
-.owb-off { opacity: .5; cursor: not-allowed; }
+.owb-acts { display: flex; display: -webkit-flex; gap: 2px; }
+.owb-actbtn {
+    display: flex; display: -webkit-flex;
+    flex-direction: column; -webkit-flex-direction: column;
+    align-items: center; -webkit-align-items: center;
+    gap: 3px;
+    padding: 4px 7px;
+    border: none;
+    background: none;
+    border-radius: 10px;
+    cursor: pointer;
+    color: var(--ow-text);
+    white-space: nowrap;
+}
+.owb-actbtn:hover { background: var(--ow-hover-bg); }
+.owb-actbtn:disabled { opacity: .42; cursor: default; }
+.owb-actbtn:disabled:hover { background: none; }
+.owb-acti {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    justify-content: center; -webkit-justify-content: center;
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    background: var(--ow-active-bg);
+    color: var(--ow-text-title);
+}
+/* 退出 ✕：与图标按钮同高的圆形袖珍钮 */
+.owb-x {
+    flex-shrink: 0; -webkit-flex-shrink: 0;
+    width: 30px; height: 30px;
+    border: none;
+    border-radius: 50%;
+    background: var(--ow-active-bg);
+    color: var(--ow-text);
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+}
+.owb-x:hover { background: var(--ow-hover-bg); }
 
 /* ---------- 选择器弹窗 ---------- */
 /* 搜索框内的放大镜（核心 ow_icon('search') 同 path，服务端图标不经过 JS 的 OW_ICONS 表，这里内联一份） */

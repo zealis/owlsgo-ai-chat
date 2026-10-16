@@ -1,13 +1,13 @@
 /**
- * 批量操作插件 · 聊天页（batch-ops v1.0.1）
+ * 批量操作插件 · 聊天页（batch-ops v1.1.0）
  *
  * ── 两块内容 ──────────────────────────────────────────────────
- * ① 消息多选：消息右键「批量选择」或右侧栏「批量选择消息」进入选择模式
- *    （整行可点、行首圆圈勾选、底部悬浮条显示计数），跨渲染路径都有勾选框 ——
- *    历史/轮询/WS/翻页各走各的 DOM 路径，用 MutationObserver 统一兜住（与 link-card 同思路）。
- *    另有单条直达的「转发」右键项（插在「引用」上面），不经过选择模式。
+ * ① 消息多选：消息右键「多选」（或「转发」单条直达）进入选择模式，
+ *    消息区底部出现操作条（仿参考样式：圆形图标按钮 + 文字）：
+ *    逐条转发 / 合并转发 / 保存至电脑 / 收藏 / 删除 / 复制 / 退出。
+ *    勾选框跨渲染路径都由 MutationObserver 统一兜住（与 link-card 同思路）。
  * ② 通用选择器 OwBatch.picker()：仿参考样式（标题 + 说明 + 搜索框 + 分栏列表 + 行内动作按钮
- *    + 底部邀请链接区）。当前接了两种业务：转发（逐条发到好友/群聊）与邀请好友进群。
+ *    + 底部邀请链接区）。当前接了两种业务：转发（逐条 / 合并）与邀请好友进群。
  *    其他插件也可以直接调这个轮子。
  *
  * ── 为什么转发走前端逐条队列而不是新的服务端批量接口 ────────────
@@ -15,14 +15,18 @@
  * 群成员校验、P2 私聊可见性、message.after_send 钩子（WS 推送加速）……
  * 代价是受「发言频率限制」（默认 10 秒 8 条）约束：数量多时队列撞上限流后
  * 自动等待窗口重置再续发（进度实时显示在按钮上），不静默丢消息。
+ * 合并转发则是「N 条合成 1 条」：文字按「昵称：内容」摘要，图片作 rich 附件
+ * （≤9 张，只收本站 uploads/ 下的），一次 send 完成。
  *
  * ── 约束（踩过坑，别改） ──────────────────────────────────────
  * · ES5：与核心 chat.js 同一兼容基线（无箭头函数 / let / const / 模板串）。
  * · 样式一律引核心 --ow-* 变量（见 style.css），不写死颜色。
  * · 列表数据全部来自核心既有 action（conversations / friends / rooms / room_members），
  *   搜索是**前端过滤**：核心 search 接口按用户 10 秒 3 次限流，做输入即时过滤必被拒。
- * · 选择状态按消息 id 存（DOM 会因 500 条裁剪/重绘变化），转发时从 msgCache 取数据，
+ * · 选择状态按消息 id 存（DOM 会因 500 条裁剪/重绘变化），操作时从 msgCache 取数据，
  *   取不到（已滚出/已撤回）的条目在结果里如实报「跳过 N 条」。
+ * · 删除 / 收藏 / 保存走核心既有接口：msg_delete（敏感，一次性票据）/ sticker_add /
+ *   file_download（带签名 GET，与核心文件卡同一拼法）。
  */
 (function (w, d) {
     'use strict';
@@ -41,10 +45,13 @@
     var SEARCH_SVG = '<svg class="ow-ico owb-sico" width="15" height="15" viewBox="0 0 24 24" fill="none"'
         + ' stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
         + '<circle cx="11" cy="11" r="6.6"/><path d="M20.2 20.2l-4.5-4.5"/></svg>';
-    /* 多选图标（右侧栏入口行用）：核心 JS 图标表没有 check 类，内联一份自有字形 */
-    var CHECK_SVG = '<svg class="ow-ico ow-panel-entry-ico" width="16" height="16" viewBox="0 0 24 24" fill="none"'
+    /* 合并转发（层叠）与保存至电脑（下载托盘）：核心图标表没有对应条目，内联自有字形 */
+    var MERGE_SVG = '<svg class="ow-ico owb-acti" width="20" height="20" viewBox="0 0 24 24" fill="none"'
         + ' stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-        + '<rect x="4" y="4" width="16" height="16" rx="3.5"/><path d="M8.3 12.4l2.6 2.6 4.8-5.2"/></svg>';
+        + '<path d="M12 3.5l8.5 4.7L12 12.9 3.5 8.2z"/><path d="M4.2 12.3l7.8 4.3 7.8-4.3"/><path d="M4.2 16.2l7.8 4.3 7.8-4.3"/></svg>';
+    var SAVE_SVG = '<svg class="ow-ico owb-acti" width="20" height="20" viewBox="0 0 24 24" fill="none"'
+        + ' stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        + '<path d="M12 4v10.5"/><path d="M7.8 10.8l4.2 4.2 4.2-4.2"/><path d="M4.5 19.5h15"/></svg>';
 
     function byId(id) { return d.getElementById(id); }
     function actor() { return (w.OwChat.cfg && w.OwChat.cfg.actor) || {}; }
@@ -78,6 +85,101 @@
         return ok;
     }
 
+    /** 操作条里的一个圆形图标按钮（图标 + 文字标签，仿参考样式） */
+    function actBtn(id, iconHtml, label) {
+        return '<button type="button" class="owb-actbtn" id="' + id + '">'
+            + '<span class="owb-acti">' + iconHtml + '</span>'
+            + '<span class="owb-actl">' + esc(label) + '</span></button>';
+    }
+    /** 串行执行器：fn(item, next, idx)；串行是为了不挤爆同一会话的并发请求（一次性票据/会话锁） */
+    function seqEach(list, fn, finish) {
+        var i = 0;
+        function next() {
+            if (i >= list.length) { if (finish) finish(); return; }
+            fn(list[i], next, i);
+            i++;
+        }
+        next();
+    }
+    /** 触发一次下载（跨域时 download 属性无效 → 退化成新标签页打开，不劫走当前页） */
+    function downloadLink(url, name) {
+        var a = d.createElement('a');
+        a.href = url;
+        if (name) a.download = name;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.style.display = 'none';
+        d.body.appendChild(a);
+        try { a.click(); } catch (e) {}
+        d.body.removeChild(a);
+    }
+    function nameFromUrl(u) {
+        var s = String(u || '').split('?')[0].split('/');
+        return s[s.length - 1] || 'image';
+    }
+    function parseRich(m) {
+        try {
+            var j = JSON.parse(m.content);
+            return { text: String(j.text || ''), media: (j.media && j.media.length) ? j.media : [] };
+        } catch (e) { return { text: String(m.content || ''), media: [] }; }
+    }
+    /** 取消息的「可读文本」（与核心 copyMsg / quoteMsg 同一口径） */
+    function plainOf(m) {
+        if (m.type === 'file') {
+            try { return '[文件] ' + (JSON.parse(m.content).name || ''); } catch (e) { return '[文件]'; }
+        }
+        if (m.type === 'rich') {
+            var p = parseRich(m);
+            return p.text !== '' ? (p.text + (p.media.length ? ' [图片]' : '')) : '[图片]';
+        }
+        if (m.type === 'image') return String(m.content || '');   // 复制图片消息 = 复制图片地址
+        return String(m.content || '');
+    }
+    /** 合并转发摘要的一行：昵称：内容（换行压平、单行封顶 150 字）；
+     *  图片在摘要里是「[图片]」而不是地址 —— 与核心引用条同一口径（forCopy 时同此） */
+    function lineOf(m, forCopy) {
+        var s = m.type === 'image' ? '[图片]' : plainOf(m);
+        s = s.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+        if (s.length > 150) s = s.slice(0, 150) + '…';
+        return forCopy ? s : ((m.nickname || '') + '：' + s);
+    }
+    /** 只收本站 uploads/ 下的图片地址（与核心 Upload::mediaRel 同一口径；外站图片进不了 rich） */
+    function localImageUrl(u) {
+        u = String(u || '');
+        var base = (w.OwChat.cfg && w.OwChat.cfg.site_url) || '';
+        if (base !== '' && u.indexOf(base + '/') === 0) u = u.slice(base.length + 1);
+        if (!/^uploads\/(image|sticker)\/[A-Za-z0-9_\-./]+\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(u)) return '';
+        return u;
+    }
+    /**
+     * 合并转发的内容组装：文字按「昵称：内容」逐行摘要（总长封顶 1900 字），
+     * 图片作为 rich 附件（最多 9 张）。图片都进不了附件（外站/超限）时退回纯文本。
+     */
+    function buildMerged(msgs) {
+        var lines = [], media = [], dropped = 0, i, j;
+        for (i = 0; i < msgs.length; i++) {
+            var m = msgs[i];
+            lines.push(lineOf(m, false));
+            if (m.type === 'image') {
+                var u = localImageUrl(m.content);
+                if (u) { if (media.length < 9) media.push({ url: u, kind: 'image', name: '', size: 0 }); else dropped++; }
+                else dropped++;
+            } else if (m.type === 'rich') {
+                var p = parseRich(m);
+                for (j = 0; j < p.media.length; j++) {
+                    if ((p.media[j].kind || 'image') !== 'image') continue;
+                    var u2 = localImageUrl(p.media[j].url);
+                    if (u2) { if (media.length < 9) media.push({ url: u2, kind: 'image', name: '', size: 0 }); else dropped++; }
+                    else dropped++;
+                }
+            }
+        }
+        var text = lines.join('\n');
+        if (text.length > 1900) text = text.slice(0, 1900) + '…（内容过长，已截断）';
+        if (dropped > 0) text += '\n（另有 ' + dropped + ' 张图片未随本条转发）';
+        return { text: text, media: media };
+    }
+
     /* ==========================================================================
        OwBatch：消息多选模式
        ========================================================================== */
@@ -86,13 +188,14 @@
         sel: {},        // msgId -> true
         selCount: 0,
         bar: null,
+        _busy: false,   // 批量动作进行中（删除 / 收藏的串行队列）
         _mo: null,
         _timer: null,
         _lastView: '',
 
         /** 进入选择模式；seed 为发起时右键的那条消息（可省，右侧栏入口不传） */
         enter: function (seed) {
-            if (this.mode) {                       // 已在模式中：再点「批量选择」= 切换该条
+            if (this.mode) {                       // 已在模式中：再点「多选」= 切换该条
                 if (seed && msgUsable(seed)) this.toggle(seed.id);
                 return;
             }
@@ -108,7 +211,7 @@
             this.watch();
             if (seed && msgUsable(seed)) this.toggle(seed.id);
             this.updateBar();
-            toast('已进入批量选择：点击消息多选，选好后点下方「转发」', 3000);
+            toast('已进入多选：点击消息勾选，选好后用下方操作条', 3000);
         },
 
         /** 退出选择模式（静默与否只影响提示；可选地给条 toast 说明） */
@@ -131,7 +234,7 @@
             this.bar = null;
         },
 
-        /** 挂底部悬浮条（作为消息区最后一个子节点，sticky 自动贴可视区底部） */
+        /** 挂底部操作条（作为消息区最后一个子节点，sticky 自动贴可视区底部） */
         mountBar: function () {
             var box = byId('owMessages');
             if (!box) return;
@@ -139,22 +242,141 @@
             bar.className = 'owb-bar';
             bar.id = 'owbBar';
             bar.innerHTML = '<span class="owb-bar-n" id="owbCount"></span>'
-                + '<button type="button" class="ow-btn ow-btn-primary ow-btn-mini" id="owbGo">转发</button>'
-                + '<button type="button" class="ow-btn ow-btn-ghost ow-btn-mini" id="owbCancel">取消</button>';
+                + '<div class="owb-acts">'
+                + actBtn('owbFwd', w.OwChat.icon('send', 20, 'owb-acti'), '逐条转发')
+                + actBtn('owbMerge', MERGE_SVG, '合并转发')
+                + actBtn('owbSave', SAVE_SVG, '保存至电脑')
+                + actBtn('owbFav', w.OwChat.icon('star', 20, 'owb-acti'), '收藏')
+                + actBtn('owbDel', w.OwChat.icon('trash', 20, 'owb-acti'), '删除')
+                + actBtn('owbCopy', w.OwChat.icon('copy', 20, 'owb-acti'), '复制')
+                + '</div>'
+                + '<button type="button" class="owb-x" id="owbCancel" title="退出多选" aria-label="退出多选">✕</button>';
             box.appendChild(bar);
             this.bar = bar;
-            byId('owbGo').onclick = function () { OwBatch.forwardOpen(); };
+            byId('owbFwd').onclick = function () { OwBatch.forwardOpen(); };
+            byId('owbMerge').onclick = function () { OwBatch.mergeOpen(); };
+            byId('owbSave').onclick = function () { OwBatch.saveToDisk(); };
+            byId('owbFav').onclick = function () { OwBatch.collectStickers(); };
+            byId('owbDel').onclick = function () { OwBatch.batchDelete(); };
+            byId('owbCopy').onclick = function () { OwBatch.copyBatch(); };
             byId('owbCancel').onclick = function () { OwBatch.exit(); };
+            this.updateBar();
         },
 
-        updateBar: function () {
-            var n = byId('owbCount');
-            if (n) n.innerHTML = owTr('已选 {n} 条', { n: this.selCount });
-            var go = byId('owbGo');
-            if (go) {
-                go.disabled = this.selCount === 0;
-                if (this.selCount === 0) addCls(go, 'owb-off'); else delCls(go, 'owb-off');
+        /** 当前选中且仍有效的消息（按消息先后序） */
+        selectedMsgs: function () {
+            var ids = this.ids(), out = [], i, m;
+            for (i = 0; i < ids.length; i++) {
+                m = msgById(ids[i]);
+                if (msgUsable(m)) out.push(m);
             }
+            return out;
+        },
+
+        /**
+         * 刷新操作条：计数 + 各按钮可用性。
+         * 「保存至电脑」只在选中有图片/文件时可用、「收藏」只在选中有图片且已登录时可用
+         * —— 与参考样式里「无可保存内容时置灰」的取向一致，不让用户点了才发现没东西。
+         */
+        updateBar: function () {
+            var msgs = this.selectedMsgs(), n = this.selCount;
+            var cnt = byId('owbCount');
+            if (cnt) cnt.innerHTML = owTr('已选 {n} 条', { n: n });
+            var has = n > 0, hasImg = false, hasSave = false, i;
+            for (i = 0; i < msgs.length; i++) {
+                if (msgs[i].type === 'image') { hasImg = true; hasSave = true; }
+                else if (msgs[i].type === 'file') hasSave = true;
+            }
+            var b;
+            b = byId('owbFwd'); if (b) b.disabled = !has || this._busy;
+            b = byId('owbMerge'); if (b) b.disabled = !has || this._busy;
+            b = byId('owbSave'); if (b) b.disabled = (!hasSave) || this._busy;
+            b = byId('owbFav'); if (b) b.disabled = (!hasImg || !isUser()) || this._busy;
+            b = byId('owbDel'); if (b) b.disabled = !has || this._busy;
+            b = byId('owbCopy'); if (b) b.disabled = !has || this._busy;
+        },
+
+        /* ============ 操作条 · 删除 / 复制 / 保存 / 收藏 ============ */
+        /** 批量删除 = 逐条核心 msg_delete（本机隐藏，敏感操作一次性票据）；串行防会话锁打挤 */
+        batchDelete: function () {
+            var self = this;
+            if (this._busy) return;
+            var msgs = this.selectedMsgs();
+            if (!msgs.length) { toast('请先选择要删除的消息'); return; }
+            w.OwChat.confirm('确定删除选中的 ' + msgs.length + ' 条消息吗？删除后仅本机不再看到，其他人不受影响。', function () {
+                self._busy = true; self.updateBar();
+                var done = 0, fail = 0, total = msgs.length;
+                seqEach(msgs, function (m, next, idx) {
+                    toast('正在删除 ' + (idx + 1) + '/' + total + '…', 1200);
+                    w.OwApi.secure('msg_delete', { id: m.id }, function (r) {
+                        if (r && r.ok) {
+                            done++;
+                            /* 先摘选择再清缓存：toggle 内部要查 msgCache 判断有效性，
+                               反过来写会因「缓存已删 → 判为不可选」而摘不掉，计数挂在旧值上。 */
+                            if (self.sel[m.id]) self.toggle(m.id);
+                            var el = byId('owMsg' + m.id);
+                            if (el && el.parentNode) el.parentNode.removeChild(el);
+                            delete w.OwChat.msgCache[m.id];
+                        } else fail++;
+                        next();
+                    });
+                }, function () {
+                    self._busy = false; self.updateBar();
+                    toast('已删除 ' + done + ' 条（仅本机不再看到）' + (fail ? '，' + fail + ' 条失败' : ''), 3000);
+                });
+            });
+        },
+
+        /** 批量复制：文字/文件/混排取可读文本、图片取「[图片]」占位，多行拼接 */
+        copyBatch: function () {
+            var msgs = this.selectedMsgs();
+            if (!msgs.length) { toast('请先选择要复制的消息'); return; }
+            var lines = [], i;
+            for (i = 0; i < msgs.length; i++) lines.push(lineOf(msgs[i], true));
+            toast(copyText(lines.join('\n')) ? ('已复制 ' + msgs.length + ' 条消息') : '复制失败，请手动选择文本');
+        },
+
+        /** 保存至电脑：图片直接下（同源 download），文件走核心 file_download 签名链接 */
+        saveToDisk: function () {
+            var msgs = this.selectedMsgs(), i, m, imgs = [], files = [];
+            for (i = 0; i < msgs.length; i++) {
+                m = msgs[i];
+                if (m.type === 'image' && m.content) imgs.push(m);
+                else if (m.type === 'file') files.push(m);
+            }
+            if (!imgs.length && !files.length) { toast('所选消息里没有可保存的图片或文件'); return; }
+            for (i = 0; i < imgs.length; i++) downloadLink(imgs[i].content, nameFromUrl(imgs[i].content));
+            for (i = 0; i < files.length; i++) {
+                var nm = '文件';
+                try { nm = JSON.parse(files[i].content).name || nm; } catch (e) {}
+                var s = w.OwApi.sign('file_download');
+                downloadLink('?action=file_download&id=' + files[i].id + '&ts=' + s.ts + '&sign=' + s.sign, nm);
+            }
+            toast('已开始保存 ' + (imgs.length + files.length) + ' 个文件（浏览器可能询问是否允许多个下载）', 3600);
+        },
+
+        /** 收藏 = 核心贴纸收藏（sticker_add）；串行执行，完成给聚合结果 */
+        collectStickers: function () {
+            var self = this;
+            if (this._busy) return;
+            if (!isUser()) { toast('请先登录后再收藏'); return; }
+            var msgs = this.selectedMsgs(), list = [], i;
+            for (i = 0; i < msgs.length; i++) {
+                if (msgs[i].type === 'image' && msgs[i].content) list.push(msgs[i].content);
+            }
+            if (!list.length) { toast('所选消息里没有图片'); return; }
+            this._busy = true; this.updateBar();
+            var done = 0, fail = 0, total = list.length;
+            seqEach(list, function (url, next, idx) {
+                toast('正在收藏 ' + (idx + 1) + '/' + total + '…', 1200);
+                w.OwApi.post('sticker_add', { url: url }, function (r) {
+                    if (r && r.ok) done++; else fail++;
+                    next();
+                });
+            }, function () {
+                self._busy = false; self.updateBar();
+                toast('收藏完成：成功 ' + done + ' 条' + (fail ? '，失败 ' + fail + ' 条' : ''), 3000);
+            });
         },
 
         /** 给一条消息挂勾选框；已挂或不可选（系统/已撤回）则跳过 */
@@ -173,7 +395,7 @@
          * 监听消息区子节点变化：勾选框跟着新消息走。
          * 覆盖全部渲染路径（首屏/翻页/轮询/WS 推送/待发气泡转正/机器人标签重绘），
          * 比逐个包装 addMessage/loadMore 稳妥 —— 核心重绘消息的入口不止一处。
-         * 顺带把悬浮条重新挪回队尾（新消息是 appendChild，会插到它后面）。
+         * 顺带把操作条重新挪回队尾（新消息是 appendChild，会插到它后面）。
          */
         watch: function () {
             var self = this, box = byId('owMessages');
@@ -264,6 +486,22 @@
                 searchHint: '搜索好友或群聊',
                 defaultTab: 'recent',
                 onPick: function (target, ctl) { doForward(target, ctl, [m]); }
+            });
+        },
+
+        /** 合并转发：N 条合成一条（文字摘要 + 图片附件），走同一个目标选择器 */
+        mergeOpen: function () {
+            if (this._busy) return;
+            if (!this.selCount) { toast('请先选择要转发的消息'); return; }
+            var n = this.selCount;
+            this.picker({
+                mode: 'forward',
+                title: '合并转发',
+                desc: '已选择 ' + n + ' 条消息，合并为一条发送',
+                verb: '发送',
+                searchHint: '搜索好友或群聊',
+                defaultTab: 'recent',
+                onPick: function (target, ctl) { doMerge(target, ctl); }
             });
         },
 
@@ -731,6 +969,36 @@
     }
 
     /* ==========================================================================
+       业务一·B：合并转发（N 条 → 一条 rich/text）
+       ========================================================================== */
+    function doMerge(target, ctl) {
+        var msgs = OwBatch.selectedMsgs();
+        if (!msgs.length) { toast('所选消息已失效，无法转发'); ctl.fail(); return; }
+        var built = buildMerged(msgs);
+        var content = built.media.length
+            ? JSON.stringify({ text: built.text, media: built.media })
+            : built.text;
+        ctl.busy('合并转发中…');
+        w.OwApi.post('send', {
+            room_id: target.kind === 'room' ? target.id : 0,
+            type: built.media.length ? 'rich' : 'text',
+            content: content,
+            to_user_id: target.kind === 'user' ? target.id : '',
+            to_nickname: target.kind === 'user' ? (target.name || '') : '',
+            client_id: w.OwChat.newCid()
+        }, function (r) {
+            if (r && r.ok) {
+                ctl.close();
+                OwBatch.exit();
+                toast('已合并转发 ' + msgs.length + ' 条到「' + target.name + '」', 3200);
+                return;
+            }
+            ctl.fail();
+            toast('合并转发失败：' + ((r && r.msg) || '网络错误'), 3600);
+        });
+    }
+
+    /* ==========================================================================
        业务二：邀请好友进群（核心 room_invite，敏感操作走一次性票据）
        ========================================================================== */
     function doInvite(roomId, target, ctl) {
@@ -747,21 +1015,26 @@
     /* ==========================================================================
        挂钩与全局事件
        ========================================================================== */
-    /* 消息右键（内容菜单）：「转发」（单条直达）插在「引用」上面，批量选择追加在末尾 */
+    /* 消息右键（内容菜单）：「转发」（单条直达）插在「引用」上面，「多选」紧跟其后（站方指定位置） */
     w.OwChat.onMsgContent(function (items, m, env) {
         if (!msgUsable(m)) return;
         var fwd = { t: '转发', icon: 'send', run: function () { OwBatch.forwardMsg(m); } };
-        var at = -1;
-        for (var i = 0; i < items.length; i++) {
+        var at = -1, i;
+        for (i = 0; i < items.length; i++) {
             if (items[i].t === '引用') { at = i; break; }
         }
-        /* 插件推送的默认位置是菜单末尾；单条转发是高频入口，splice 进「引用」之前。
+        /* 插件推送的默认位置是菜单末尾；转发 / 多选是高频入口，splice 到「引用」之前。
            引用不存在（游客不带这条）时退回末尾，不硬造位置。 */
         if (at >= 0) items.splice(at, 0, fwd); else items.push(fwd);
-        items.push({ t: '批量选择', run: function () { OwBatch.enter(m); } });
+        var sel = { t: '多选', run: function () { OwBatch.enter(m); } };
+        var fwAt = -1;
+        for (i = 0; i < items.length; i++) {
+            if (items[i].t === '转发') { fwAt = i; break; }
+        }
+        if (fwAt >= 0) items.splice(fwAt + 1, 0, sel); else items.push(sel);
     });
 
-    /* 右侧栏群聊信息面板：邀请好友（成员）+ 批量选择消息（所有人） */
+    /* 右侧栏群聊信息面板：只留「邀请好友」（多选入口已按站方要求移到右键菜单，不再出现在侧边栏） */
     w.OwChat.onRoomEdit(function (ctx) {
         var extras = byId('owREExtras');
         if (!extras || !ctx.roomId) return;
@@ -772,7 +1045,6 @@
                 '邀请好友',
                 function () { OwBatch.inviteOpen(ctx.roomId); });
         }
-        panelEntry(extras, CHECK_SVG, '批量选择消息', function () { OwBatch.enter(null); });
     });
 
     /** 往面板入口区追加一行（与 room-embed 的 addPanelEntry 同一形态：图标 + 文案 + 右箭头） */
