@@ -1765,6 +1765,22 @@
                 this.dmSets[peer] = Math.max(this.dmSets[peer] || 0, since);
                 this.send({ t: 'dmsub', peer: peer, since: this.dmSets[peer] });
             },
+            /**
+             * P3 发送帧：消息发送走 WS（daemon 回环站点执行 Chat::send，结果以 sent 帧回——
+             * 由 onMsg 的 sent 分支交 onSendResult 收尾）。cid = 幂等键，重试沿用同一个。
+             */
+            sendSend: function (cid, payload) {
+                this.send({
+                    t: 'send', cid: cid,
+                    room: parseInt(payload.room_id, 10) || 0,
+                    type: payload.type || 'text',
+                    content: payload.content || '',
+                    to_user_id: payload.to_user_id || '',
+                    to_guest_id: payload.to_guest_id || '',
+                    to_nickname: payload.to_nickname || '',
+                    quote: payload.quote || '',
+                });
+            },
             send: function (obj) {
                 if (!this.on || !this.ws) return;
                 try { this.ws.send(JSON.stringify(obj)); } catch (e) {}
@@ -1774,6 +1790,13 @@
                 try { m = JSON.parse(ev.data); } catch (e) { return; }
                 if (!m || !m.t) return;
                 if (m.t === 'pong') { this.lastPong = new Date().getTime(); return; }
+                if (m.t === 'sent') {
+                    // P3：发送结果帧（daemon 内部通道的应答）——与 HTTP 回调用同一套收尾（onSendResult）
+                    try {
+                        OwChat.onSendResult(String(m.cid || ''), { ok: m.ok === true, msg: m.msg || '', msg_row: m.msg_row || null });
+                    } catch (e) {}
+                    return;
+                }
                 if (m.t === 'msg' || m.t === 'msgdm') { this.onPush(m); return; }
                 if (m.t === 'recall') {
                     // 撤回推送（P2）：与本地撤回同款收尾——直接移除气泡 + 清缓存 + 侧栏摘要刷新
@@ -3886,6 +3909,9 @@
         },
 
         addMessage: function (m, batch) {
+            // P3（发送迁移）：真消息到达（推送/历史/回显任一来源）→ 清掉同 cid 的
+            // 「发送中/失败」临时气泡——这就是「超时失败后消息最终落库自动转正」的实现点。
+            if (m && m.cid) this.clearPending(m.cid);
 
             var box = $('owMessages');
             var exist = document.getElementById('owMsg' + m.id);
@@ -4411,7 +4437,15 @@
             }
             var content = opt.content != null ? opt.content : input.value;
             if (!content || !content.replace(/^\s+|\s+$/g, '')) return;
+            // P3 防连点（轻量合并）：300ms 内的重复点击/回车只发一条——配合服务端幂等键，
+            // 用户手抖连点不会产生重复消息（评审定的最小防抖）。
+            var nowMs = new Date().getTime();
+            if (this._sendLockAt && nowMs - this._sendLockAt < 300) return;
+            this._sendLockAt = nowMs;
+
             var self = this;
+            // P3 幂等键：每条消息一个；重试沿用同一个 —— 服务端按 (身份, client_id) 去重。
+            var cid = this.newCid();
             var payload = {
                 room_id: this.room,
                 type: opt.type || 'text',
@@ -4419,7 +4453,8 @@
                 to_user_id: opt.to_user_id || '', to_guest_id: opt.to_guest_id || '',
                 to_nickname: opt.to_nickname || '',
                 // 引用快照：JSON 字符串，服务端会再次校验截断
-                quote: this.quote ? JSON.stringify(this.quote) : ''
+                quote: this.quote ? JSON.stringify(this.quote) : '',
+                client_id: cid,
             };
             // 私聊视图：文本 / 图片 / 文件等所有形态一律发往对方
             if (this.dm) {
@@ -4431,37 +4466,160 @@
                 payload.to_guest_id = '';
                 payload.to_nickname = this.roomName;
             }
-            var wasDm = !!this.dm;
-            OwApi.post('send', payload, function (r) {
-                if (!r.ok) { toast(r.msg); return; }
-                if (!opt.type || opt.type === 'text') input.value = '';
-                self.clearQuote();   // 发送成功后清掉引用条
-                self.autoGrow();   // 发送后回到单行（若手动拉高过则保持用户高度）
-                self.afterSendClearJump();   // v1.3.21：自己发言即视为已参与，清掉跳转按钮
-                // v1.3.23：**立即本地回显**自己这条消息。
-                //
-                // 为什么必须立刻渲染：原先这里什么都不做，消息只能靠长轮询带回来 ——
-                // 而长轮询是 20 秒挂起的，**这条 in-flight 请求的 since 是发消息之前
-                // 抓的快照**，服务端要等它超时返回后才发起下一次（此时才看得到新消息）。
-                // 于是「发出去 → 气泡不出现 → 最多等 20 秒才出现」，刷新才看得到
-                // （刷新会重走 history，立刻就有了）。
-                //
-                // 三点要注意：
-                //  ① 用服务端回的 msg_row，**不自己拼** —— 敏感词替换后的正文、
-                //     头像最终 URL、role 等派生字段只有服务端算得准；
-                //  ② addMessage 内部按 id 去重，所以长轮询稍后把同一条带回来时
-                //     不会重复渲染；
-                //  ③ 同步推进 since —— 否则长轮询会把这批「已渲染但 since 未覆盖」
-                //     的消息当新的再走一遍（虽不重复渲染，但会白发一次请求）。
-                if (r.msg_row) {
-                    self.addMessage(r.msg_row);
-                    if (r.msg_row.id > self.since) self.since = r.msg_row.id;
-                    self.scrollBottom();
-                    self.markRead(self.since);
+            // P3：立即上屏「发送中」气泡（本机信息先渲染，服务端 msg_row 到达时转正替换）——
+            // 输入区同时释放，用户可以继续打字（评审定的轻量非阻塞交互；失败留「重试」入口）。
+            this.addPending(cid, payload);
+            if (!opt.type || opt.type === 'text') input.value = '';
+            this.clearQuote();   // 发送即清引用条（内容已装进 payload；失败重试用的也是它）
+            this.autoGrow();
+            this.afterSendClearJump();
+            // P3 三分支：WS 可用 → send 帧（少一次客户端 HTTPS 往返，且每身份串行保序）；
+            // 否则回落 HTTP（现状路径原样保留，两条路共用同一套结果状态机 onSendResult）。
+            if (this.canWsSend(payload.room_id)) {
+                this.rt.sendSend(cid, payload);
+                this._armSendTimeout(cid);
+            } else {
+                OwApi.post('send', payload, function (r) { self.onSendResult(cid, r); });
+            }
+        },
+
+        // ---------- P3（发送迁移）：发送状态机 ----------
+
+        /** 客户端消息唯一号（幂等键 + 结果配对；重试沿用同一个） */
+        newCid: function () {
+            return 'c' + new Date().getTime().toString(36) + Math.random().toString(36).slice(2, 10);
+        },
+
+        /** WS 发送三分支判定：rt.on && 开关 && 非密码房 && 白名单内（DM 只受前两项约束） */
+        canWsSend: function (roomId) {
+            if (!this.rt || !this.rt.on || !this.cfg || !this.cfg.ws_send_enabled) return false;
+            if (this.dm) return true;                       // 私聊无密码房/白名单概念
+            roomId = parseInt(roomId, 10) || 0;
+            if (!roomId) return false;
+            var rooms = this.cfg.rooms || [], i;
+            for (i = 0; i < rooms.length; i++) {
+                // 密码房发送回落 HTTP：通行授权记在会话里，内部通道（无会话）拿不到，
+                // 走了 WS 必然被「无权进入该群聊」拒——P3 方案定稿口径。
+                if ((parseInt(rooms[i].id, 10) || 0) === roomId && rooms[i].type === 'password') return false;
+            }
+            var wl = (this.cfg.ws_send_rooms || '').replace(/\s+/g, '');
+            if (wl !== '') {
+                var hit = false, parts = wl.split(',');
+                for (i = 0; i < parts.length; i++) if ((parseInt(parts[i], 10) || 0) === roomId) hit = true;
+                if (!hit) return false;                     // 白名单灰度：未列入的房间回落 HTTP
+            }
+            return true;
+        },
+
+        /** 本地渲染「发送中」气泡（伪行以本机信息拼装；转正时整个替换为服务端 msg_row 渲染） */
+        addPending: function (cid, payload) {
+            this._pending = this._pending || {};
+            if (this._pending[cid]) return;
+            var me = (this.cfg && this.cfg.me) || {};
+            var d = new Date();
+            var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+            var row = {
+                id: 0, room: payload.room_id || 0, uid: me.id || null, gid: null,
+                nickname: me.nickname || '', role: me.role || 'guest', title: me.title || '',
+                avatar: me.avatar || '', type: payload.type || 'text', content: payload.content,
+                quote: null, recalled: 0, deleted: 0, dm: this.dm ? 1 : 0, mine: true,
+                ts: Math.floor(d.getTime() / 1000),
+                time: pad(d.getHours()) + ':' + pad(d.getMinutes()),
+                date: pad(d.getMonth() + 1) + '-' + pad(d.getDate()),
+            };
+            if (payload.quote) { try { row.quote = JSON.parse(payload.quote); } catch (e) {} }
+            var b = this.buildMessage(row);
+            var div = document.createElement('div');
+            div.className = b.cls + ' ow-msg-pending';
+            div.id = 'owTmp' + cid;
+            div.innerHTML = b.html;
+            var box = $('owMessages');
+            if (box) box.appendChild(div);
+            this.scrollBottom();
+            this._pending[cid] = { row: row, el: div, payload: payload, timer: 0 };
+        },
+
+        /** 移除某 cid 的临时气泡（转正 / 清场用） */
+        clearPending: function (cid) {
+            if (!cid || !this._pending || !this._pending[cid]) return false;
+            var p = this._pending[cid];
+            if (p.timer) clearTimeout(p.timer);
+            if (p.el && p.el.parentNode) p.el.parentNode.removeChild(p.el);
+            delete this._pending[cid];
+            return true;
+        },
+
+        /** 标记某 cid 发送失败（气泡转失败态 + 重试入口；daemon 超时帧与前端兜底定时器共用） */
+        markPendingFailed: function (cid, msg) {
+            var p = this._pending && this._pending[cid];
+            if (!p) return;
+            if (p.timer) { clearTimeout(p.timer); p.timer = 0; }
+            if (!p.el || !p.el.parentNode) { delete this._pending[cid]; return; }   // 已切视图：无 DOM 可标（消息由推送/历史补齐）
+            if (p.el.className.indexOf('ow-msg-failed') < 0) p.el.className += ' ow-msg-failed';
+            if (!p.el.querySelector('.ow-msg-retry')) {
+                var bar = document.createElement('div');
+                bar.className = 'ow-msg-retry';
+                bar.innerHTML = esc(msg || '发送失败') + ' · <a href="javascript:;" onclick="OwChat.retrySend('
+                    + jsAttr(cid) + ')">重试</a>';
+                p.el.appendChild(bar);
+            }
+        },
+
+        /** 重试（沿用同一 cid——服务端按 (身份, cid) 幂等，重试不会产生重复消息） */
+        retrySend: function (cid) {
+            var p = this._pending && this._pending[cid];
+            if (!p || !p.el) return;
+            p.el.className = p.el.className.replace(/\s*ow-msg-failed/, '');
+            var bar = p.el.querySelector('.ow-msg-retry');
+            if (bar && bar.parentNode) bar.parentNode.removeChild(bar);
+            var payload = p.payload;
+            if (this.canWsSend(payload.room_id)) {
+                this.rt.sendSend(cid, payload);
+                this._armSendTimeout(cid);
+            } else {
+                var self = this;
+                OwApi.post('send', payload, function (r) { self.onSendResult(cid, r); });
+            }
+        },
+
+        /** WS 发送的超时兜底（daemon 会按 ws_send_timeout 回超时帧；10s 兜的是断线等极端情况） */
+        _armSendTimeout: function (cid) {
+            var self = this;
+            var p = this._pending && this._pending[cid];
+            if (!p) return;
+            if (p.timer) clearTimeout(p.timer);
+            p.timer = setTimeout(function () {
+                var pp = self._pending && self._pending[cid];
+                if (pp && pp.timer) { pp.timer = 0; self.markPendingFailed(cid, '发送超时，请重试'); }
+            }, 10000);
+        },
+
+        /**
+         * 发送结果统一入口（WS sent 帧与 HTTP 回调共用 —— 收尾口径只有一份）。
+         * 成功：临时气泡撤掉，以服务端 msg_row 渲染（视图未变才就地插；切走则由推送/历史补齐，
+         *       addMessage 会按 cid 清理残留临时气泡）。失败：气泡转失败态 + 重试入口 + toast。
+         */
+        onSendResult: function (cid, r) {
+            var p = this._pending && this._pending[cid];
+            if (r && r.ok) {
+                this.clearPending(cid);
+                var row = r.msg_row;
+                if (row) {
+                    var viewMatch = row.dm
+                        ? (!!this.dm && this.dm.peer === ('user:' + row.to_uid))
+                        : ((parseInt(row.room, 10) || 0) === (this.room || 0) && !this.dm && !this.noticeMode);
+                    if (viewMatch) {
+                        this.addMessage(row);
+                        if (row.id > this.since) this.since = row.id;
+                        this.scrollBottom();
+                        this.markRead(this.since);
+                    }
                 }
-                if (wasDm && self.dm) self.loadConversations();   // 刷新会话排序（自己发的排最前）
-                else self.loadConversations();   // 群聊同样刷新：自己发的会让会话置顶
-            });
+                this.loadConversations();   // 刷新会话排序（自己发的排最前）
+                return;
+            }
+            if (p) this.markPendingFailed(cid, (r && r.msg) || '发送失败，请重试');
+            if (r && r.msg) toast(r.msg);
         },
 
         /**
@@ -8069,6 +8227,15 @@
                                 + '再执行 pm2 save（配合 pm2 startup 实现开机自启）；'
                                 + '② 确认 nginx 已有 /ws 反代（nginx-server.conf 自带，容器部署需手动同步）。'
                                 + '改端口需重启守护进程，并同步改 nginx 里的同一端口。')
+                            // P3（发送迁移）：WS 发送开关与数值/白名单。默认关 = 消息仍走 HTTP 发送。
+                            + sw('ws_send_enable', 'WS 发送（消息经实时通道）', '0')
+                            + fld('ws_send_rooms', 'WS 发送房间白名单（逗号分隔房间号，空=全站）', '')
+                            + fld('ws_send_timeout', 'WS 发送读超时(秒)', '8')
+                            + fld('ws_send_max_inflight', 'WS 发送全站在途上限', '16')
+                            + note('开启后消息发送走实时通道（守护进程回环到站点执行同一发送逻辑，插件长任务不阻塞实时通道），'
+                                + '断线或守护进程不在时自动回落 HTTP；发送失败的气泡上带「重试」，重试不会重复（幂等键）。'
+                                + '读超时按「最慢插件」设置；全站在途建议取 php-cgi 池进程数的 1.5 倍；'
+                                + '白名单非空时只有列出的群房间走 WS 发送（灰度用），私聊与密码房不受其约束。')
                             // v1.3.167 执行日志保留期：维护任务页的「清理过期日志」按钮
                             // 与每天一次的 purge_cron_logs 任务共用这一项（一处改、两处生效）。
                             + fld('cron_log_retain_days', '执行日志保留期(天)', '90')
@@ -8601,6 +8768,11 @@
                 // P1（WS 实时层）：实时通道开关 + 守护进程端口
                 ws_enable: swv('owS_ws_enable'),
                 ws_port: $('owS_ws_port') ? $('owS_ws_port').value : '',
+                // P3（发送迁移）：WS 发送开关/白名单/数值
+                ws_send_enable: swv('owS_ws_send_enable'),
+                ws_send_rooms: $('owS_ws_send_rooms') ? $('owS_ws_send_rooms').value : '',
+                ws_send_timeout: $('owS_ws_send_timeout') ? $('owS_ws_send_timeout').value : '',
+                ws_send_max_inflight: $('owS_ws_send_max_inflight') ? $('owS_ws_send_max_inflight').value : '',
                 // v1.3.44 站点默认语言（语言组未渲染时给空串，后端跳过该键）
                 ow_lang_default: $('owS_ow_lang_default') ? $('owS_ow_lang_default').value : ''
             }, function (r) {
