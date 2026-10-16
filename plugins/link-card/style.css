@@ -97,12 +97,15 @@
 .lc-pv-host { font-size: 11px; color: var(--ow-text-sub); margin-top: 6px; opacity: .8; }
 .lc-pv-note { font-size: 11px; color: var(--ow-text-sub); padding: 8px 12px; border-top: 1px solid var(--ow-border); line-height: 1.5; }
 
-/* ---------- 聊天页：消息内的链接预览卡 ----------
+/* ---------- 聊天页：消息内的链接预览卡（**固定尺寸**）----------
    版式参照核心 .ow-file-card（消息内的既有卡片）：固定视觉宽度、内部左对齐。
    ⚠️ .ow-msg.mine .ow-msg-body 有 text-align:right（自己发的消息整块靠右），
-   卡片内部必须显式 text-align:left，否则标题/描述会被推到右边、与封面图错位。 */
+   卡片内部必须显式 text-align:left，否则标题/描述会被推到右边、与封面图错位。
+   ⚠️ 尺寸全部写死（宽 300 + 图区 132 + 文本区 112 = 246 高）：多张卡在消息里排下来
+   必须一样大 —— 之前标题一行/两行会让卡高在 228~246 之间跳，一屏里参差不齐。 */
 .lc-msgcard {
     display: block;
+    box-sizing: border-box;
     width: 300px;
     max-width: 100%;
     margin-top: 6px;
@@ -121,12 +124,28 @@
     display: block;
     width: 100%;
     height: 132px;
+    box-sizing: border-box;
     object-fit: cover;
     -o-object-fit: cover;
     background: var(--ow-bg-sub);
     border-bottom: 1px solid var(--ow-border);
 }
-.lc-msgcard-body { padding: 9px 11px 11px; }
+/* 无封面图（或图加载失败）时的占位块：**与封面图同高**，居中站名首字母。
+   用 line-height 而不是 flex 居中：老浏览器没有 flex 时文字也不至于贴顶。 */
+.lc-msgcard-ph {
+    line-height: 132px;
+    text-align: center;
+    font-size: 34px;
+    font-weight: 600;
+    color: var(--ow-text-sub);
+    user-select: none; -webkit-user-select: none;
+}
+.lc-msgcard-body {
+    box-sizing: border-box;
+    height: 112px;          /* 恒高：站点行 16 + 标题 2 行 36 + 描述 2 行 34 + 内外间距 */
+    padding: 9px 11px 11px;
+    overflow: hidden;
+}
 .lc-msgcard-site {
     display: block;
     font-size: 11px;
@@ -141,6 +160,7 @@
 .lc-msgcard-title {
     font-size: 13px;
     line-height: 18px;
+    height: 36px;           /* 恒占两行：标题一行时描述也停在同一高度，卡片内部对齐一致 */
     font-weight: 600;
     color: var(--ow-text-title);
     margin-top: 2px;
@@ -150,6 +170,7 @@
 .lc-msgcard-desc {
     font-size: 12px;
     line-height: 17px;
+    height: 34px;           /* 恒占两行（无描述时留白，保证卡高固定） */
     color: var(--ow-text-sub);
     margin-top: 4px;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
@@ -164,7 +185,8 @@
     .lc-modal-aside { width: 100%; position: static; }
     .lc-form-2col { flex-direction: column; -webkit-flex-direction: column; gap: 0; }
     .lc-plat-grid .ow-switch-row { flex: 0 0 100%; }
-    /* 窄屏消息区本就窄：卡片占满气泡宽度即可，别再顶到 300px */
+    /* 窄屏消息区本就窄：卡片占满气泡宽度即可，别再顶到 300px（其余尺寸仍固定） */
     .lc-msgcard { width: 100%; }
     .lc-msgcard-img { height: 112px; }
+    .lc-msgcard-ph { line-height: 112px; }
 }
