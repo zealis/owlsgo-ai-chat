@@ -112,7 +112,10 @@
     border: 1px solid var(--ow-border);
     border-radius: 8px;
     overflow: hidden;
-    background: var(--ow-bg);
+    /* ⚠️ 底色必须用 --ow-surface（与消息气泡 v1.3.25 同源），不能用 --ow-bg：
+       自定义配色 / 背景图主题下 --ow-bg 可能是半透明，卡片会整个「隐形」，
+       文字直接浮在聊天背景上（站方线上实测踩过）。 */
+    background: var(--ow-surface);
     color: var(--ow-text);
     text-align: left;
     text-decoration: none;
@@ -131,13 +134,15 @@
     border-bottom: 1px solid var(--ow-border);
 }
 /* 无封面图（或图加载失败）时的占位块：**与封面图同高**，居中站名首字母。
-   用 line-height 而不是 flex 居中：老浏览器没有 flex 时文字也不至于贴顶。 */
+   用 line-height 而不是 flex 居中：老浏览器没有 flex 时文字也不至于贴顶。
+   底色同样走 --ow-surface：占位块也是「卡片表面」的一部分，不能透出聊天背景。 */
 .lc-msgcard-ph {
     line-height: 132px;
     text-align: center;
     font-size: 34px;
     font-weight: 600;
     color: var(--ow-text-sub);
+    background: var(--ow-surface);
     user-select: none; -webkit-user-select: none;
 }
 .lc-msgcard-body {
