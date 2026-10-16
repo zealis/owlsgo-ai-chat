@@ -538,6 +538,8 @@ class Admin
                           // v1.2.3 起这是唯一的消息保留期项（已删除消息同样适用），
                           // 原 msg_deleted_retain_days 已下线、不再读写。
                           'msg_retain_days',
+                          // v1.3.167 执行日志保留期（天），0 = 永久保留；purge_cron_logs 用它。
+                          'cron_log_retain_days',
                           'msg_rate_window', 'msg_rate_max',
                           // v1.3.55：mail_rate_limit 不再由本页写入 —— 它和其余 mail_* 策略键
                           // 一起归到「邮箱验证」插件的后台页（那边按白名单直写 settings）。
@@ -553,7 +555,7 @@ class Admin
                           'ow_lang_default'];
                 // 数值型设置统一收敛为非负整数：负数会让间隔/保留期这类
                 // 「窗口秒数」「天数」直接失效或行为诡异，前端输入框挡不住。
-                $intKeys = ['guest_msg_interval', 'msg_retain_days'];
+                $intKeys = ['guest_msg_interval', 'msg_retain_days', 'cron_log_retain_days'];
                 foreach ($allow as $k) {
                     if (!isset($_POST[$k])) continue;
                     if (in_array($k, $intKeys, true)) {
@@ -648,7 +650,15 @@ class Admin
             }
 
             case 'admin_cron_logs_clear': {
-                $days = max(0, (int)($p('days') ?: 30));
+                // 不传 days（维护任务页的手动按钮就是这么调的）→ 按系统设置
+                // 「执行日志保留期」（默认 90 天）清；显式传 days 仍按传的值清
+                // （days=0 = 清空全部，老行为保留给显式调用方）。
+                $raw = $p('days');
+                $days = ($raw === null || $raw === '') ? null : max(0, (int)$raw);
+                if ($days === null) {
+                    $days = (int)DB::setting('cron_log_retain_days', 90);
+                    if ($days <= 0) Api::json(['ok' => false, 'msg' => '保留期设为「永久保留」，未清理']);
+                }
                 $n = $days > 0
                     ? (int)DB::val('SELECT COUNT(*) FROM cron_logs WHERE created_at<?', [time() - $days * 86400])
                     : (int)DB::val('SELECT COUNT(*) FROM cron_logs');

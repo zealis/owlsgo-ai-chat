@@ -86,6 +86,18 @@ class Plugin
             if (!class_exists('Mailer')) return 'Mailer 类未加载，跳过';
             return '清理过期验证码 ' . Mailer::purge(3600) . ' 条';
         }, '清理已过期的邮箱验证码（每天一次，保留最近 1 小时的记录便于排查）');
+        // v1.3.167：执行日志保留期。cron_logs 每次任务执行都写一行（维护任务由长轮询
+        // 每分钟驱动，几秒级任务一天就是上千行），不清会无限膨胀。保留天数走系统设置
+        // 「执行日志保留期」（cron_log_retain_days，默认 90 天，0 = 永久保留）。
+        self::cron('purge_cron_logs', 86400, function () {
+            $days = (int)DB::setting('cron_log_retain_days', 90);
+            if ($days <= 0) return '保留期设为 0（永久保留），跳过';
+            $cut = time() - $days * 86400;
+            $n = (int)DB::val('SELECT COUNT(*) FROM cron_logs WHERE created_at<?', [$cut]);
+            if ($n <= 0) return '没有超过 ' . $days . ' 天的执行日志';
+            DB::run('DELETE FROM cron_logs WHERE created_at<?', [$cut]);
+            return '清理超过 ' . $days . ' 天的执行日志 ' . $n . ' 条';
+        }, '清理超过保留期的执行日志（每天一次；保留天数在系统设置里改，默认 90 天，0=永久保留）');
         // v1.3.42 系统升级红点：每 12 小时比对一次 GitHub 仓库，结果写 settings.update_info，
         // 后台「系统与维护 → 系统升级」按它显隐红点。失败只记 error，不影响其它任务。
         // v1.3.99 顺带负责通知：发现新版本就给超级管理员发一条前台系统通知。

@@ -7876,6 +7876,12 @@
                             + '开启后记录 debug 级日志、出错页显示详细报错。仅用于排错，用完请及时关闭 —— 报错细节可能暴露路径、SQL 与配置信息。<br>'
                             + '日志文件：data/logs/debug.log（页面报错实时显示；接口请求只落日志、不回显，避免破坏前端数据）。'
                             + '也可在「安全日志 → 系统日志」查看与清空。</p>'
+                            // v1.3.167 执行日志保留期：维护任务页的「清理过期日志」按钮
+                            // 与每天一次的 purge_cron_logs 任务共用这一项（一处改、两处生效）。
+                            + fld('cron_log_retain_days', '执行日志保留期(天)', '90')
+                            + note('维护任务的执行日志超过本期限后会被<b>物理清除</b>，无法恢复。'
+                                + '每天由计划任务「清理超过保留期的执行日志」自动清一次，'
+                                + '维护任务页的「清理过期日志」按钮立即按同一期限清一次。默认 90 天，填 0 表示永久保留。')
                             // v1.2.60 运行缓存：放在「系统与维护」分组内，说明文字走 ow-tip
                             // （oneItem 会把 .ow-form-item 里的提示元素转成 label 上的 ⓘ 气泡）。
                             // 它是一次性动作而非设置项，所以不随「保存设置」提交，按钮走独立接口。
@@ -8129,7 +8135,7 @@
                   + '<div class="ow-form-row" style="align-items:center;gap:10px">'
                   + '<button type="button" class="ow-btn ow-btn-primary" onclick="OwAdmin.cronRun()">立即执行全部</button>'
                   + '<button type="button" class="ow-btn ow-btn-ghost" onclick="OwAdmin.cronToken()">重置触发令牌</button>'
-                  + '<button type="button" class="ow-btn ow-btn-ghost" onclick="OwAdmin.cronClearLogs()">清理 30 天前日志</button>'
+                  + '<button type="button" class="ow-btn ow-btn-ghost" onclick="OwAdmin.cronClearLogs()">清理过期日志</button>'
                   + '<span style="margin-left:auto;color:var(--ow-text-sub);font-size:12px">最近一次执行：' + esc(lastRun) + '</span>'
                   + '</div>'
                   + '<div class="ow-form-row" style="margin-top:10px">'
@@ -8230,8 +8236,10 @@
             });
         },
         cronClearLogs: function () {
-            OwAdmin.confirm('清理 30 天前的执行日志？该操作不可恢复。', function () {
-                OwApi.secure('admin_cron_logs_clear', { days: 30 }, function (r) {
+            OwAdmin.confirm('清理超过保留期的执行日志？保留天数按「系统设置 → 系统与维护 → 执行日志保留期」'
+                + '（默认 90 天）。该操作不可恢复。', function () {
+                // 不传 days：服务端按系统设置的保留期清（旧版这里发死数 30，与设置项两套口径）
+                OwApi.secure('admin_cron_logs_clear', {}, function (r) {
                     toast(r.msg);
                     if (r.ok) OwAdmin.cronLoad();
                 });
@@ -8376,6 +8384,8 @@
                 guest_msg_interval: $('owS_guest_msg_interval') ? $('owS_guest_msg_interval').value : '',
                 // v1.2.2 消息服务器保留期（天），0 = 永久保留
                 msg_retain_days: $('owS_msg_retain_days') ? $('owS_msg_retain_days').value : '',
+                // v1.3.167 执行日志保留期（天），0 = 永久保留
+                cron_log_retain_days: $('owS_cron_log_retain_days') ? $('owS_cron_log_retain_days').value : '',
                 // v1.3.104 起「发言频率窗口 / 窗口内最大条数」的编辑入口已收到
                 // 「插件管理 → 垃圾信息控制 → 刷屏」，本页不再渲染这两个输入框。
                 // 这里**整行不再提交**：之前留着 `$('owS_msg_rate_window').value` 的裸读，
