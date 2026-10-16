@@ -1,0 +1,116 @@
+/**
+ * 批量操作插件（batch-ops v1.0.0）
+ *
+ * 全部颜色只引用核心 --ow-* 变量，深浅两套主题自动跟随（不写 [data-theme] 覆盖块）。
+ * 涉及的类都在核心语义内挑过：选中态「比底色深一档」用 --ow-active-bg，
+ * 悬停用 --ow-hover-bg —— 不用 --ow-blue-light，因为自己消息的气泡底色就是它。
+ */
+
+/* ---------- 消息多选：整行热区 ----------
+   进入选择模式后每条消息加内边距、左右外扩 8px（消息区左右各有 16px 内边距，
+   扩出去不会贴到滚动条），让选中/悬停的底色像一块完整的行，而不是紧贴文字的色块。
+   底边距从 14px 收到 8px：内边距已经把行撑开了，维持 14 会把消息间距拉得发散。 */
+.owb-mode .ow-msg {
+    padding: 6px 8px;
+    margin: 0 -8px 8px;
+    border-radius: 10px;
+    cursor: pointer;
+}
+.owb-mode .ow-msg:hover { background: var(--ow-hover-bg); }
+/* 先写 hover 再写选中：两者特异性相同（0,0,3,0），靠源码顺序定胜负 */
+.owb-mode .ow-msg.owb-on { background: var(--ow-active-bg); }
+.owb-mode .ow-msg.owb-on:hover { background: var(--ow-active-bg); }
+
+/* 行首圆形勾选框（自己的消息是 row-reverse 布局，它会落在最右 —— 与镜像版式一致） */
+.owb-chk {
+    flex-shrink: 0; -webkit-flex-shrink: 0;
+    align-self: flex-start; -webkit-align-self: flex-start;
+    width: 18px; height: 18px;
+    margin-top: 11px;                 /* 与 40px 头像的竖向中心对齐 */
+    box-sizing: border-box;
+    border: 2px solid var(--ow-border-control);
+    border-radius: 50%;
+    background: var(--ow-bg);
+    color: var(--ow-on-accent);
+    font-size: 12px;
+    line-height: 15px;
+    text-align: center;
+    overflow: hidden;
+}
+.owb-chk::after { content: ""; }
+.ow-msg.owb-on .owb-chk {
+    background: var(--ow-primary-strong);
+    border-color: var(--ow-primary-strong);
+}
+.ow-msg.owb-on .owb-chk::after { content: "✓"; }
+
+/* ---------- 消息区底部的悬浮操作条 ----------
+   sticky 挂在消息区（#owMessages 是滚动容器）的最后一个子节点上：
+   滚到哪它就贴在哪的底部，不需要自己算位置；每次追加新消息后 JS 会把它重新挪到队尾。
+   纯边框 + 底色区分，不加投影 —— 与表情面板 / 聊天脚本面板同一约定。 */
+.owb-bar {
+    position: sticky;
+    bottom: 4px;
+    z-index: 6;
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    gap: 10px;
+    width: -webkit-max-content; width: max-content;
+    margin: 6px auto 2px;
+    padding: 7px 12px;
+    background: var(--ow-bg);
+    border: 1px solid var(--ow-border);
+    border-radius: 10px;
+}
+.owb-bar-n { font-size: 13px; color: var(--ow-text); }
+.owb-bar-n b { color: var(--ow-text-title); }
+.owb-off { opacity: .5; cursor: not-allowed; }
+
+/* ---------- 选择器弹窗 ---------- */
+/* 搜索框内的放大镜（核心 ow_icon('search') 同 path，服务端图标不经过 JS 的 OW_ICONS 表，这里内联一份） */
+.owb-search { position: relative; }
+.owb-search .owb-sico {
+    position: absolute;
+    left: 10px; top: 50%;
+    margin-top: -8px;
+    color: var(--ow-text-sub);
+    pointer-events: none;
+}
+.owb-search .ow-input { padding-left: 32px; }
+
+/* 标签条：覆盖 .ow-tabs 为侧栏设计的 12px 两侧外边距，与弹窗内其它控件对齐 */
+.owb-tabs { margin: 10px 0 6px; }
+
+/* 搜索态的分区标题（好友 / 群聊） */
+.owb-sec {
+    padding: 10px 6px 2px;
+    font-size: 12px;
+    color: var(--ow-text-sub);
+}
+
+/* 行内动作按钮（转发 / 邀请）：贴行尾、不被长名字挤压 */
+.owb-act { flex-shrink: 0; -webkit-flex-shrink: 0; margin-left: 4px; }
+.owb-row.owb-dis { opacity: .55; }
+.owb-row.owb-dis:hover { background: transparent; }
+/* 完成态（已邀请）：按钮换文案并禁用，行整体退后 */
+.owb-row.owb-done { opacity: .62; }
+.owb-row.owb-done:hover { background: transparent; }
+.owb-act[disabled] { cursor: default; }
+
+/* ---------- 邀请模式底部的「邀请链接」区（对应参考样式） ---------- */
+.owb-foot {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--ow-border);
+}
+.owb-foot-t { font-size: 14px; color: var(--ow-text-title); margin-bottom: 10px; }
+.owb-foot-row { display: flex; display: -webkit-flex; gap: 8px; }
+.owb-foot-row .owb-link {
+    flex: 1 1 auto; -webkit-flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+    font-size: 13px;
+    color: var(--ow-text-sub);
+}
+.owb-copy { flex-shrink: 0; -webkit-flex-shrink: 0; }
+.owb-foot-hint { margin: 8px 0 0; font-size: 12px; color: var(--ow-text-sub); line-height: 1.6; }
