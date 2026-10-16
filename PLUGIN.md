@@ -297,6 +297,8 @@ OwChat.registerAvatarUploader(function (file, filename, onOk) {
 
 | `notice.items` | 取通知流时（`?action=notices`，**仅登录用户**） | 与 `notice.contacts` **同一个注册函数、同一套校验与默认值**（共用 `Notice::pluginRows()`）：把插件的条目并进**通知流**（与系统通知按时间混排），正文 = `last_text`，另可给 `at` 指定时间、`images` 放缩略图（≤3 张，本站 uploads/ 或 https）。点「查看」走 `OwChat.onNoticeContact(key)`。整节说明见「通知流条目」 |
 
+| `notice.kinds` | 取通知**类型表**时（`Notice::push / kinds / texts / render` 任一处，懒触发，v1.3.171） | `[&$kinds]` —— `$kinds['my_kind'] = '你的 {what} 已处理';` 注册自己的通知类型（kind => 中文模板）。kind 名 `[a-z][a-z0-9_]{0,39}`、模板非空且 ≤300 字，不合格静默丢弃；**同名以核心为准**。前端语言包按整句模板匹配，插件模板同样可翻译。整节说明见「通知类型注册」 |
+
 ### `Plugin::current()` —— 「这个回调是谁的」
 
 在 `fire` / `collect` 调起**插件注册的回调**期间返回该插件的目录名（核心代码里调用一律空串）。
@@ -508,6 +510,29 @@ Plugin::on('notice.items', function (callable $add) {
   要展示多条历史，请把列表放在插件自己的界面里（点「查看」打开的那个），流里只放最新一条的摘要；
 - **游客不触发**（游客既没有通知区也没有通知流）；系统通知的已读语义（打开即整批已读）不适用于插件条目 ——
   未读计数由插件自己维护（侧栏行的 `unread` 字段，见上一节）。
+
+### 通知类型注册（`notice.kinds`，v1.3.171）
+
+想发一条自己的**系统通知**（`Notice::push($userId, 'my_kind', ['k' => 'v'])`）不用再让核心在类型表里加行 ——
+在自己的 `main.php` 顶层注册模板即可，核心会把它并进「已知类型」：
+`Notice::kinds()` / `Notice::texts()` / `Notice::push()` 的有效性判断都认它，
+前端通知流与侧栏那一行也按同一套模板渲染（`{xx}` 占位参数在 push 时填入）。
+
+```php
+Plugin::on('notice.kinds', function (array &$kinds) {
+    $kinds['my_kind'] = '你的 {what} 已处理，可到后台查看。';   // kind => 中文模板
+});
+
+Notice::push((int)$adminId, 'my_kind', ['what' => '举报']);   // 模板整个走既有通知链路
+```
+
+- 校验：kind 名 `[a-z][a-z0-9_]{0,39}`、模板非空 string 且 ≤300 字，不合格**静默丢弃**
+  （与 `push` 对未知类型的态度一致：宁可不发，也不要在界面上出现一个没有语义的孤立条目）；
+- **同名以核心为准**：内置类型覆盖不了（通知是账号安全留痕，文案不能被插件改写）；
+- **可翻译**：前端语言包按「整句模板」精确匹配 —— 在自己的 `lang.js` 里补一条
+  「中文模板 => 英文模板」即可（与内置类型走同一条路，如 lang-en 里 `spam_lexicon_update` 那条）；
+- 懒触发：只在 `push / kinds / texts / render` 任一处真正用到时才 fire —— 声明了本钩子的插件
+  到那一刻才被载入（fire 自带按需加载；回调每次往新数组里登记，不会重复累积）。
 
 ### 侧栏一级导航扩展（sidebar.rail / OwChat.onRail）
 

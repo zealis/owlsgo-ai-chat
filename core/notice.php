@@ -8,6 +8,8 @@
  *
  * 文案集中在这里而不是散到各调用点：一是同一事件多处触发时口径必须一致，
  * 二是 lang-en 语言包按「中文原文」精确匹配，文案只有一个出处才好维护。
+ * （v1.3.171 起**内置**类型仍全在这张表里；插件自己的类型经 `notice.kinds` 钩子注册，
+ *  见 templates() —— 插件不必再改核心。）
  */
 class Notice
 {
@@ -23,6 +25,7 @@ class Notice
      *
      * ⚠️ 变体拆成独立 kind，不要用「一种句式 + 条件占位符」（如 {perm} 填「永久」或「24 小时」）：
      * 英文里语序和词形都会跟着变，条件式占位符翻译不了。所以禁言有四个完整模板。
+     * ⚠️ v1.3.171 起插件类型可经 `notice.kinds` 注册（templates() 合并）；同名以本表为准。
      */
     private const TEXTS = [
         'pwd'       => '你的登录密码已修改。如果不是你本人操作，请立即再次修改密码并检查账号安全。',
@@ -45,6 +48,9 @@ class Notice
         // 被拦域名的访问申诉（v1.3.106）：只发给超级管理员，与 update_available 同一类「要人来处理」的事件。
         // 域名与昵称走参数，模板保持整句，英文界面才翻得动。
         'spam_appeal' => '{nick} 申诉被拦截的域名 {domain}，申请恢复访问。请到「后台 → 插件管理 → 垃圾信息控制 → 访问申诉」查看并处理。',
+        // 敏感词库有更新（v1.3.171，垃圾信息控制插件经 Notice::push 推送）：只发给超级管理员。
+        // 版本号走参数（远端仓库日期），与 update_available 同一类「要人来处理」的事件。
+        'spam_lexicon_update' => '敏感词库有更新（{v}），可到「后台 → 插件管理 → 垃圾信息控制 → 违禁词库」点「在线下载」更新。',
     ];
 
     /**
@@ -210,22 +216,57 @@ class Notice
         return $out;
     }
 
-    /** 已知事件类型（后台/插件判实用；也是模板表的键集合） */
-    public static function kinds(): array
+    /**
+     * 模板表的合并视图（v1.3.171）：内置 TEXTS + 插件经 `notice.kinds` 注册的模板。
+     *
+     * 为什么要有：此前插件想发一条自己的系统通知，必须让核心在 TEXTS 里加一行 ——
+     * 每个插件都来改主程序显然不行。钩子把「登记模板」这一步开放出去：
+     *
+     *     Plugin::on('notice.kinds', function (array &$kinds) {
+     *         $kinds['my_kind'] = '你的 {what} 已处理';   // kind => 中文模板（{xx} 是占位参数）
+     *     });
+     *
+     * 约定与校验：
+     *   · kind 名 `[a-z][a-z0-9_]{0,39}`、模板非空 string 且 ≤300 字，不合格**静默丢弃**
+     *     （宁可不发，也不要在界面上出现一个没有语义的孤立条目 —— 与 push 对未知类型的态度一致）；
+     *   · **同名以核心为准**（`TEXTS + $extra` 左操作数优先）：通知是账号安全留痕，
+     *     内置类型的文案不能被插件改写；
+     *   · 前端语言包（lang-en 那套）按「整句模板」精确匹配、再填参数，所以插件模板同样可翻译 ——
+     *     插件只需在自己的 lang.js 里补一条「中文模板 => 英文模板」。
+     * 懒触发：push / kinds / texts / render 任一处用到时都会 fire 一次（fire 自带按需加载：
+     * 声明了本钩子的插件此刻才被载入；回调每次都往新数组里重新登记，不会残留或重复累积）。
+     */
+    private static function templates(): array
     {
-        return array_keys(self::TEXTS);
+        $reg = [];
+        if (class_exists('Plugin')) Plugin::fire('notice.kinds', [&$reg]);
+        $extra = [];
+        foreach ($reg as $k => $tpl) {
+            $k = (string)$k;
+            if (!is_string($tpl) || !preg_match('/^[a-z][a-z0-9_]{0,39}$/', $k)) continue;
+            $tpl = trim($tpl);
+            if ($tpl === '' || mb_strlen($tpl) > 300) continue;
+            $extra[$k] = $tpl;
+        }
+        return self::TEXTS + $extra;   // 左操作数优先：核心模板不为插件让位
     }
 
-    /** 模板表：随通知列表一起下发给前端，语言包按整条模板翻译后再填参数 */
+    /** 已知事件类型（后台/插件判实用；也是模板表的键集合 —— 含插件注册） */
+    public static function kinds(): array
+    {
+        return array_keys(self::templates());
+    }
+
+    /** 模板表：随通知列表一起下发给前端，语言包按整条模板翻译后再填参数（含插件注册） */
     public static function texts(): array
     {
-        return self::TEXTS;
+        return self::templates();
     }
 
     /** 按 kind + 参数渲染中文正文（库里 body 就是这份快照） */
     public static function render(string $kind, array $params = []): string
     {
-        $tpl = self::TEXTS[$kind] ?? '';
+        $tpl = self::templates()[$kind] ?? '';
         if ($tpl === '') return '';
         $out = $tpl;
         foreach ($params as $k => $v) {
@@ -236,14 +277,14 @@ class Notice
     }
 
     /**
-     * 记一条通知。$kind 必须是已知类型（未知类型直接丢弃 —— 宁可不发，
-     * 也不要在界面上出现一个没有图标、没有语义的孤立条目）。
+     * 记一条通知。$kind 必须是已知类型（内置或插件经 notice.kinds 注册的；未知类型直接丢弃 ——
+     * 宁可不发，也不要在界面上出现一个没有图标、没有语义的孤立条目）。
      * $params 只放**渲染模板要用的取值**（room_id / hours），存 JSON 不存整句。
      * 静默失败：通知是旁路留痕，绝不能因为它写失败就让「改密码」这种主流程报错回滚。
      */
     public static function push(int $userId, string $kind, array $params = []): void
     {
-        if ($userId <= 0 || !isset(self::TEXTS[$kind])) return;
+        if ($userId <= 0 || !isset(self::templates()[$kind])) return;
         $text = self::render($kind, $params);
         try {
             DB::insert('notices', [
