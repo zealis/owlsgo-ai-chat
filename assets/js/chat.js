@@ -1148,7 +1148,10 @@
         at: '<circle cx="12" cy="12" r="4"/><path d="M16 8v5.5a2.5 2.5 0 0 0 5 0V12a9 9 0 1 0-3.6 7.1"/>',
         monitor: '<rect x="3.5" y="5" width="17" height="11.5" rx="2"/><path d="M9 20h6M12 16.5V20"/>',
         // v1.3.158：仪表盘（后台首屏菜单）。与 PHP ow_icon('chart') 同一份 path，icon-audit 逐字对账。
-        chart: '<line x1="4" y1="20" x2="20" y2="20"/><rect x="5.6" y="12" width="3.4" height="8" rx="1"/><rect x="10.3" y="6.5" width="3.4" height="13.5" rx="1"/><rect x="15" y="15" width="3.4" height="5" rx="1"/>'
+        chart: '<line x1="4" y1="20" x2="20" y2="20"/><rect x="5.6" y="12" width="3.4" height="8" rx="1"/><rect x="10.3" y="6.5" width="3.4" height="13.5" rx="1"/><rect x="15" y="15" width="3.4" height="5" rx="1"/>',
+        // v1.4.2：复选方块 —— 消息「多选」入口（batch-ops 插件）。此前右键菜单里只有它没图标，
+        // 与相邻的复制/引用/撤回/删除不齐；与 PHP ow_icon('check-square') 同一份 path，icon-audit 逐字对账。
+        'check-square': '<rect x="4" y="4" width="16" height="16" rx="3.5"/><path d="M8.3 12.4l2.6 2.6 4.8-5.2"/>'
     };
     function owIco(name, size, extra) {
         var d = OW_ICONS[name] || '';

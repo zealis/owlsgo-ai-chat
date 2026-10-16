@@ -1410,6 +1410,9 @@ function ow_icon(string $name, int $size = 18): string
         // 这是后台里唯一一个「概览」性质的菜单项，需要形状上一眼能与审核/设置区分开。
         // JS 侧 OW_ICONS.chart 是同一份 path（icon-audit 会逐字对账）。
         'chart' => '<line x1="4" y1="20" x2="20" y2="20"/><rect x="5.6" y="12" width="3.4" height="8" rx="1"/><rect x="10.3" y="6.5" width="3.4" height="13.5" rx="1"/><rect x="15" y="15" width="3.4" height="5" rx="1"/>',
+        // v1.4.2：复选方块 —— 消息「多选」入口（batch-ops 插件用）。
+        // JS 侧 OW_ICONS['check-square'] 是同一份 path（icon-audit 会逐字对账）。
+        'check-square' => '<rect x="4" y="4" width="16" height="16" rx="3.5"/><path d="M8.3 12.4l2.6 2.6 4.8-5.2"/>',
     ];
     $d = $paths[$name] ?? $paths['chat'];
     return '<svg class="ow-ico" width="' . $size . '" height="' . $size . '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' . $d . '</svg>';

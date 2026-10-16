@@ -1,5 +1,5 @@
 /**
- * 批量操作插件 · 聊天页（batch-ops v1.1.0）
+ * 批量操作插件 · 聊天页（batch-ops v1.2.0）
  *
  * ── 两块内容 ──────────────────────────────────────────────────
  * ① 消息多选：消息右键「多选」（或「转发」单条直达）进入选择模式，
@@ -46,10 +46,10 @@
         + ' stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
         + '<circle cx="11" cy="11" r="6.6"/><path d="M20.2 20.2l-4.5-4.5"/></svg>';
     /* 合并转发（层叠）与保存至电脑（下载托盘）：核心图标表没有对应条目，内联自有字形 */
-    var MERGE_SVG = '<svg class="ow-ico owb-acti" width="20" height="20" viewBox="0 0 24 24" fill="none"'
+    var MERGE_SVG = '<svg class="ow-ico owb-acti" width="16" height="16" viewBox="0 0 24 24" fill="none"'
         + ' stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
         + '<path d="M12 3.5l8.5 4.7L12 12.9 3.5 8.2z"/><path d="M4.2 12.3l7.8 4.3 7.8-4.3"/><path d="M4.2 16.2l7.8 4.3 7.8-4.3"/></svg>';
-    var SAVE_SVG = '<svg class="ow-ico owb-acti" width="20" height="20" viewBox="0 0 24 24" fill="none"'
+    var SAVE_SVG = '<svg class="ow-ico owb-acti" width="16" height="16" viewBox="0 0 24 24" fill="none"'
         + ' stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
         + '<path d="M12 4v10.5"/><path d="M7.8 10.8l4.2 4.2 4.2-4.2"/><path d="M4.5 19.5h15"/></svg>';
 
@@ -123,6 +123,12 @@
             return { text: String(j.text || ''), media: (j.media && j.media.length) ? j.media : [] };
         } catch (e) { return { text: String(m.content || ''), media: [] }; }
     }
+    /** 「聊天记录」卡片消息的正文标记（极短：正文进 2000 字过滤与长度限制，快照本体在服务端） */
+    var REC_RE = /^\[聊天记录\]#([a-f0-9]{32})#$/;
+    function recTokenOf(s) {
+        var m = REC_RE.exec(String(s == null ? '' : s));
+        return m ? m[1] : '';
+    }
     /** 取消息的「可读文本」（与核心 copyMsg / quoteMsg 同一口径） */
     function plainOf(m) {
         if (m.type === 'file') {
@@ -133,51 +139,142 @@
             return p.text !== '' ? (p.text + (p.media.length ? ' [图片]' : '')) : '[图片]';
         }
         if (m.type === 'image') return String(m.content || '');   // 复制图片消息 = 复制图片地址
+        if (recTokenOf(m.content)) return '[聊天记录]';           // 卡片消息按占位处理，不吐 token
         return String(m.content || '');
     }
-    /** 合并转发摘要的一行：昵称：内容（换行压平、单行封顶 150 字）；
-     *  图片在摘要里是「[图片]」而不是地址 —— 与核心引用条同一口径（forCopy 时同此） */
+    /** 摘要/复制的一行：换行压平、单行封顶 150 字；图片在摘要里是「[图片]」——与核心引用条同一口径 */
     function lineOf(m, forCopy) {
         var s = m.type === 'image' ? '[图片]' : plainOf(m);
         s = s.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
         if (s.length > 150) s = s.slice(0, 150) + '…';
         return forCopy ? s : ((m.nickname || '') + '：' + s);
     }
-    /** 只收本站 uploads/ 下的图片地址（与核心 Upload::mediaRel 同一口径；外站图片进不了 rich） */
-    function localImageUrl(u) {
-        u = String(u || '');
-        var base = (w.OwChat.cfg && w.OwChat.cfg.site_url) || '';
-        if (base !== '' && u.indexOf(base + '/') === 0) u = u.slice(base.length + 1);
-        if (!/^uploads\/(image|sticker)\/[A-Za-z0-9_\-./]+\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(u)) return '';
-        return u;
-    }
-    /**
-     * 合并转发的内容组装：文字按「昵称：内容」逐行摘要（总长封顶 1900 字），
-     * 图片作为 rich 附件（最多 9 张）。图片都进不了附件（外站/超限）时退回纯文本。
-     */
-    function buildMerged(msgs) {
-        var lines = [], media = [], dropped = 0, i, j;
-        for (i = 0; i < msgs.length; i++) {
-            var m = msgs[i];
-            lines.push(lineOf(m, false));
-            if (m.type === 'image') {
-                var u = localImageUrl(m.content);
-                if (u) { if (media.length < 9) media.push({ url: u, kind: 'image', name: '', size: 0 }); else dropped++; }
-                else dropped++;
-            } else if (m.type === 'rich') {
-                var p = parseRich(m);
-                for (j = 0; j < p.media.length; j++) {
-                    if ((p.media[j].kind || 'image') !== 'image') continue;
-                    var u2 = localImageUrl(p.media[j].url);
-                    if (u2) { if (media.length < 9) media.push({ url: u2, kind: 'image', name: '', size: 0 }); else dropped++; }
-                    else dropped++;
-                }
-            }
+    function pad2(n) { return (n < 10 ? '0' : '') + n; }
+    function fmtDay(ts) { var t = new Date((ts || 0) * 1000); return pad2(t.getMonth() + 1) + '-' + pad2(t.getDate()); }
+    function fmtTime(ts) { var t = new Date((ts || 0) * 1000); return pad2(t.getHours()) + ':' + pad2(t.getMinutes()); }
+
+    /* ==========================================================================
+       聊天记录卡片（合并转发的落地形态，仿微信）
+       --------------------------------------------------------------------------
+       卡片数据（标题 / 条数 / 前 4 行预览）来自 record_get 路由，按 token 缓存到本页会话；
+       渲染时机跟着消息 DOM 走（MutationObserver + 首屏补扫，与勾选框同一思路）。
+       点击卡片 → 弹窗看完整记录：条目复用核心 OwChat.buildMessage 渲染，
+       图片/文件/混排/引用都用全站同一套消息样式，不另造轮子。
+       ========================================================================== */
+    var recCache = {};    // token -> {title,count,preview} | null（不存在/过期）
+    var recPending = {};  // token -> 在途标记（防重复入队）
+    var recQueue = [];
+    var recTimer = null;
+
+    function recHtml(tok) {
+        var info = recCache[tok];
+        if (info === undefined) return '<div class="owb-rec-t">聊天记录</div><div class="owb-rec-s">加载中…</div>';
+        if (info === null) return '<div class="owb-rec-t">聊天记录</div><div class="owb-rec-s">聊天记录已过期或不存在</div>';
+        var h = '<div class="owb-rec-t">' + esc(info.title || '聊天记录') + '</div>';
+        for (var i = 0; i < info.preview.length; i++) {
+            h += '<div class="owb-rec-l"><span class="owb-rec-n">' + esc(info.preview[i].nick) + '</span> '
+                + esc(info.preview[i].text) + '</div>';
         }
-        var text = lines.join('\n');
-        if (text.length > 1900) text = text.slice(0, 1900) + '…（内容过长，已截断）';
-        if (dropped > 0) text += '\n（另有 ' + dropped + ' 张图片未随本条转发）';
-        return { text: text, media: media };
+        h += '<div class="owb-rec-f">查看 ' + esc(info.count) + ' 条转发消息</div>';
+        return h;
+    }
+    /** 把一条「[聊天记录]#token#」消息的正文节点换成卡片（幂等） */
+    function mountCard(msgNode) {
+        if (!msgNode || msgNode.getElementsByClassName('owb-rec').length) return;
+        var cs = msgNode.querySelector('.ow-msg-content');
+        if (!cs) return;
+        var tok = recTokenOf(cs.textContent);
+        if (!tok) return;
+        var body = cs.parentNode;
+        var card = d.createElement('div');
+        card.className = 'owb-rec';
+        card.setAttribute('data-token', tok);
+        card.innerHTML = recHtml(tok);
+        body.replaceChild(card, cs);
+        if (recCache[tok] === undefined) enqueueRec(tok);
+    }
+    function scanCards(root) {
+        var nodes = (root || d).querySelectorAll ? (root || d).querySelectorAll('.ow-msg') : [];
+        for (var i = 0; i < nodes.length; i++) mountCard(nodes[i]);
+    }
+    function enqueueRec(tok) {
+        if (recCache[tok] !== undefined || recPending[tok]) return;
+        recPending[tok] = true;
+        recQueue.push(tok);
+        if (recTimer) return;
+        recTimer = setTimeout(function () { recTimer = null; flushRec(); }, 250);   // 合并同一批渲染出的多张卡，少发几次请求
+    }
+    function flushRec() {
+        if (!recQueue.length) return;
+        var batch = recQueue.splice(0, 20);
+        w.OwApi.post('plugin_batch_ops_record_get', { tokens: batch.join(',') }, function (r) {
+            var data = (r && r.ok && r.data) || {};
+            for (var i = 0; i < batch.length; i++) {
+                var t = batch[i];
+                delete recPending[t];
+                recCache[t] = data[t] || null;
+                updateCards(t);
+            }
+            if (recQueue.length) { recTimer = setTimeout(function () { recTimer = null; flushRec(); }, 200); }
+        });
+    }
+    function updateCards(tok) {
+        var cards = d.querySelectorAll('.owb-rec[data-token="' + tok + '"]');
+        for (var i = 0; i < cards.length; i++) cards[i].innerHTML = recHtml(tok);
+    }
+    /** 点开某张卡片：弹窗看完整记录（全宽消息流，条目复用核心消息渲染） */
+    function openRecord(tok) {
+        w.OwChat.openModal(
+            '<h3>聊天记录</h3>'
+            + '<div class="owb-rec-view" id="owbRecView"><div class="ow-sr-empty">加载中…</div></div>'
+        , 520);
+        var view = byId('owbRecView');
+        if (view) {
+            // 流内再嵌记录（mini 卡）→ 直接在本弹窗里打开它
+            view.onclick = function (e) {
+                var t = e.target || e.srcElement, node = t;
+                while (node && node !== view && !(node.className && String(node.className).indexOf('owb-rec-mini') >= 0)) node = node.parentNode;
+                if (node && node !== view) openRecord(node.getAttribute('data-token'));
+            };
+        }
+        w.OwApi.post('plugin_batch_ops_record_get', { tokens: tok, full: '1' }, function (r) {
+            var box = byId('owbRecView');
+            if (!box) return;   // 用户已经关掉弹窗
+            var info = (r && r.ok && r.data) ? r.data[tok] : null;
+            if (!info) { box.innerHTML = '<div class="ow-sr-empty">聊天记录已过期或不存在</div>'; return; }
+            var h3 = d.querySelector('#owModal h3');
+            if (h3) h3.textContent = info.title || '聊天记录';
+            recCache[tok] = { title: info.title || '聊天记录', count: info.count, preview: info.preview || [] };
+            updateCards(tok);
+            var items = info.items || [], html = '';
+            if (items.length) {
+                html += '<div class="ow-time-divider"><span>' + esc(fmtDay(items[0].ts) + ' ' + fmtTime(items[0].ts)) + '</span></div>';
+            }
+            for (var i = 0; i < items.length; i++) html += recMsgHtml(items[i]);
+            box.innerHTML = html || '<div class="ow-sr-empty">没有内容</div>';
+        });
+    }
+    /** 记录里的一条消息 → 全站同款消息 DOM（核心 buildMessage；引用不带跳转、一律按对方消息呈现） */
+    function recMsgHtml(it) {
+        var m = {
+            id: it.id || 0, type: it.type || 'text', content: it.content || '',
+            nickname: it.nickname || '', role: it.role || 'member', title: it.title || '',
+            avatar: it.avatar || '', uid: it.uid || 0,
+            mine: false, dm: false, recalled: 0, deleted: 0,
+            quote: null,
+            date: fmtDay(it.ts), time: fmtTime(it.ts), ts: it.ts
+        };
+        if (it.quote) { try { m.quote = JSON.parse(it.quote); } catch (e) { m.quote = null; } }
+        var b = w.OwChat.buildMessage(m);
+        var wrap = d.createElement('div');
+        wrap.className = b.cls;
+        wrap.innerHTML = b.html;
+        var tok2 = recTokenOf(it.content);   // 嵌套的记录卡片 → 小卡（弹窗里可再点开）
+        if (tok2) {
+            var cs = wrap.querySelector('.ow-msg-content');
+            if (cs) cs.innerHTML = '<span class="owb-rec-mini" data-token="' + tok2 + '">[聊天记录] 点击查看</span>';
+        }
+        return wrap.outerHTML;
     }
 
     /* ==========================================================================
@@ -243,12 +340,12 @@
             bar.id = 'owbBar';
             bar.innerHTML = '<span class="owb-bar-n" id="owbCount"></span>'
                 + '<div class="owb-acts">'
-                + actBtn('owbFwd', w.OwChat.icon('send', 20, 'owb-acti'), '逐条转发')
+                + actBtn('owbFwd', w.OwChat.icon('send', 16, 'owb-acti'), '逐条转发')
                 + actBtn('owbMerge', MERGE_SVG, '合并转发')
                 + actBtn('owbSave', SAVE_SVG, '保存至电脑')
-                + actBtn('owbFav', w.OwChat.icon('star', 20, 'owb-acti'), '收藏')
-                + actBtn('owbDel', w.OwChat.icon('trash', 20, 'owb-acti'), '删除')
-                + actBtn('owbCopy', w.OwChat.icon('copy', 20, 'owb-acti'), '复制')
+                + actBtn('owbFav', w.OwChat.icon('star', 16, 'owb-acti'), '收藏')
+                + actBtn('owbDel', w.OwChat.icon('trash', 16, 'owb-acti'), '删除')
+                + actBtn('owbCopy', w.OwChat.icon('copy', 16, 'owb-acti'), '复制')
                 + '</div>'
                 + '<button type="button" class="owb-x" id="owbCancel" title="退出多选" aria-label="退出多选">✕</button>';
             box.appendChild(bar);
@@ -969,32 +1066,45 @@
     }
 
     /* ==========================================================================
-       业务一·B：合并转发（N 条 → 一条 rich/text）
+       业务一·B：合并转发（N 条 → 一张「聊天记录」卡片）
        ========================================================================== */
+    /**
+     * 两步走：① 服务端对所选消息做快照（只收「本人此刻有权看到」的，权限判定在
+     * plugin_batch_ops_record_save 里），拿回 token 与卡片预览；② 往目标发一条
+     * 极短的引用消息 [聊天记录]#token#（正文要过核心的过滤/长度，塞不下 N 条内容）。
+     * 卡片渲染、点开查看都由本脚本的卡片体系负责；快照数据同时写进本页缓存，
+     * 发件方自己的卡片立刻出（不必等 record_get 回来）。
+     */
     function doMerge(target, ctl) {
         var msgs = OwBatch.selectedMsgs();
         if (!msgs.length) { toast('所选消息已失效，无法转发'); ctl.fail(); return; }
-        var built = buildMerged(msgs);
-        var content = built.media.length
-            ? JSON.stringify({ text: built.text, media: built.media })
-            : built.text;
+        var ids = [], i;
+        for (i = 0; i < msgs.length; i++) ids.push(msgs[i].id);
         ctl.busy('合并转发中…');
-        w.OwApi.post('send', {
-            room_id: target.kind === 'room' ? target.id : 0,
-            type: built.media.length ? 'rich' : 'text',
-            content: content,
-            to_user_id: target.kind === 'user' ? target.id : '',
-            to_nickname: target.kind === 'user' ? (target.name || '') : '',
-            client_id: w.OwChat.newCid()
-        }, function (r) {
-            if (r && r.ok) {
-                ctl.close();
-                OwBatch.exit();
-                toast('已合并转发 ' + msgs.length + ' 条到「' + target.name + '」', 3200);
+        w.OwApi.post('plugin_batch_ops_record_save', { ids: ids.join(',') }, function (r) {
+            if (!r || !r.ok) {
+                ctl.fail();
+                toast('合并转发失败：' + ((r && r.msg) || '网络错误'), 3600);
                 return;
             }
-            ctl.fail();
-            toast('合并转发失败：' + ((r && r.msg) || '网络错误'), 3600);
+            recCache[r.token] = { title: r.title || '聊天记录', count: r.count, preview: r.preview || [] };
+            w.OwApi.post('send', {
+                room_id: target.kind === 'room' ? target.id : 0,
+                type: 'text',
+                content: '[聊天记录]#' + r.token + '#',
+                to_user_id: target.kind === 'user' ? target.id : '',
+                to_nickname: target.kind === 'user' ? (target.name || '') : '',
+                client_id: w.OwChat.newCid()
+            }, function (sr) {
+                if (sr && sr.ok) {
+                    ctl.close();
+                    OwBatch.exit();
+                    toast('已合并转发 ' + r.count + ' 条到「' + target.name + '」', 3200);
+                    return;
+                }
+                ctl.fail();
+                toast('合并转发失败：' + ((sr && sr.msg) || '网络错误'), 3600);
+            });
         });
     }
 
@@ -1026,7 +1136,7 @@
         /* 插件推送的默认位置是菜单末尾；转发 / 多选是高频入口，splice 到「引用」之前。
            引用不存在（游客不带这条）时退回末尾，不硬造位置。 */
         if (at >= 0) items.splice(at, 0, fwd); else items.push(fwd);
-        var sel = { t: '多选', run: function () { OwBatch.enter(m); } };
+        var sel = { t: '多选', icon: 'check-square', run: function () { OwBatch.enter(m); } };
         var fwAt = -1;
         for (i = 0; i < items.length; i++) {
             if (items[i].t === '转发') { fwAt = i; break; }
@@ -1097,6 +1207,33 @@
         if (pickerOpen) { w.OwChat.closeModal(); return; }
         if (OwBatch.mode) OwBatch.exit();
     }, false);
+
+    /* ---------- 聊天记录卡片：渲染与点击 ---------- */
+    /* 卡片渲染跟着消息 DOM 走：首屏补扫一次（插件脚本晚于首屏历史渲染），
+       此后新消息（历史/轮询/WS/翻页）由 MutationObserver 兜住 —— 与勾选框同一套覆盖策略。 */
+    if (msgBox) {
+        scanCards(msgBox);
+        if (w.MutationObserver) {
+            new w.MutationObserver(function (recs) {
+                for (var i = 0; i < recs.length; i++) {
+                    var added = recs[i].addedNodes || [];
+                    for (var j = 0; j < added.length; j++) {
+                        var n = added[j];
+                        if (n && n.nodeType === 1 && n.id && n.id.indexOf('owMsg') === 0) mountCard(n);
+                    }
+                }
+            }).observe(msgBox, { childList: true });
+        }
+        /* 点卡片看完整记录（冒泡阶段；多选模式的捕获处理器会先 stopPropagation，
+           所以选消息时点卡片 = 切换勾选，不会误开弹窗） */
+        msgBox.addEventListener('click', function (e) {
+            if (OwBatch.mode) return;
+            var t = e.target || e.srcElement, node = t;
+            while (node && node !== msgBox && !(node.className && String(node.className).indexOf('owb-rec') === 0)) node = node.parentNode;
+            if (!node || node === msgBox) return;
+            openRecord(node.getAttribute('data-token'));
+        });
+    }
 
     w.OwBatch = OwBatch;   // 暴露给其它插件复用（picker 是通用轮子）
 

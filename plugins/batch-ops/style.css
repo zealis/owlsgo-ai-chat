@@ -1,5 +1,5 @@
 /**
- * 批量操作插件（batch-ops v1.1.0）
+ * 批量操作插件（batch-ops v1.2.0）
  *
  * 全部颜色只引用核心 --ow-* 变量，深浅两套主题自动跟随（不写 [data-theme] 覆盖块）。
  * 涉及的类都在核心语义内挑过：选中态「比底色深一档」用 --ow-active-bg，
@@ -90,10 +90,10 @@
     display: flex; display: -webkit-flex;
     align-items: center; -webkit-align-items: center;
     justify-content: center; -webkit-justify-content: center;
-    width: 40px; height: 40px;
+    width: 34px; height: 34px;
     border-radius: 50%;
     background: var(--ow-active-bg);
-    color: var(--ow-text-title);
+    color: var(--ow-text);
 }
 /* 退出 ✕：与图标按钮同高的圆形袖珍钮 */
 .owb-x {
@@ -139,6 +139,53 @@
 .owb-row.owb-done { opacity: .62; }
 .owb-row.owb-done:hover { background: transparent; }
 .owb-act[disabled] { cursor: default; }
+
+/* ---------- 聊天记录卡片（合并转发的落地形态，仿微信） ----------
+   卡片替掉原气泡（正文就是 [聊天记录]#token# 标记），落在消息体里；
+   mine 消息的 .ow-msg-body 是右对齐，卡内显式恢复左读。 */
+.owb-rec {
+    display: inline-block;
+    width: 100%;
+    max-width: 300px;
+    text-align: left;
+    background: var(--ow-bg);
+    border: 1px solid var(--ow-border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    cursor: pointer;
+    vertical-align: top;
+}
+.owb-rec:hover { border-color: var(--ow-primary); }
+.owb-rec-t { font-size: 14px; color: var(--ow-text-title); margin-bottom: 6px; }
+.owb-rec-l {
+    font-size: 13px;
+    color: var(--ow-text-sub);
+    line-height: 1.7;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.owb-rec-n { color: var(--ow-text); }          /* 昵称比内容深半档 */
+.owb-rec-s { font-size: 12px; color: var(--ow-text-sub); padding: 2px 0; }
+.owb-rec-f {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--ow-border);
+    font-size: 12px;
+    color: var(--ow-text-sub);
+}
+/* 记录里再嵌记录（弹窗里的小卡）：一行占位，点击继续下钻 */
+.owb-rec-mini { color: var(--ow-primary-dark); cursor: pointer; }
+
+/* 弹窗里的记录流：灰底消息区，条目复用全站消息样式 */
+.owb-rec-view {
+    max-height: min(520px, 60vh);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 10px 12px 4px;
+    background: var(--ow-bg-chat);
+    border-radius: 8px;
+}
 
 /* ---------- 邀请模式底部的「邀请链接」区（对应参考样式） ---------- */
 .owb-foot {
