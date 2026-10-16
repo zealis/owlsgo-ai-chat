@@ -682,7 +682,13 @@ class Chat
     // 场景 scene：message / nickname / room_name / room_desc / announcement。
     public static function filterText(string &$text, string $scene, array $actor = []): void
     {
+        $before = $text;
         Plugin::fire('text.filter', [&$text, $scene, $actor]);
+        // v1.3.171 防守：插件把内容改坏（非 string / 非法 UTF-8）时回退过滤前原值。
+        // 实测踩过：非法 UTF-8（GBK 旧编码/构造请求）会让插件的 /u 正则返回 NULL 并被赋回
+        // 引用，调用点下一步 `checkText($content)` 就 TypeError 500 —— 宁可不过滤也不 500；
+        // 非法输入的拒绝由 checkText 统一给文案。
+        if (!is_string($text) || !mb_check_encoding($text, 'UTF-8')) $text = $before;
     }
 
     /**
@@ -698,6 +704,10 @@ class Chat
      */
     public static function checkText(string &$text, string $scene, array $actor = []): ?string
     {
+        // v1.3.171：非法 UTF-8（如 GBK 旧编码客户端 / 构造请求）在公共闸门统一拒绝——
+        // 否则下游插件正则与入库都会出问题（实测：GBK 正文可打出 500）。所有文字入口
+        // （消息 / 昵称 / 群名 / 公告）都会经过这里或 filterText，拒绝文案即用户可见。
+        if (!mb_check_encoding($text, 'UTF-8')) return '内容编码无效，请重新输入';
         $reason = '';
         Plugin::fire('text.check', [&$reason, &$text, $scene, $actor]);
         return is_string($reason) && $reason !== '' ? $reason : null;
@@ -756,6 +766,21 @@ class Chat
         // v1.2.1 起私聊身份改由「room_id=0 且指定接收方」判定，type 回归纯消息形态；
         // 旧客户端/旧缓存页面传来的 'private' 一律降级为普通文本，不丢消息。
         if ($type === 'private') $type = 'text';
+
+        // ---------- P3 幂等键（发送迁移）：重试 / 回落重发的不重复保证 ----------
+        // 位置刻意放在**所有业务校验之前**：同身份同 client_id 命中直接返回既有消息 ——
+        // 重试不该再被限流 / 发言间隔拦（「第一次已成功、重试被拒」会把成功语义反成失败）。
+        // 缺省由服务端补生成：老客户端（缓存页面 / 插件调用）不带 client_id 时行为不变，
+        // 只是多写一列；「新写入必填」由这里兜底保证。
+        $clientId = substr((string)preg_replace('/[^A-Za-z0-9_-]/', '', (string)($opt['client_id'] ?? '')), 0, 64);
+        if ($clientId === '') $clientId = 's' . bin2hex(random_bytes(15));
+        $cidCol = $actor['kind'] === 'user' ? 'user_id' : ($actor['kind'] === 'guest' ? 'guest_id' : '');
+        if ($cidCol !== '') {
+            $dup = DB::one("SELECT * FROM messages WHERE $cidCol=? AND client_id=? LIMIT 1", [(int)$actor['id'], $clientId]);
+            if ($dup) {
+                return [true, 'ok', (int)$dup['id'], self::pack($dup, $actor, self::avatarMap([$dup]))];
+            }
+        }
 
         // v1.2.1：私聊 = 虚拟私聊空间（room_id=0）+ 指定接收方，与消息形态无关。
         $isDm = ($roomId === 0);
@@ -890,19 +915,31 @@ class Chat
 
         Plugin::fire('message.before_send', [&$content, $actor, $roomId]);
 
-        $id = DB::insert('messages', [
-            'room_id' => $roomId,
-            'user_id' => $actor['kind'] === 'user' ? $actor['id'] : null,
-            'guest_id' => $actor['kind'] === 'guest' ? $actor['id'] : null,
-            'nickname' => $actor['nickname'], 'role' => $actor['role'],
-            'title' => $actor['title'] ?? '', 'avatar' => $actor['avatar'] ?? '',
-            'type' => $type, 'content' => $content,
-            'to_user_id' => $toUserId, 'to_guest_id' => $toGuestId, 'to_nickname' => $toNickname,
-            'quote' => $quote,
-            // v1.1.0 新增：deleted 默认 0（新增列的 DEFAULT 已兜底，这里显式写清语义）
-            'recalled' => 0, 'deleted' => 0, 'deleted_at' => 0, 'deleted_by' => '',
-            'ip' => Sec::ip(), 'created_at' => time(),
-        ]);
+        try {
+            $id = DB::insert('messages', [
+                'room_id' => $roomId,
+                'user_id' => $actor['kind'] === 'user' ? $actor['id'] : null,
+                'guest_id' => $actor['kind'] === 'guest' ? $actor['id'] : null,
+                'nickname' => $actor['nickname'], 'role' => $actor['role'],
+                'title' => $actor['title'] ?? '', 'avatar' => $actor['avatar'] ?? '',
+                'type' => $type, 'content' => $content,
+                'to_user_id' => $toUserId, 'to_guest_id' => $toGuestId, 'to_nickname' => $toNickname,
+                'quote' => $quote,
+                // v1.1.0 新增：deleted 默认 0（新增列的 DEFAULT 已兜底，这里显式写清语义）
+                'recalled' => 0, 'deleted' => 0, 'deleted_at' => 0, 'deleted_by' => '',
+                // P3 幂等键（新写入必填；见函数开头的查重块）
+                'client_id' => $clientId,
+                'ip' => Sec::ip(), 'created_at' => time(),
+            ]);
+        } catch (Throwable $e) {
+            // 并发兜底：同身份同 client_id 同时穿过「先查后插」的窗口时，唯一索引拦下第二条
+            //（daemon 每 actor 在途串行，正常路径到不了这里；HTTP 双标签页同 cid 场景兜住）。
+            // 命中即按幂等成功返回；其余异常原样抛。注：频率/间隔计数在这个窗口已先扣 ——
+            // 属可接受的极小代价（正常路径不存在该窗口）。
+            $dup = $cidCol !== '' ? DB::one("SELECT * FROM messages WHERE $cidCol=? AND client_id=? LIMIT 1", [(int)$actor['id'], $clientId]) : null;
+            if (!$dup) throw $e;
+            return [true, 'ok', (int)$dup['id'], self::pack($dup, $actor, self::avatarMap([$dup]))];
+        }
         // v1.1.0：游客每日计数（daily_count）已随「每日限额」下线而废弃，
         // 改为在 Sec::rateLimit('guest_gap', …) 里按间隔限流，无需再更新 guests 表。
         // v1.2.42：追加 $content / $type / $toUserId —— 等级信任插件要做「有效发言判定」
@@ -973,6 +1010,9 @@ class Chat
         }
         return [
             'id' => (int)$m['id'], 'room' => (int)$m['room_id'],
+            // P3（发送迁移）：幂等键随消息下行——前端用它把「发送中/失败」的临时气泡与真消息对上
+            //（超时失败后消息若最终落库，推送/历史把它带回来即自动转正；全局唯一的发送关联号）
+            'cid' => ($m['client_id'] ?? '') !== '' ? (string)$m['client_id'] : null,
             'uid' => $m['user_id'] ? (int)$m['user_id'] : null,
             'gid' => $m['guest_id'] ? (int)$m['guest_id'] : null,
             'nickname' => $m['nickname'], 'role' => $m['role'],

@@ -437,6 +437,17 @@ class DB
             }
         }
 
+        // ---------- P3（WS 发送迁移）：幂等键列 ----------
+        // client_id：前端每条消息生成的唯一号，重试 / 回落重发靠它去重（唯一索引见下）。
+        // ⚠️ 必须在下面的索引声明**之前**加列：CREATE INDEX 会立即引用它，列不存在时
+        //    SQLite 直接报「no such column」，且这里的异常不吞——会导致整页 500。
+        // **可空**（不走 addColumn 的 NOT NULL DEFAULT 模板是有意的）：唯一索引下老行必须互相
+        // 豁免——含 NULL 的行不参与唯一性判定，老行（NULL）与对侧身份（另一列 NULL）天然安全。
+        // 新写入必填由 Chat::send 兜底生成（老客户端不带 client_id 时行为不变，只多写一列）。
+        if (!self::hasColumn('messages', 'client_id')) {
+            self::$pdo->exec('ALTER TABLE messages ADD COLUMN client_id VARCHAR(64) NULL');
+        }
+
         // 计划任务表与几张关系表的唯一/查询索引。
         // ⚠️ 这里以前是「exec + try/catch 吞掉」，看着兼容，实际 MySQL 上**一条索引都没建成**
         //   （它不支持 CREATE INDEX IF NOT EXISTS，异常被吞掉=静默缺失），表一大就全表扫。
@@ -459,6 +470,12 @@ class DB
             // 同一对人可以「拒了再加」，历史行要留。
             ['idx_friend_req_to',    'friend_req',      'to_id, status, id',    false],
             ['idx_friend_req_from',  'friend_req',      'from_id, status, id',  false],
+            // P3（发送迁移）幂等键：同一身份的同一 client_id 只允许一条消息
+            //（WS 发送重试 / HTTP 回落重发靠它去重）。复合唯一索引中含 NULL 的行
+            // 不参与唯一性判定（三驱动一致）：老行（client_id 为 NULL）与对侧身份
+            //（user 行的 guest_id NULL 等）天然豁免，无需 partial index。
+            ['idx_msg_cid_user',  'messages', 'user_id, client_id',  true],
+            ['idx_msg_cid_guest', 'messages', 'guest_id, client_id', true],
         ] as $ix) {
             self::createIndex($ix[0], $ix[1], $ix[2], $ix[3]);
         }
@@ -735,6 +752,15 @@ class DB
             // wss://<站点>/ws 由 nginx 反代到 127.0.0.1:<ws_port>（Linux 用 PM2 起 ws-server.php）。
             'ws_enable' => '0',
             'ws_port'   => '8790',
+            // P3（发送迁移）：WS 发送开关与数值（默认全关 = 与现状完全一致）。
+            //   ws_send_enable       开关（依赖 ws_enable=1 才有意义）
+            //   ws_send_timeout      内部通道读超时（秒）；连接超时固定 3s
+            //   ws_send_max_inflight 全站在途上限（建议 = php-cgi 池进程数 × 1.5）
+            //   ws_send_rooms        房间白名单（逗号分隔房间号，空 = 全站；灰度用）
+            'ws_send_enable' => '0',
+            'ws_send_timeout' => '8',
+            'ws_send_max_inflight' => '16',
+            'ws_send_rooms' => '',
             // ---------- 邮件验证码策略（v1.3.55）----------
             // 这些键刻意放在核心 settings 而不是插件自有表：读它们的是 Mailer::sendCode/verifyCode，
             // 邮件插件停用时核心必须带着默认值继续跑（开关关掉即可，不能因为少个插件就炸）。

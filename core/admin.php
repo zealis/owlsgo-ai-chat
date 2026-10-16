@@ -554,10 +554,11 @@ class Admin
                           // v1.3.44 站点默认语言（语言包插件注册可选项；zh=不翻译）
                           'ow_lang_default',
                           // P1（WS 实时层）：实时通道开关与守护进程端口（配合 PM2 起的 ws-server.php）
-                          'ws_enable', 'ws_port'];
+                          'ws_enable', 'ws_port',
+                          'ws_send_enable', 'ws_send_timeout', 'ws_send_max_inflight', 'ws_send_rooms'];
                 // 数值型设置统一收敛为非负整数：负数会让间隔/保留期这类
                 // 「窗口秒数」「天数」直接失效或行为诡异，前端输入框挡不住。
-                $intKeys = ['guest_msg_interval', 'msg_retain_days', 'cron_log_retain_days', 'ws_port'];
+                $intKeys = ['guest_msg_interval', 'msg_retain_days', 'cron_log_retain_days', 'ws_port', 'ws_send_timeout', 'ws_send_max_inflight'];
                 foreach ($allow as $k) {
                     if (!isset($_POST[$k])) continue;
                     if (in_array($k, $intKeys, true)) {

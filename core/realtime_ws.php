@@ -30,6 +30,18 @@
  *   - 撤回推送：{recall,id} 直接扇出给该房间/私聊对的订阅者（行已删，无需查库）。
  *   - 票据优先走 Sec-WebSocket-Protocol: owt.<ticket>（URL 不再带票）；兼容 URL ?ticket=。
  *   - cronTick：每 tick 驱动 Plugin::cronTick()（长轮询流量下降后的计划任务承接）。
+ *
+ * P3 增补（发送迁移：send 帧回环，2026-10-16）：
+ *   - send 帧 → 内部 HTTPS 回环到站点（index.php?action=ws_send → Chat::send()，
+ *     与 HTTP 发送同一函数同一表）。**隔离的本质**：插件同步长任务（AI 应答等）跑在
+ *     php-cgi 池里，本进程不执行任何发送逻辑——事件循环只「转发 + 等响应」，
+ *     长任务不会阻塞任何连接（这是发送不敢直接放进事件循环的原因）。
+ *   - 保序：同一 actor 在途 1 条 + 队列 ≤8——落库顺序=用户输入顺序（HTTP 时代无此保证）。
+ *   - 出站请求由事件循环异步收（连接 3s / 读超时 ws_send_timeout、默认 8s）；
+ *     结果以 {t:'sent', cid, ok, msg_row?} 回帧，前端据此回显/提示重试。
+ *   - 真实客户端 IP：nginx /ws 段 proxy_set_header X-Ow-Peer 覆盖注入 → 握手时存
+ *     seat.peerIp → 内部请求带 peer_ip → 站点侧仅双校验通过后覆盖 REMOTE_ADDR。
+ *   - 密钥：send_key（daemon→web 方向，随 ws-ctl.key 下发；与 web→daemon 的 ctl key 互不推导）。
  */
 declare(strict_types=1);
 
@@ -59,6 +71,16 @@ class RealtimeWs
         快照只影响昵称/角色显示与 roomAccessOk 的 role 判断，100 秒内收敛即可 */
     public const ACTOR_REFRESH = 100;
 
+    // ---------- P3（发送迁移）：内部通道 ----------
+    /** 内部通道连接超时（秒）：固定值——本机回环，3 秒连不上即异常 */
+    public const SEND_CONNECT_TIMEOUT = 3;
+    /** 读超时缺省值（秒）：DB setting ws_send_timeout 覆盖（连接超时固定 3s 不变） */
+    public const SEND_DEFAULT_TIMEOUT = 8;
+    /** 全站在途上限缺省值：DB setting ws_send_max_inflight 覆盖。与 php-cgi 池进程数匹配（×1.5） */
+    public const SEND_DEFAULT_MAX = 16;
+    /** 每身份（actor）发送排队上限：在途 1 + 队列 8 —— 保序 + 防连点堆积 */
+    public const SEND_QUEUE_PER_ACTOR = 8;
+
     /** @var array<int,array> 席位表：fd 整数 => seat */
     private static array $seats = [];
     /** @var array<int,float> 房间 => flush 截止时间（microtime） */
@@ -71,8 +93,16 @@ class RealtimeWs
     private static string $ticketsDir = '';
     /** @var string 控制口共享密钥（启动时随机生成；随端口一起写入 data/ws-ctl.key 供 web 侧读） */
     private static string $ctlKey = '';
+    /** @var string 反向共享密钥（P3：daemon→web 内部发送通道的凭证；与 ctlKey 同文件下发） */
+    private static string $sendKey = '';
     /** @var array<int,int> 房间 => 已扫描分发水位（max id）。只用于「要不要探询」；正确性由座位级 since 保证 */
     private static array $wmRoom = [];
+    /** @var array<int,array> P3 出站请求表：fd => ['fp','seatFp','cid','bornAt','timeout','buf'] */
+    private static array $outgoing = [];
+    /** @var array<string,int> P3 计数（区间统计：周期打印后归零） */
+    private static array $sendStats = ['ok' => 0, 'fail' => 0, 'timeout' => 0, 'reject' => 0];
+    /** @var int P3 上次打印发送统计的时间戳 */
+    private static int $lastStatsAt = 0;
 
     // ================================================================ 主循环
 
@@ -86,9 +116,12 @@ class RealtimeWs
 
         // 控制口密钥：随机 16 字节，随端口一起写 data/ws-ctl.key（web 侧 RealtimePush 读它）。
         // 重启会换新密钥——web 每次现读文件，天然对齐；daemon 不在时文件也不致命（连接被拒即可）。
+        // P3：send_key 是**反方向**（daemon→web 内部发送通道）的共享密钥——web 侧 ws_send
+        // 分支校验它。两个方向两把钥匙（互不推导），同文件下发；重启轮换、web 现读现用。
         self::$ctlKey = bin2hex(random_bytes(16));
+        self::$sendKey = bin2hex(random_bytes(16));
         @file_put_contents(rtrim($dataDir, '/\\') . '/ws-ctl.key',
-            (string)json_encode(['port' => $port, 'key' => self::$ctlKey]));
+            (string)json_encode(['port' => $port, 'key' => self::$ctlKey, 'send_key' => self::$sendKey]));
 
         $srv = @stream_socket_server("tcp://127.0.0.1:$port", $errno, $errstr);
         if (!$srv) {
@@ -111,6 +144,7 @@ class RealtimeWs
         while (!self::$stop) {
             $read = [$srv];
             foreach (self::$seats as $seat) $read[] = $seat['fp'];
+            foreach (self::$outgoing as $o) $read[] = $o['fp'];   // P3：出站请求也等可读
             $write = null;
             $except = null;
 
@@ -147,6 +181,10 @@ class RealtimeWs
                         'saidBye' => false,
                         'ctlLen' => 0,        // 控制口：待收 body 长度
                         'ctlAuth' => false,   // 控制口：密钥是否通过
+                        'peerIp' => '',       // P3：nginx 覆盖注入的真实客户端 IP（X-Ow-Peer，可能为空）
+                        'siteHost' => '',     // P3：握手 Host（site_url 未配置时兜底推导站点地址）
+                        'sendBusy' => false,  // P3：发送在途（每 actor 串行，保序）
+                        'sendQueue' => [],    // P3：发送排队帧（上限 SEND_QUEUE_PER_ACTOR）
                         // 令牌桶初值：满桶开连，tbAt=0 表示「首次用到时按零间隔回填」
                         'tb'     => self::TB_CAPACITY,
                         'tbAt'   => 0.0,
@@ -154,11 +192,11 @@ class RealtimeWs
                 }
             }
 
-            // 已有连接可读
+            // 已有连接可读（座位 or P3 出站请求）
             foreach ($read as $fp) {
                 if ($fp === $srv) continue;
-                $seat = self::$seats[(int)$fp] ?? null;
-                if ($seat !== null) self::readAvailable($seat);
+                if (isset(self::$seats[(int)$fp])) self::readAvailable(self::$seats[(int)$fp]);
+                elseif (isset(self::$outgoing[(int)$fp])) self::readOutgoing((int)$fp);
             }
 
             self::tick();
@@ -246,6 +284,15 @@ class RealtimeWs
             self::httpReject($seat, 400);
             return;
         }
+        // P3：真实客户端 IP —— nginx /ws 段 proxy_set_header 覆盖注入（客户端伪造的同名头会被
+        // 覆盖语义顶掉）。只作座位属性保存，仅在内部发送通道回传给站点；公开 HTTP 路径不读它。
+        // 非法的值直接丢弃（不进入后续任何路径）。
+        $peerIp = (string)($headers['x-ow-peer'] ?? '');
+        if ($peerIp !== '' && !filter_var($peerIp, FILTER_VALIDATE_IP)) $peerIp = '';
+        // P3：握手 Host（nginx 原样透传用户访问的域名/端口）——site_url 未配置时作发送回环的
+        // 站点地址兜底。格式校验与 ow_site_url 的主机头防注入同款；非法值丢弃。
+        $siteHost = (string)($headers['host'] ?? '');
+        if ($siteHost !== '' && !preg_match('/^[a-zA-Z0-9._\[\]:-]+$/', $siteHost)) $siteHost = '';
 
         // CSWSH 防御纵深（安全清单）：浏览器发起 WS 必带 Origin —— 有 Origin 就必须与 Host
         // 一致（nginx 反代下 Host = $host 原样转发），不一致直接 403。
@@ -310,12 +357,17 @@ class RealtimeWs
         $seat['token'] = $tokenKey;
         $seat['actor'] = $actor;
         $seat['actorAt'] = time();
+        $seat['peerIp'] = $peerIp;
+        $seat['siteHost'] = $siteHost;
         $seat['buf'] = $rest;   // 握手的余量可能是首帧，别丢
         $seat['lastAt'] = time();
         self::$seats[(int)$seat['fp']] = $seat;
 
         self::sendJson($seat, ['t' => 'ready', 'window' => self::IDLE_TIMEOUT]);
-        self::log("连接 #{$tokenKey} @{$seat['peer']}（" . count(self::$seats) . ' 席位）');
+        // P3：X-Ow-Peer 有值时随日志展示——运维可据此确认 nginx 的覆盖注入头已生效
+        //（本机测试源 IP 恒为 127.0.0.1，「头生效」与「头缺席」只在这行日志里区分得开）
+        self::log("连接 #{$tokenKey} @{$seat['peer']}（" . count(self::$seats) . ' 席位'
+            . ($peerIp !== '' ? "，X-Ow-Peer={$peerIp}" : '') . '）');
 
         // 握手包里如果已经带了完整帧（一般不），继续按帧解析
         if ($seat['buf'] !== '') self::parseFrames($seat);
@@ -489,6 +541,10 @@ class RealtimeWs
                     } catch (Throwable $e) { /* 对齐失败保持 0：watcher 从 0 拉，DB 已故障时的降级 */ }
                 }
                 break;
+            case 'send':
+                // P3 发送迁移：消息发送回环到站点执行（见下方 handleSend 注释）。
+                self::handleSend($seat, $m);
+                break;
         }
     }
 
@@ -648,6 +704,198 @@ class RealtimeWs
         }
     }
 
+    // ================================================================ P3 发送迁移（内部通道）
+
+    /**
+     * send 帧：消息发送回环到站点执行（index.php?action=ws_send → Chat::send()）。
+     * 本进程**不执行任何发送逻辑**——插件同步长任务（AI 应答等）跑在 php-cgi 池里，
+     * 事件循环只做「转发 + 等响应」，因此长任务不会阻塞任何连接。
+     * 保序：同一 actor 在途 1 条 + 队列 ≤ SEND_QUEUE_PER_ACTOR —— 落库顺序=用户输入顺序。
+     */
+    private static function handleSend(array $seat, array $m): void
+    {
+        $fp = (int)$seat['fp'];
+        $live = self::$seats[$fp] ?? null;
+        if ($live === null || empty($live['actor'])) return;
+        $cid = substr((string)($m['cid'] ?? ''), 0, 64);
+
+        // 开关防御（前端已判定；兜底防旧页面/直连客户端）——setting 现读，开关即时生效
+        $enabled = false;
+        try { $enabled = (string)DB::setting('ws_send_enable', '0') === '1'; } catch (Throwable $e) {}
+        if (!$enabled) {
+            self::$sendStats['reject']++;
+            self::sendJson($live, ['t' => 'sent', 'cid' => $cid, 'ok' => false, 'msg' => '实时发送未启用，请刷新页面']);
+            return;
+        }
+
+        if (!empty($live['sendBusy'])) {
+            if (count($live['sendQueue'] ?? []) >= self::SEND_QUEUE_PER_ACTOR) {
+                self::$sendStats['reject']++;
+                self::sendJson($live, ['t' => 'sent', 'cid' => $cid, 'ok' => false, 'msg' => '发送过于频繁，请稍候']);
+                return;
+            }
+            $live['sendQueue'][] = $m;
+            self::$seats[$fp] = $live;
+            return;
+        }
+        $live['sendBusy'] = true;
+        self::$seats[$fp] = $live;
+        self::dispatchSend($live, $m);
+    }
+
+    /** 构造并发出内部请求（同步只做「连接 + 写出」；响应由事件循环异步收）。所有失败路径统一走泵队列释放。 */
+    private static function dispatchSend(array $live, array $m): void
+    {
+        $cid = substr((string)($m['cid'] ?? ''), 0, 64);
+        $fail = static function (string $msg) use (&$live, $cid): void {
+            self::$sendStats['fail']++;
+            $seatNow = self::$seats[(int)$live['fp']] ?? null;
+            if ($seatNow !== null) {
+                self::pumpSendQueue($seatNow, ['t' => 'sent', 'cid' => $cid, 'ok' => false, 'msg' => $msg]);
+            }
+        };
+        try {
+            $site = trim((string)DB::setting('site_url', ''));
+            if ($site === '') {
+                // 兜底：握手 Host（nginx proxy_set_header Host $host 原样透传用户访问的域名）。
+                // 协议假定 https —— 本项目 /ws 反代只配在 443（TLS）vhost，WS 连接必为 wss，
+                // 且非浏览器客户端不走这里（票据仍经 web 下发，能连上说明站点本身工作）。
+                $site = 'https://' . (string)($live['siteHost'] ?? '');
+            }
+            $u = $site !== '' ? parse_url($site) : null;
+            $host = is_array($u) ? (string)($u['host'] ?? '') : '';
+            if ($host === '') { $fail('站点地址未配置，请刷新页面'); return; }
+            $scheme = (string)($u['scheme'] ?? 'https');
+            $port = (int)($u['port'] ?? ($scheme === 'https' ? 443 : 80));
+            $timeout = (int)DB::setting('ws_send_timeout', (string)self::SEND_DEFAULT_TIMEOUT);
+            if ($timeout < 3) $timeout = 3;
+            if ($timeout > 120) $timeout = 120;
+            $max = (int)DB::setting('ws_send_max_inflight', (string)self::SEND_DEFAULT_MAX);
+            if ($max < 1) $max = self::SEND_DEFAULT_MAX;
+            if (count(self::$outgoing) >= $max) { $fail('服务器繁忙，请稍后重试'); return; }
+
+            $body = http_build_query([
+                'actor_kind'  => (string)($live['actor']['kind'] ?? ''),
+                'actor_id'    => (int)($live['actor']['id'] ?? 0),
+                'room_id'     => (int)($m['room'] ?? 0),
+                'type'        => (string)($m['type'] ?? 'text'),
+                'content'     => (string)($m['content'] ?? ''),
+                'to_user_id'  => (string)($m['to_user_id'] ?? ''),
+                'to_guest_id' => (string)($m['to_guest_id'] ?? ''),
+                'to_nickname' => (string)($m['to_nickname'] ?? ''),
+                'quote'       => (string)($m['quote'] ?? ''),
+                'client_id'   => $cid,
+                'peer_ip'     => (string)($live['peerIp'] ?? ''),
+            ], '', '&');
+            $hostHdr = $host . ((($scheme === 'https' && $port !== 443) || ($scheme === 'http' && $port !== 80)) ? ':' . $port : '');
+            $req = "POST /?action=ws_send HTTP/1.1\r\nHost: {$hostHdr}\r\nX-Ow-Ctl: " . self::$sendKey
+                 . "\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: " . strlen($body)
+                 . "\r\nConnection: close\r\n\r\n" . $body;
+
+            $transport = $scheme === 'https' ? 'ssl://' : 'tcp://';
+            // 仅回环连接：不对证书做校验；peer_name 必须保留原域名（nginx 的 SNI/vhost 分流靠它）
+            $ctx = stream_context_create($scheme === 'https' ? ['ssl' => [
+                'verify_peer' => false, 'verify_peer_name' => false, 'allow_self_signed' => true,
+                'peer_name' => $host, 'SNI_enabled' => true,
+            ]] : []);
+            $out = @stream_socket_client($transport . '127.0.0.1:' . $port, $eno, $estr, self::SEND_CONNECT_TIMEOUT, STREAM_CLIENT_CONNECT, $ctx);
+            if (!$out) { $fail('发送通道不可用'); return; }
+            stream_set_blocking($out, false);
+            $n = @fwrite($out, $req);
+            if ($n !== strlen($req)) {          // 回环小负载一次写完是常态；写不全直接放弃（半截请求不可恢复）
+                @fclose($out);
+                $fail('发送通道不可用');
+                return;
+            }
+            self::$outgoing[(int)$out] = [
+                'fp' => $out, 'seatFp' => (int)$live['fp'], 'cid' => $cid,
+                'bornAt' => microtime(true), 'timeout' => $timeout, 'buf' => '',
+            ];
+        } catch (Throwable $e) {
+            $fail('发送失败，请重试');
+        }
+    }
+
+    /** 发送队列泵：发待回帧（可选）→ 释放本单 → 队列还有任务就立刻开跑下一条 */
+    private static function pumpSendQueue(array $seat, ?array $frame = null): void
+    {
+        $fp = (int)$seat['fp'];
+        $live = self::$seats[$fp] ?? null;
+        if ($live === null) return;             // 座位已断：不回帧（消息本身的发送已在站点侧完成）
+        if ($frame !== null && $live['phase'] === 'open') self::sendJson($live, $frame);
+        if (empty($live['sendQueue'])) {
+            $live['sendBusy'] = false;
+            self::$seats[$fp] = $live;
+            return;
+        }
+        $next = array_shift($live['sendQueue']);
+        $live['sendBusy'] = true;
+        self::$seats[$fp] = $live;
+        self::dispatchSend($live, $next);
+    }
+
+    /** 出站请求可读：累积解析 HTTP 响应，收满即完成（Content-Length 到齐 / 对端关闭收尾） */
+    private static function readOutgoing(int $fd): void
+    {
+        $o = self::$outgoing[$fd] ?? null;
+        if ($o === null) return;
+        $chunk = @fread($o['fp'], 65536);
+        if ($chunk === false || ($chunk === '' && feof($o['fp']))) {
+            self::finishOutgoing($fd, $o['buf']);   // 连接关闭：用已收内容尽量解析
+            return;
+        }
+        if ($chunk === '') return;                  // 非阻塞下暂时无数据
+        $o['buf'] .= $chunk;
+        $pos = strpos($o['buf'], "\r\n\r\n");
+        if ($pos !== false && preg_match('/^Content-Length:\s*(\d+)/mi', substr($o['buf'], 0, $pos), $mm)) {
+            if (strlen($o['buf']) - ($pos + 4) >= (int)$mm[1]) {
+                self::finishOutgoing($fd, substr($o['buf'], $pos + 4));
+                return;
+            }
+        }
+        self::$outgoing[$fd] = $o;                  // 未收全：回存缓冲等下次可读
+    }
+
+    /** 内部请求收尾：解析 JSON → 回 sent 帧 → 计数 → 泵队列 */
+    private static function finishOutgoing(int $fd, string $raw): void
+    {
+        $o = self::$outgoing[$fd] ?? null;
+        if ($o === null) return;
+        unset(self::$outgoing[$fd]);
+        @fclose($o['fp']);
+        $seat = self::$seats[$o['seatFp']] ?? null;
+        if ($seat === null) return;                 // 座位已断：无人收结果
+        $pos = strpos($raw, "\r\n\r\n");
+        $body = $pos !== false ? substr($raw, $pos + 4) : $raw;   // 带完整头时取 body（EOF 收尾路径）
+        // nginx 对「无 Content-Length」的响应可能用 chunked 编码（体前有十六进制长度行）——
+        // 直接按「首个 { 到末个 }」提取 JSON（ws_send 响应固定是单个 JSON 对象，此提取无歧义）。
+        if ($body === '' || $body[0] !== '{') {
+            $b1 = strpos($raw, '{');
+            $b2 = strrpos($raw, '}');
+            if ($b1 !== false && $b2 !== false && $b2 >= $b1) $body = substr($raw, $b1, $b2 - $b1 + 1);
+        }
+        $j = null;
+        try { $j = json_decode($body, true); } catch (Throwable $e) {}
+        if (!is_array($j)) {
+            self::$sendStats['fail']++;
+            self::log('出站响应解析失败（' . strlen($raw) . 'B）：' . substr(str_replace(["\r", "\n"], ' ', $raw), 0, 160));
+            self::pumpSendQueue($seat, ['t' => 'sent', 'cid' => $o['cid'], 'ok' => false, 'msg' => '发送失败，请重试']);
+            return;
+        }
+        if (!empty($j['ok'])) {
+            self::$sendStats['ok']++;
+            $frame = ['t' => 'sent', 'cid' => $o['cid'], 'ok' => true];
+            if (isset($j['msg_row']) && is_array($j['msg_row'])) $frame['msg_row'] = $j['msg_row'];
+            if (isset($j['id'])) $frame['id'] = $j['id'];
+            self::pumpSendQueue($seat, $frame);
+            return;
+        }
+        self::$sendStats['fail']++;
+        $msg = (string)($j['msg'] ?? '');
+        if ($msg === '') $msg = '发送失败，请重试';
+        self::pumpSendQueue($seat, ['t' => 'sent', 'cid' => $o['cid'], 'ok' => false, 'msg' => $msg]);
+    }
+
     // ================================================================ 票据
 
     /**
@@ -741,6 +989,30 @@ class RealtimeWs
         // P2：计划任务承接——长轮询流量下降后由守护进程驱动（任务自身按周期节流）。
         // 回调异常吞掉，绝不让一条坏任务掀翻事件循环（重任务挪子进程是 P3 的事）。
         try { Plugin::cronTick(); } catch (Throwable $e) { self::log('cronTick 异常：' . $e->getMessage()); }
+
+        // P3：出站请求超时（读超时到点 → 回超时帧 + 关连接）。站点侧的 php-cgi 可能仍在执行、
+        // 消息稍后落库——前端靠推送/重连补齐转正，文案如实提示「可能稍后送达」。
+        foreach (self::$outgoing as $ofd => $o) {
+            if ($nowM - $o['bornAt'] > (float)$o['timeout']) {
+                self::$sendStats['timeout']++;
+                unset(self::$outgoing[$ofd]);
+                @fclose($o['fp']);
+                $seat = self::$seats[$o['seatFp']] ?? null;
+                if ($seat !== null) {
+                    self::pumpSendQueue($seat, ['t' => 'sent', 'cid' => $o['cid'], 'ok' => false, 'msg' => '发送超时，请稍后重试（消息可能稍后送达）']);
+                }
+            }
+        }
+
+        // P3：发送统计周期日志（每分钟判一次、仅有活动时打印；打印后归零 = 区间统计）
+        if ($now - self::$lastStatsAt >= 60) {
+            self::$lastStatsAt = $now;
+            if (array_sum(self::$sendStats) > 0) {
+                self::log('发送统计：ok=' . self::$sendStats['ok'] . ' fail=' . self::$sendStats['fail']
+                    . ' timeout=' . self::$sendStats['timeout'] . ' reject=' . self::$sendStats['reject']);
+                self::$sendStats = ['ok' => 0, 'fail' => 0, 'timeout' => 0, 'reject' => 0];
+            }
+        }
 
         // 过期票据清扫（正常路径靠消费即删；这里兜住「签了没连」的残留文件）
         if ($nowM - self::$lastSweep > self::TICKET_SWEEP) {

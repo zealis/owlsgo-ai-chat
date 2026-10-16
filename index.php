@@ -284,6 +284,52 @@ if ($action !== '') {
         Api::json(['ok' => true, 'results' => Plugin::cronTick(true)]);
     }
 
+    // P3（发送迁移）：daemon 内部发送通道 —— WS send 帧回环到此，执行**同一个** Chat::send()。
+    // 免签名（签名属「客户端持钥」体系；daemon 用共享密钥证明身份），双校验通过才执行：
+    //   ① 来源必须本机 —— daemon 与 nginx 都在 127.0.0.1（生产可在 nginx 层再叠 allow）；
+    //   ② X-Ow-Ctl == send_key —— daemon 启动时生成、随 ws-ctl.key 写盘、web 现读现用。
+    // 身份：以请求声明的 actor 现查装配（daemon 已完成 WS 层认证与一次性票据核销），
+    // 与守护进程 buildActor 同一口径（Auth::actor 按行构造）——不信任任何上游快照字段。
+    // IP：X-Ow-Peer 是 nginx /ws 段**覆盖注入**的真实客户端 IP（客户端伪造同名头会被顶掉），
+    // 仅本分支内覆盖 REMOTE_ADDR 供 Sec::ip() 记录；公开 HTTP 路径完全不读它。
+    if ($action === 'ws_send') {
+        $ctlInfo = @json_decode((string)@file_get_contents(($CFG['data_dir'] ?? __DIR__ . '/data') . '/ws-ctl.key'), true);
+        $sendKey = is_array($ctlInfo) ? (string)($ctlInfo['send_key'] ?? '') : '';
+        $remote = (string)($_SERVER['REMOTE_ADDR'] ?? '');
+        if (($remote !== '127.0.0.1' && $remote !== '::1')
+            || $sendKey === ''
+            || !hash_equals($sendKey, (string)($_SERVER['HTTP_X_OW_CTL'] ?? ''))) {
+            Api::json(['ok' => false, 'msg' => '内部通道不可用'], 403);
+        }
+        $kind = (string)($_POST['actor_kind'] ?? '');
+        $aid = (int)($_POST['actor_id'] ?? 0);
+        $actor = null;
+        if ($kind === 'user') {
+            $uRow = $aid > 0 ? DB::one('SELECT * FROM users WHERE id=?', [$aid]) : null;
+            if ($uRow) $actor = Auth::actor($uRow, null);
+        } elseif ($kind === 'guest') {
+            $gRow = $aid > 0 ? DB::one('SELECT * FROM guests WHERE id=?', [$aid]) : null;
+            if ($gRow) $actor = Auth::actor(null, $gRow);
+        }
+        if (!$actor || ($actor['kind'] ?? 'none') === 'none') {
+            Api::json(['ok' => false, 'msg' => '身份不可用'], 403);
+        }
+        $peer = (string)($_POST['peer_ip'] ?? '');
+        if ($peer !== '' && filter_var($peer, FILTER_VALIDATE_IP)) $_SERVER['REMOTE_ADDR'] = $peer;
+        // 与 case 'send' 同一函数同一参数（禁止在此另写发送逻辑——口径漂移的口子全在这）。
+        // ⚠️ 本分支在签名门禁之前，$p()（507 行定义）尚未生效——参数一律直读 $_POST。
+        $sendType = trim((string)($_POST['type'] ?? ''));
+        if ($sendType === '') $sendType = 'text';
+        [$ok, $msg, $id, $msgRow] = Chat::send($actor, (int)($_POST['room_id'] ?? 0), $sendType, (string)($_POST['content'] ?? ''), [
+            'to_user_id' => trim((string)($_POST['to_user_id'] ?? '')),
+            'to_guest_id' => trim((string)($_POST['to_guest_id'] ?? '')),
+            'to_nickname' => trim((string)($_POST['to_nickname'] ?? '')),
+            'quote' => (string)($_POST['quote'] ?? ''),
+            'client_id' => (string)($_POST['client_id'] ?? ''),
+        ]);
+        Api::json(['ok' => $ok, 'msg' => $msg, 'id' => $id ?? null, 'msg_row' => $msgRow ?? null]);
+    }
+
     // 插件打包下载（GET 免签名：只读操作；鉴权在下方校验管理员会话）
     if ($action === 'admin_plugin_download') {
         if (($actor['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);
@@ -870,6 +916,8 @@ if ($action !== '') {
                 'to_user_id' => $p('to_user_id'), 'to_guest_id' => $p('to_guest_id'), 'to_nickname' => $p('to_nickname'),
                 // 引用快照（前端「引用」功能）：{nick,text} 的 JSON 字符串，服务端会再校验截断
                 'quote' => (string)($_POST['quote'] ?? ''),
+                // P3 幂等键：前端每条消息生成；旧页面不传时服务端补生成（行为不变）
+                'client_id' => (string)($_POST['client_id'] ?? ''),
             ]);
             // v1.3.23：msg_row = 服务端 pack 后的完整消息行，供前端**立即本地回显**
             // （原先只回 id，前端只能等长轮询把自己的消息带回来，最长要等 20 秒）
@@ -1875,6 +1923,10 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
         // P1（WS 实时层）：前端是否尝试连 WS 加速层。默认 0 = 不连，行为与长轮询时代完全一致；
         // 开启后前端并行连一条 WS 只做心跳 / 在线状态加速 —— 消息仍走长轮询，回退免费。
         'rt_enabled' => DB::setting('ws_enable', '0') === '1',
+        // P3（发送迁移）：WS 发送开关与房间白名单——前端「三分支判定」的依据
+        //（rt.on && ws_send_enabled && 非密码房 && 白名单内 → WS 发送，否则回落 HTTP）
+        'ws_send_enabled' => DB::setting('ws_send_enable', '0') === '1',
+        'ws_send_rooms' => (string)DB::setting('ws_send_rooms', ''),
         'settings' => $settings,
         // v1.3.64：改密码是否要邮箱验证码，前端按它决定要不要渲染那一栏。
         // 判定必须与 Auth::changePassword 完全同源（开关 + 真有可投递的通道 + 本人邮箱可用）：
