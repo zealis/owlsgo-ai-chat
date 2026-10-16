@@ -1,0 +1,660 @@
+/* ==========================================================================
+   星光殿堂（starlight-hall）— 前台侧栏面板 / 前台等级页 / 后台管理页 共用样式
+   --------------------------------------------------------------------------
+   由 level-trust 与 daily-checkin 两份样式合并而来，命名分三层：
+
+   ① .ow-lt-*  「对外契约层」——资料卡等级行、侧栏等级徽章、等级阶段色板。
+      ⚠️ 这批类名**不能改**：plugins/level-cultivation 会全站扫描 .ow-lt-badge
+         并把它的文字替换成修仙图标、且用 .ow-lt-honor / .ow-lt-badge-sm /
+         .ow-lv-hero 做选择器。改名等于直接废掉那个插件。
+   ② .ow-lv-*  前台等级页 ?page=level 专用（独立页面，类名同样是契约，见上）。
+   ③ .ow-sh-*  本插件新增：面板与后台页。全部是新写的，所以能干净地统一命名。
+
+   颜色纪律：除「阶段语义色板 / 荣誉金色」这一处数据性质配色（见下方注释）外，
+   **不出现任何写死色值**，一律引用核心 --ow-* 变量 —— 全站深浅两套主题只靠
+   重定义这些变量切换，插件写死颜色在深色模式下必然露出亮斑。
+   布局纪律：面板宽 240px（窄屏抽屉 250px），所有区块按这个宽度设计；
+   所有档位都给出移动端收敛，见文件末尾的媒体查询。
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   面板容器：接管「撑满剩余空间」。
+   ⚠️ 核心 CSS 里 .ow-tab-panels 没有任何尺寸规则 —— 侧栏靠 #owRoomList 的 flex:1
+      把底部顶住。切到插件面板时列表被 hidden、失去 flex:1，容器若不接班，
+      高度就变成「内容多高就多高」，侧栏底部会被顶出视野。这里补上缺的那一半。
+   ⚠️ display 写 CSS 而不是 inline：核心用 inline style 控制显隐，优先级更高，
+      隐藏照常生效、显示时空串回落到这里的 flex，两不相扰。
+   -------------------------------------------------------------------------- */
+.ow-sidebar > .ow-tab-panels {
+    display: flex; display: -webkit-flex;
+    flex-direction: column; -webkit-flex-direction: column;
+    flex: 1; -webkit-flex: 1;
+    min-height: 0;
+}
+#owExtPanel-hall {
+    display: flex; display: -webkit-flex;
+    flex-direction: column; -webkit-flex-direction: column;
+    flex: 1; -webkit-flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* ==========================================================================
+   ① 契约层：等级徽章与阶段色板（原 level-trust 样式，逐条保留）
+   ========================================================================== */
+
+.ow-lt-badge {
+    display: inline-block;
+    padding: 0 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    line-height: 16px;
+    font-weight: 600;
+    color: var(--ow-on-accent);
+    background: #8E8EA0;                 /* 兜底（未知阶段） */
+    vertical-align: 1px;                 /* 与右侧「阶段名」文字基线对齐 */
+}
+
+/* 五个阶段的语义色板 —— 属 PLUGIN.md「数据性质的色板」例外：
+   阶段色本身是数据（前端配色与后台分布统计都按它走），深浅两套主题通用，
+   统一取中等明度的饱和色以保证深底上同样可读。 */
+.ow-lt-s1 { background: #9AA5B1; }       /* 新手阶段 */
+.ow-lt-s2 { background: #0099FF; }       /* 日常阶段 —— 主色 */
+.ow-lt-s3 { background: #13A8A8; }       /* 活跃阶段 */
+.ow-lt-s4 { background: #7A5AF8; }       /* 核心阶段 */
+.ow-lt-s5 { background: #D4A017; }       /* 荣誉阶段 */
+
+/* 荣誉标识（默认 Lv.60 起）：金色渐变是「荣誉质感」的图像性表达，同属色板例外 */
+.ow-lt-badge.ow-lt-honor {
+    background: linear-gradient(180deg, #E8B923, #C98A00);
+    box-shadow: 0 0 0 1px rgba(180, 120, 0, .35);
+}
+
+/* 资料卡里的等级行：整行可点（进 ?page=level 看规则与今日任务）。
+   ⚠️ 纵向 padding 补回 3px：横向 4px 是为了 hover 背景不越出内容区，
+   纵向若被覆盖掉，本行会比相邻 meta 行矮一截，鼠标扫过时像一根扁灰杠。 */
+.ow-lt-row-link {
+    text-decoration: none; color: inherit;
+    display: flex; align-items: baseline; cursor: pointer;
+    border-radius: 4px; padding: 3px 4px; margin: 0 -4px;
+}
+.ow-lt-row-link:hover { background: var(--ow-bg-sub); }
+
+/* 侧栏底部资料区里的等级徽章（比资料卡小一号，否则会把昵称挤没） */
+.ow-me-line .ow-lt-badge.ow-lt-badge-sm {
+    font-size: 10px; line-height: 14px; padding: 0 4px; border-radius: 3px;
+    margin-left: 0; flex-shrink: 0; -webkit-flex-shrink: 0;
+    vertical-align: middle; cursor: default;
+}
+
+/* ==========================================================================
+   ② 前台等级页 ?page=level（.ow-lv-* 同为契约，level-cultivation 用 .ow-lv-hero）
+   ========================================================================== */
+
+.ow-lv-hero { border-left: 4px solid #9AA5B1; }
+.ow-lv-hero.ow-lv-s2 { border-left-color: #0099FF; }
+.ow-lv-hero.ow-lv-s3 { border-left-color: #13A8A8; }
+.ow-lv-hero.ow-lv-s4 { border-left-color: #7A5AF8; }
+.ow-lv-hero.ow-lv-s5 { border-left-color: #D4A017; }
+.ow-lv-hero-lv { display: flex; align-items: center; gap: 10px; }
+.ow-lv-hero-stage { font-size: 14px; color: var(--ow-text-sub); }
+.ow-lv-hero-meta {
+    display: flex; flex-wrap: wrap; gap: 6px 20px;
+    margin-top: 10px; font-size: 13px; color: var(--ow-text-sub);
+}
+.ow-lv-hero-meta b { color: var(--ow-text-title); }
+/* 长期不登录消退：唯一会让等级往下走的原因，与其余「攒了多少」语义相反，
+   只染数字不染标签，避免混在同一个灰里被忽略 */
+.ow-lv-decay { color: var(--ow-text-sub); }
+.ow-lv-decay b { color: var(--ow-red); }
+.ow-lv-bar {
+    margin-top: 10px; height: 8px; border-radius: 4px;
+    background: var(--ow-bg-sub); overflow: hidden;
+}
+.ow-lv-bar > i {
+    display: block; height: 100%; border-radius: 4px;
+    background: var(--ow-primary-strong);
+    transition: width .5s ease; -webkit-transition: width .5s ease;
+}
+
+.ow-lv-h3 { margin: 0 0 10px; font-size: 15px; color: var(--ow-text-title); }
+.ow-lv-task { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 13px; }
+.ow-lv-task-k { width: 132px; flex-shrink: 0; color: var(--ow-text-sub); }
+.ow-lv-task-rw {
+    font-weight: 400; font-size: 11.5px; color: var(--ow-primary-dark);
+    font-variant-numeric: tabular-nums;
+}
+.ow-lv-task-bar { flex: 1; height: 6px; border-radius: 3px; background: var(--ow-bg-sub); overflow: hidden; }
+.ow-lv-task-bar > i { display: block; height: 100%; background: #9AA5B1; }
+.ow-lv-task-v { width: 56px; text-align: right; font-weight: 600; }
+.ow-lv-task-v.done { color: var(--ow-green); }
+.ow-lv-task-sum { margin-top: 10px; font-size: 13px; color: var(--ow-text-sub); }
+
+.ow-lv-formula {
+    font-family: Menlo, Consolas, monospace; font-size: 13px;
+    background: var(--ow-bg-sub); border: 1px solid var(--ow-border);
+    border-radius: 6px; padding: 10px 12px; margin-bottom: 10px;
+    overflow-x: auto; -webkit-overflow-scrolling: touch;
+}
+.ow-lv-ul { margin: 0; padding-left: 20px; font-size: 13px; color: var(--ow-text-sub); line-height: 1.9; }
+.ow-lv-tip {
+    margin-top: 10px; font-size: 12px; color: var(--ow-text-sub);
+    background: var(--ow-bg-sub); border-radius: 6px; padding: 8px 10px; line-height: 1.8;
+}
+
+.ow-lv-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ow-lv-table th, .ow-lv-table td {
+    border: 1px solid var(--ow-border); padding: 7px 8px;
+    text-align: left; vertical-align: top; line-height: 1.6;
+}
+.ow-lv-table th { background: var(--ow-bg-sub); font-weight: 600; color: var(--ow-text-sub); white-space: nowrap; }
+/* 当前档位行高亮：走核心 --ow-blue-light，深浅两套主题联动 */
+.ow-lv-table tr.is-cur { background: var(--ow-blue-light); }
+.ow-lv-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.ow-lv-yes { color: var(--ow-green); font-weight: 700; }
+.ow-lv-no { color: var(--ow-border-control); }
+
+/* ---------- 阶段总览时间轴 ---------- */
+.ow-lv-stages {
+    display: flex; display: -webkit-flex;
+    justify-content: space-between; -webkit-justify-content: space-between;
+    position: relative; margin-top: 8px;
+}
+.ow-lv-stage-connector {
+    position: absolute; top: 16px; left: 8%; right: 8%; height: 2px;
+    background: var(--ow-border); z-index: 0;
+}
+.ow-lv-stage-item { flex: 1; text-align: center; position: relative; z-index: 1; padding: 0 2px; }
+.ow-lv-stage-dot-wrap {
+    height: 32px;
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    justify-content: center; -webkit-justify-content: center;
+}
+.ow-lv-stage-dot {
+    width: 12px; height: 12px; border-radius: 50%;
+    background: var(--stage-color, #9AA5B1);
+    /* 描边色 = 页面底色，在连线与圆点之间「掏」出一圈缝隙；必须跟主题走 */
+    box-shadow: 0 0 0 2px var(--ow-bg);
+}
+.ow-lv-stage-item.is-cur .ow-lv-stage-dot {
+    width: 18px; height: 18px;
+    box-shadow: 0 0 0 3px var(--ow-bg), 0 0 0 5px var(--stage-color, #9AA5B1);
+}
+.ow-lv-stage-item.is-future .ow-lv-stage-dot {
+    background: var(--ow-bg);
+    box-shadow: 0 0 0 2px var(--ow-bg), 0 0 0 3px var(--stage-color, #9AA5B1);
+}
+.ow-lv-stage-name { font-size: 13px; color: var(--ow-text-title); line-height: 1.4; }
+.ow-lv-stage-item.is-future .ow-lv-stage-name,
+.ow-lv-stage-item.is-past .ow-lv-stage-name { color: var(--ow-text-sub); }
+.ow-lv-stage-item.is-cur .ow-lv-stage-name { font-weight: 700; color: var(--ow-text-title); }
+.ow-lv-stage-range { font-size: 11px; color: var(--ow-text-sub); margin-top: 2px; }
+
+/* ==========================================================================
+   ③ 星光殿堂面板（.ow-sh-*）
+   ========================================================================== */
+
+.ow-sh { padding: 12px 12px 16px; }
+.ow-sh-card {
+    background: var(--ow-surface);
+    border: 1px solid var(--ow-border);
+    border-radius: 14px;
+    padding: 12px;
+    margin-bottom: 10px;
+}
+.ow-sh-card:last-child { margin-bottom: 0; }
+
+/* 卡片小标题：左「标题」右「附注」的一行 */
+.ow-sh-h {
+    margin: 0 0 10px;
+    font-size: 13px; font-weight: 600; color: var(--ow-text-title);
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    justify-content: space-between; -webkit-justify-content: space-between;
+    gap: 8px; -webkit-gap: 8px;
+}
+.ow-sh-h em {
+    font-style: normal; font-size: 11.5px; font-weight: 400;
+    color: var(--ow-text-sub);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ---------- 主卡：等级 + 签到合体 ---------- */
+.ow-sh-hero-top {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    gap: 8px; -webkit-gap: 8px;
+    margin-bottom: 10px;
+}
+.ow-sh-hero-top .ow-lt-badge { font-size: 13px; }   /* 主卡若被外部换成真徽章时的兜底尺寸 */
+.ow-sh-hero-stage { font-size: 12px; color: var(--ow-text-sub); }
+/* 主卡里的大号等级牌。刻意不复用 .ow-lt-badge：level-cultivation 会全站替换
+   .ow-lt-badge 的内容为修仙图标，主卡用纯文本才保证「当前几级」永远读得到
+   （同 .ow-sh-rank-lv 的理由，见 chat.js 的 lvChip 注释）。
+   底色沿用下面的阶段语义色板（数据性质色板例外）。 */
+.ow-sh-lvb {
+    display: inline-block;
+    padding: 0 8px;
+    border-radius: 6px;
+    font-size: 13px;
+    line-height: 20px;
+    font-weight: 700;
+    letter-spacing: .2px;
+    color: var(--ow-on-accent);
+    background: #8E8EA0;                 /* 兜底（未知阶段） */
+    font-variant-numeric: tabular-nums;
+}
+.ow-sh-lvb.s2 { background: #0099FF; }
+.ow-sh-lvb.s3 { background: #13A8A8; }
+.ow-sh-lvb.s4 { background: #7A5AF8; }
+.ow-sh-lvb.s5 { background: #D4A017; }
+.ow-sh-lvb.honor {
+    background: linear-gradient(180deg, #E8B923, #C98A00);
+    box-shadow: 0 0 0 1px rgba(180, 120, 0, .35);
+}
+/* 积分余额：白字压主色实心块（--ow-on-accent 深浅两档都是白，核心保证对比度） */
+.ow-sh-pill {
+    margin-left: auto;
+    display: inline-block; padding: 3px 9px; border-radius: 10px;
+    background: var(--ow-primary-strong); color: var(--ow-on-accent);
+    font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.ow-sh-bar { height: 6px; border-radius: 3px; background: var(--ow-bg-sub); overflow: hidden; }
+.ow-sh-bar > i {
+    display: block; height: 100%; border-radius: 3px;
+    background: var(--ow-primary-strong);
+    transition: width .5s ease; -webkit-transition: width .5s ease;
+}
+.ow-sh-bar-cap {
+    margin-top: 5px; font-size: 11px; color: var(--ow-text-sub);
+    font-variant-numeric: tabular-nums;
+}
+.ow-sh-bar-cap b { color: var(--ow-text); font-weight: 600; }
+
+/* ---------- 签到环 + 圆形按钮 ----------
+   只有两层圆：外层「灰底环 + 彩色进度弧」，内层「淡填充圆」。
+   内层刻意不描边（描边会在同心圆之间再划一道界线，三层叠一起显乱）。 */
+.ow-sh-ring { position: relative; width: 104px; height: 104px; margin: 12px auto 2px; }
+.ow-sh-ring > svg {
+    position: absolute; left: 0; top: 0; width: 104px; height: 104px;
+    /* -90° 让进度从 12 点方向起算（SVG 默认 3 点方向） */
+    transform: rotate(-90deg); -webkit-transform: rotate(-90deg);
+}
+.ow-sh-ring-bg { fill: none; stroke: var(--ow-bg-sub); stroke-width: 4; }
+.ow-sh-ring-fg {
+    fill: none; stroke: var(--ow-primary-strong); stroke-width: 4; stroke-linecap: round;
+    transition: stroke-dashoffset .6s ease; -webkit-transition: stroke-dashoffset .6s ease;
+}
+/* 已签到：进度弧与按钮同取成功色 —— 完成态只留一种颜色语言 */
+.ow-sh-ring-fg.is-done { stroke: var(--ow-green); }
+.ow-sh-btn {
+    position: absolute; left: 12px; top: 12px;
+    width: 80px; height: 80px; border-radius: 50%; border: none;
+    background: var(--ow-bg-sub); color: var(--ow-primary-strong);
+    font-family: inherit; font-size: 15px; font-weight: 600; line-height: 1.2;
+    cursor: pointer; padding: 0;
+    display: flex; display: -webkit-flex;
+    flex-direction: column; -webkit-flex-direction: column;
+    align-items: center; -webkit-align-items: center;
+    justify-content: center; -webkit-justify-content: center;
+    gap: 2px; -webkit-gap: 2px;
+    transition: transform .18s ease, background-color .18s ease, color .18s ease;
+    -webkit-transition: -webkit-transform .18s ease, background-color .18s ease, color .18s ease;
+}
+/* hover 只换淡蓝底，不整体填实主色 —— 免得和外环的蓝弧撞成一片 */
+.ow-sh-btn:hover { background: var(--ow-blue-light); color: var(--ow-primary-dark); }
+.ow-sh-btn:active { transform: scale(.97); }
+.ow-sh-btn:focus-visible { outline: 2px solid var(--ow-primary-dark); outline-offset: 2px; }
+.ow-sh-btn i { font-style: normal; font-size: 11px; font-weight: 400; opacity: .9; }
+.ow-sh-btn.is-done { color: var(--ow-green); cursor: default; font-size: 13px; }
+.ow-sh-btn.is-done:hover { background: var(--ow-bg-sub); color: var(--ow-green); transform: none; }
+.ow-sh-btn:disabled { opacity: .55; cursor: not-allowed; transform: none; }
+/* 勾：纯 CSS 画（左边 + 下边两条边旋转 -45°）。不引 SVG —— <button> 内嵌 svg
+   在老内核里渲染本来就脆，少一个 DOM 节点也少一处错位风险。 */
+.ow-sh-btn.is-done::before {
+    content: '';
+    display: block; width: 16px; height: 8px;
+    border-left: 2px solid var(--ow-green);
+    border-bottom: 2px solid var(--ow-green);
+    transform: rotate(-45deg); -webkit-transform: rotate(-45deg);
+    margin-bottom: 5px;
+}
+
+/* 签到成功的「+N 分」上浮提示（动画结束后由 JS 移除节点） */
+.ow-sh-fly {
+    position: absolute; left: 0; right: 0; top: 14px; text-align: center;
+    font-size: 18px; font-weight: 700; color: var(--ow-primary-strong);
+    pointer-events: none;
+    animation: owShFly 1.15s ease-out forwards;
+    -webkit-animation: owShFly 1.15s ease-out forwards;
+}
+@keyframes owShFly {
+    0%   { opacity: 0; transform: translateY(8px); }
+    25%  { opacity: 1; transform: translateY(0); }
+    100% { opacity: 0; transform: translateY(-28px); }
+}
+@-webkit-keyframes owShFly {
+    0%   { opacity: 0; -webkit-transform: translateY(8px); }
+    25%  { opacity: 1; -webkit-transform: translateY(0); }
+    100% { opacity: 0; -webkit-transform: translateY(-28px); }
+}
+
+/* ---------- 三格统计 ---------- */
+.ow-sh-stats { display: flex; display: -webkit-flex; gap: 8px; -webkit-gap: 8px; margin-top: 12px; }
+.ow-sh-stat {
+    flex: 1; -webkit-flex: 1; min-width: 0;
+    background: var(--ow-bg-sub); border-radius: 10px;
+    padding: 8px 4px; text-align: center;
+}
+.ow-sh-stat b {
+    display: block; font-size: 16px; color: var(--ow-text-title);
+    font-variant-numeric: tabular-nums;
+}
+.ow-sh-stat span { font-size: 11px; color: var(--ow-text-sub); }
+
+/* ---------- 周期点阵（一个点 = 周期内第 N 天）---------- */
+.ow-sh-dots {
+    display: flex; display: -webkit-flex;
+    justify-content: center; -webkit-justify-content: center;
+    gap: 5px; -webkit-gap: 5px; margin-top: 12px;
+}
+.ow-sh-dot {
+    width: 13px; height: 13px; border-radius: 50%;
+    border: 1px solid var(--ow-border-control);
+    background: transparent; box-sizing: border-box;
+}
+.ow-sh-dot.on { background: var(--ow-primary-strong); border-color: var(--ow-primary-strong); }
+.ow-sh-dot.hit { box-shadow: 0 0 0 3px var(--ow-blue-light); }
+
+.ow-sh-tip { margin-top: 8px; font-size: 11.5px; color: var(--ow-text-sub); line-height: 1.55; }
+.ow-sh-tip b { color: var(--ow-text); font-weight: 600; }
+.ow-sh-tip a { color: var(--ow-primary-dark); text-decoration: none; }
+.ow-sh-tip a:hover { text-decoration: underline; }
+
+/* ---------- 今日任务 ---------- */
+.ow-sh-tasks { margin-top: 2px; }
+.ow-sh-task { display: flex; display: -webkit-flex; align-items: center; -webkit-align-items: center;
+    gap: 8px; -webkit-gap: 8px; padding: 5px 0; font-size: 12.5px; }
+.ow-sh-task-k { width: 62px; flex-shrink: 0; -webkit-flex-shrink: 0; color: var(--ow-text-sub); }
+.ow-sh-task-rw {
+    flex-shrink: 0; -webkit-flex-shrink: 0;
+    font-style: normal; font-size: 10.5px; color: var(--ow-text-sub);
+    font-variant-numeric: tabular-nums;
+}
+.ow-sh-task-bar { flex: 1; -webkit-flex: 1; min-width: 0; height: 6px; border-radius: 3px;
+    background: var(--ow-bg-sub); overflow: hidden; }
+.ow-sh-task-bar > i { display: block; height: 100%; border-radius: 3px; background: var(--ow-primary-strong);
+    transition: width .4s ease; -webkit-transition: width .4s ease; }
+.ow-sh-task-bar > i.done { background: var(--ow-green); }
+.ow-sh-task-v { width: 44px; flex-shrink: 0; -webkit-flex-shrink: 0; text-align: right;
+    font-weight: 600; font-variant-numeric: tabular-nums; }
+.ow-sh-task-v.done { color: var(--ow-green); }
+
+/* ---------- 月历 ---------- */
+.ow-sh-cal-head { display: flex; display: -webkit-flex; flex-wrap: wrap; -webkit-flex-wrap: wrap; margin-bottom: 2px; }
+.ow-sh-cal-head span { width: 14.2857%; text-align: center; font-size: 11px; color: var(--ow-text-sub); }
+.ow-sh-cal { display: flex; display: -webkit-flex; flex-wrap: wrap; -webkit-flex-wrap: wrap; }
+.ow-sh-cell { width: 14.2857%; padding: 2px; box-sizing: border-box; }
+.ow-sh-cell i {
+    display: block; font-style: normal; font-size: 11px; line-height: 22px;
+    text-align: center; border-radius: 8px;
+    color: var(--ow-text-sub); background: var(--ow-bg-sub);
+    font-variant-numeric: tabular-nums;
+}
+.ow-sh-cell.on i { background: var(--ow-primary-strong); color: var(--ow-on-accent); font-weight: 600; }
+/* 「今天」用内描边而不是换底色：已签与未签两态都要能看出今天是哪一天 */
+.ow-sh-cell.today i { box-shadow: inset 0 0 0 2px var(--ow-primary-strong); }
+.ow-sh-cell.blank i { background: transparent; box-shadow: none; }
+.ow-sh-mnav { display: flex; display: -webkit-flex; gap: 4px; -webkit-gap: 4px; }
+.ow-sh-mnav a {
+    display: inline-block; min-width: 22px; height: 22px; line-height: 20px;
+    text-align: center; border-radius: 6px;
+    border: 1px solid var(--ow-border); color: var(--ow-text-sub);
+    text-decoration: none; font-size: 13px;
+}
+.ow-sh-mnav a:hover { background: var(--ow-hover-bg); color: var(--ow-text-title); }
+
+/* ---------- 榜单（签到榜 / 等级荣誉榜 共用行骨架）----------
+   ⚠️ 四边 padding 与圆角必须**所有行一致**，「我」那一行只多一层底色。
+   曾经给 .me 单独加 padding + radius，结果自己那行比别行宽、还鼓出一块浅蓝。 */
+.ow-sh-rank-i {
+    display: flex; display: -webkit-flex; align-items: center; -webkit-align-items: center;
+    gap: 8px; -webkit-gap: 8px; padding: 6px;
+    border-top: 1px solid var(--ow-border); border-radius: 8px;
+}
+.ow-sh-rank-i:first-child { border-top: none; }
+.ow-sh-rank-i.me { background: var(--ow-blue-light); }
+.ow-sh-rank-i.click { cursor: pointer; }
+.ow-sh-rank-i.click:hover { background: var(--ow-hover-bg); }
+.ow-sh-rank-i.click.me:hover { background: var(--ow-blue-light); }
+.ow-sh-rank-n { width: 18px; flex: none; -webkit-flex: none; font-size: 12px;
+    color: var(--ow-text-sub); font-variant-numeric: tabular-nums; }
+/* 前三名用语义色（称号金 / 副文本灰 / VIP 橙），深浅两档都可读 */
+.ow-sh-rank-n.t1 { color: var(--ow-yellow); font-weight: 700; }
+.ow-sh-rank-n.t2 { color: var(--ow-text-sub); font-weight: 700; }
+.ow-sh-rank-n.t3 { color: var(--ow-orange); font-weight: 700; }
+.ow-sh-rank-av { width: 26px; height: 26px; border-radius: 50%; background: var(--ow-bg-sub);
+    flex: none; -webkit-flex: none; object-fit: cover; }
+.ow-sh-rank-t { flex: 1; -webkit-flex: 1; min-width: 0; font-size: 13px; color: var(--ow-text);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ow-sh-rank-v { flex: none; -webkit-flex: none; font-size: 12px; font-weight: 600;
+    color: var(--ow-primary-strong); font-variant-numeric: tabular-nums; }
+/* 等级列刻意**不用 .ow-lt-badge**：level-cultivation 会把徽章文字换成修仙图标，
+   这里是等级数字的唯一来源，被换掉就什么也读不到了；纯文本在启用/未启用该插件
+   两种场景下都成立。 */
+.ow-sh-rank-lv { flex: none; -webkit-flex: none; font-size: 12px; font-weight: 600;
+    color: var(--ow-text); font-variant-numeric: tabular-nums; }
+.ow-sh-honor .ow-sh-rank-lv.top { color: var(--ow-yellow); }
+
+/* ---------- 空态 / 游客 / 关闭态 ---------- */
+.ow-sh-empty {
+    padding: 18px 8px; text-align: center;
+    font-size: 12.5px; color: var(--ow-text-sub); line-height: 1.6;
+}
+.ow-sh-empty .ow-ico { display: block; margin: 0 auto 8px; color: var(--ow-text-sub); }
+.ow-sh-empty b { color: var(--ow-text-title); }
+
+/* ---------- 补签按钮 ---------- */
+.ow-sh-patch { margin-top: 10px; display: block; width: 100%; }
+
+/* ---------- 每日首次打开自动弹出的签到弹窗 ----------
+   仿移动端「签到成功」弹层：圆形图标骑在弹窗上沿 + 标题 + 奖励明细 + 连续天数
+   + 一个大按钮 + 底部次级链接。
+   ⚠️ 核心 .ow-modal 是 overflow-y:auto，会把探出上沿的图标裁掉，所以本弹窗单独
+      一个 class 放掉 overflow（内容固定且矮，不会冒出滚动条）。
+   ⚠️ 标题选择器必须写成 .ow-modal .ow-sh-pop-t：核心 .ow-modal h3 的特异性高于
+      单个类名，只写 .ow-sh-pop-t 会被核心的 18px/600 覆盖掉。 */
+.ow-modal.ow-sh-modal { overflow: visible; }
+.ow-sh-pop { position: relative; padding: 48px 6px 4px; text-align: center; }
+.ow-sh-pop-ico {
+    position: absolute; top: -34px; left: 50%; margin-left: -32px;
+    width: 64px; height: 64px; border-radius: 50%;
+    background: var(--ow-surface); border: 1px solid var(--ow-border);
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    justify-content: center; -webkit-justify-content: center;
+}
+.ow-modal .ow-sh-pop-t { margin: 0 0 16px; font-size: 20px; font-weight: 700; color: var(--ow-text-title); }
+.ow-sh-pop-rewards {
+    display: flex; display: -webkit-flex;
+    justify-content: center; -webkit-justify-content: center;
+    gap: 26px; -webkit-gap: 26px; margin-bottom: 12px;
+}
+.ow-sh-pop-r { display: flex; display: -webkit-flex; flex-direction: column; -webkit-flex-direction: column;
+    align-items: center; -webkit-align-items: center; gap: 3px; -webkit-gap: 3px; }
+.ow-sh-pop-r b { font-size: 19px; font-weight: 700; color: var(--ow-text-title);
+    font-variant-numeric: tabular-nums; line-height: 1.2; }
+.ow-sh-pop-r i { font-style: normal; font-size: 11.5px; color: var(--ow-text-sub); }
+.ow-sh-pop-sub { margin: 0 0 20px; font-size: 13px; color: var(--ow-text-sub); line-height: 1.6; }
+.ow-sh-pop-sub b { color: var(--ow-text); font-weight: 600; }
+.ow-sh-pop-btn {
+    display: block; width: 100%; height: 46px;
+    border: none; border-radius: 12px;
+    background: var(--ow-primary-strong); color: var(--ow-on-accent);
+    font-family: inherit; font-size: 15.5px; font-weight: 600; cursor: pointer;
+    transition: background-color .15s ease; -webkit-transition: background-color .15s ease;
+}
+.ow-sh-pop-btn:hover { background: var(--ow-primary-dark); }
+.ow-sh-pop-btn:disabled { opacity: .6; cursor: default; }
+.ow-sh-pop-link {
+    display: block; margin-top: 14px; font-size: 12.5px;
+    color: var(--ow-text-sub); text-decoration: none; cursor: pointer;
+}
+.ow-sh-pop-link:hover { color: var(--ow-primary-strong); }
+
+/* ==========================================================================
+   后台页（.ow-sh-* 复用同名视觉语言，密度按桌面放宽一档）
+   ========================================================================== */
+
+.ow-sh-tabs {
+    display: flex; display: -webkit-flex; flex-wrap: wrap; -webkit-flex-wrap: wrap;
+    gap: 6px; -webkit-gap: 6px;
+    margin: 0 0 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--ow-border);
+}
+.ow-sh-tab {
+    appearance: none; -webkit-appearance: none;
+    border: 1px solid transparent; border-radius: 8px;
+    background: var(--ow-bg-sub); color: var(--ow-text-sub);
+    font-family: inherit; font-size: 13px;
+    padding: 6px 16px; cursor: pointer;
+    transition: background-color .15s ease, color .15s ease;
+    -webkit-transition: background-color .15s ease, color .15s ease;
+}
+.ow-sh-tab:hover { background: var(--ow-hover-bg); color: var(--ow-text-title); }
+.ow-sh-tab.is-active {
+    background: var(--ow-primary-strong); color: var(--ow-on-accent); font-weight: 600;
+}
+/* 面板显隐：非当前页签整块收起。用 class 而不是 inline style，
+   样式与逻辑各管一头，切页签时不需要碰 style.display。 */
+.ow-sh-pane { display: none; }
+.ow-sh-pane.is-active { display: block; }
+
+.ow-sh-h3 { margin: 0 0 10px; font-size: 15px; color: var(--ow-text-title); }
+.ow-sh-cap {
+    margin: 16px 0 8px; font-size: 13px; color: var(--ow-text-sub); font-weight: 600;
+    padding-left: 8px; border-left: 3px solid var(--ow-primary-strong);
+}
+.ow-sh-cap:first-child { margin-top: 0; }
+.ow-sh-mono { font-family: Menlo, Consolas, monospace; font-size: 12px; }
+.ow-sh-actions { margin-top: 14px; display: flex; display: -webkit-flex; gap: 8px; -webkit-gap: 8px; }
+
+/* KPI 卡（概览 / 签到概览共用；与全站后台统计风格一致） */
+.ow-sh-kpis {
+    display: flex; display: -webkit-flex;
+    flex-wrap: wrap; -webkit-flex-wrap: wrap;
+    gap: 10px; -webkit-gap: 10px;
+}
+.ow-sh-kpis + .ow-sh-kpis { margin-top: 10px; }
+.ow-sh-kpi {
+    flex: 1; -webkit-flex: 1; min-width: 110px;
+    background: var(--ow-bg-sub); border-radius: 10px; padding: 10px 12px;
+}
+.ow-sh-kpi b {
+    display: block; font-size: 20px; color: var(--ow-text-title);
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.ow-sh-kpi span { font-size: 12px; color: var(--ow-text-sub); }
+.ow-sh-kpi.small b { font-size: 17px; }
+/* 阶段分布圆点：底色复用 .ow-lt-s1..s5 阶段色板（数据性质色板），这里只定义形状 */
+.ow-sh-dot-s {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    margin-right: 6px; vertical-align: middle;
+}
+
+/* 竖条小倍数图：每个指标一张小图、各自归一化
+   （共用一个刻度的话，人数会把「建群」压成一条平线）。
+   柱色一律 --ow-primary-strong，零值柱 --ow-border —— 无写死色值。 */
+.ow-sh-tchart + .ow-sh-tchart { margin-top: 14px; }
+.ow-sh-tchart-h {
+    display: flex; display: -webkit-flex; align-items: baseline; -webkit-align-items: baseline;
+    justify-content: space-between; -webkit-justify-content: space-between;
+    margin-bottom: 4px;
+}
+.ow-sh-tchart-h span { font-size: 12px; color: var(--ow-text-sub); }
+.ow-sh-tchart-h em { font-style: normal; font-size: 11px; color: var(--ow-text-sub);
+    font-variant-numeric: tabular-nums; }
+.ow-sh-tbars {
+    display: flex; display: -webkit-flex; align-items: flex-end; -webkit-align-items: flex-end;
+    gap: 2px; -webkit-gap: 2px;
+    height: 72px; padding: 4px 2px 0;
+    background: var(--ow-bg-sub); border-radius: 6px;
+}
+.ow-sh-tbars > i {
+    flex: 1; -webkit-flex: 1; min-width: 2px; display: block;
+    border-radius: 2px 2px 0 0; background: var(--ow-primary-strong);
+    transition: height .2s; -webkit-transition: height .2s;
+}
+.ow-sh-tbars > i.zero { background: var(--ow-border); }
+.ow-sh-tx {
+    display: flex; display: -webkit-flex;
+    justify-content: space-between; -webkit-justify-content: space-between;
+    margin-top: 4px; font-size: 11px; color: var(--ow-text-sub);
+}
+
+/* 后台：用户档案里的当月小月历（比前台更紧凑） */
+.ow-sh-mini { display: flex; display: -webkit-flex; flex-wrap: wrap; -webkit-flex-wrap: wrap; }
+.ow-sh-mini span {
+    width: 14.2857%; font-size: 11px; text-align: center; line-height: 20px;
+    color: var(--ow-text-sub);
+}
+.ow-sh-mini span.on { color: var(--ow-on-accent); }
+.ow-sh-mini span.on b {
+    display: inline-block; min-width: 20px; border-radius: 6px;
+    background: var(--ow-primary-strong); font-weight: 600;
+}
+
+/* ==========================================================================
+   窄屏（≤720px：侧栏变抽屉）与超窄屏（≤360px）
+   ========================================================================== */
+@media (max-width: 720px) {
+    .ow-sh { padding: 10px 10px 14px; }
+    .ow-sh-card { padding: 10px; border-radius: 12px; }
+    /* 触摸目标：月历格子要在 40px 上下才不误触 */
+    .ow-sh-cell i { line-height: 26px; font-size: 11.5px; }
+    .ow-sh-stat b { font-size: 15px; }
+    /* 今日任务：抽屉 250px，标签列收一档给进度条让位 */
+    .ow-sh-task-k { width: 54px; }
+    .ow-sh-task { font-size: 12px; }
+    .ow-sh-kpi { min-width: 92px; padding: 8px 10px; }
+    .ow-sh-kpi b { font-size: 18px; }
+    .ow-sh-kpi.small b { font-size: 15px; }
+    .ow-sh-tbars { height: 56px; }
+    .ow-sh-tchart-h span { font-size: 11.5px; }
+
+    /* 前台等级页：9 列的能力解锁表在窄屏压进卡片会把每列挤成一竖溜换行，
+       外层 .ow-lv-card-scroll 开横向滚动，表格按内容自然展开。
+       width 必须从 100% 放开成 auto，否则仍被父宽锁死、滚动条永远不出现。 */
+    .ow-lv-card-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .ow-lv-card-scroll .ow-lv-table { width: auto; min-width: 100%; }
+    /* 单元格一律不折行：表头「阶段」两字定的列宽装不下「新手阶段」，
+       不锁死就会滚成两行。只作用于这张滚动表，长文字表照常折行。 */
+    .ow-lv-card-scroll .ow-lv-table th, .ow-lv-card-scroll .ow-lv-table td { white-space: nowrap; }
+    .ow-lv-task-k { width: 96px; }
+    .ow-lv-stage-connector { top: 13px; left: 4%; right: 4%; }
+    .ow-lv-stage-dot-wrap { height: 26px; }
+    .ow-lv-stage-dot { width: 10px; height: 10px; }
+    .ow-lv-stage-item.is-cur .ow-lv-stage-dot { width: 16px; height: 16px; }
+    .ow-lv-stage-name { font-size: 12px; }
+    .ow-lv-stage-range { font-size: 10px; }
+}
+
+@media (max-width: 360px) {
+    .ow-sh-hero-top { gap: 6px; -webkit-gap: 6px; }
+    .ow-sh-lvb { font-size: 12px; line-height: 18px; padding: 0 6px; }
+    .ow-sh-pill { font-size: 10.5px; padding: 2px 7px; }
+    .ow-sh-ring { width: 92px; height: 92px; }
+    .ow-sh-ring > svg { width: 92px; height: 92px; }
+    /* (92-70)/2 = 11：按钮与进度环在超窄屏同样保持同心、四周等距 */
+    .ow-sh-btn { width: 70px; height: 70px; left: 11px; top: 11px; font-size: 14px; }
+    .ow-sh-btn.is-done { font-size: 12px; }
+    .ow-sh-btn.is-done::before { width: 14px; height: 7px; margin-bottom: 4px; }
+    .ow-sh-stats { gap: 6px; -webkit-gap: 6px; }
+    .ow-sh-tab { padding: 6px 11px; font-size: 12.5px; }
+    .ow-sh-rank-i { gap: 6px; -webkit-gap: 6px; }
+    .ow-sh-rank-av { width: 22px; height: 22px; }
+}
