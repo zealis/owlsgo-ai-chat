@@ -38,6 +38,11 @@ class RealtimeWs
     public const WAKE_DELAY = 0.25;
     /** 过期票据文件清扫间隔（秒） */
     public const TICKET_SWEEP = 120;
+    /** 每连接令牌桶：容量（突发帧数）与回填速率（帧/秒）。正常客户端 25s 一次 hb、
+        切群一次 sub，远低于此；狂发帧者在这里先被 close 1008（不做的话，快速交替
+        sub 会造成心跳写库放大——安全清单里的「按连接而非按请求限流」）。 */
+    public const TB_CAPACITY = 10;
+    public const TB_REFILL = 5.0;
 
     /** @var array<int,array> 席位表：fd 整数 => seat */
     private static array $seats = [];
@@ -112,6 +117,9 @@ class RealtimeWs
                         'actor'  => null,
                         'room'   => 0,
                         'saidBye' => false,
+                        // 令牌桶初值：满桶开连，tbAt=0 表示「首次用到时按零间隔回填」
+                        'tb'     => self::TB_CAPACITY,
+                        'tbAt'   => 0.0,
                     ];
                 }
             }
@@ -184,6 +192,20 @@ class RealtimeWs
         if ($key === '' || !$upgradeOk || ($headers['sec-websocket-version'] ?? '') !== '13') {
             self::httpReject($seat, 400);
             return;
+        }
+
+        // CSWSH 防御纵深（安全清单）：浏览器发起 WS 必带 Origin —— 有 Origin 就必须与 Host
+        // 一致（nginx 反代下 Host = $host 原样转发），不一致直接 403。
+        // 非浏览器客户端通常不发 Origin：CSWSH 是浏览器攻击，缺席 Origin 不构成该攻击面，
+        // 放行（别收紧成「必须有 Origin」，否则 CLI/自测客户端全被误杀——注释防误改）。
+        $origin = (string)($headers['origin'] ?? '');
+        if ($origin !== '') {
+            $oHost = strtolower((string)parse_url($origin, PHP_URL_HOST));
+            $hHost = strtolower(explode(':', (string)($headers['host'] ?? ''))[0]);
+            if ($oHost === '' || $hHost === '' || $oHost !== $hHost) {
+                self::httpReject($seat, 403, 'origin mismatch');
+                return;
+            }
         }
 
         // 票据：一次性、60 秒时效，由 index.php 的 ws_ticket 动作签发
@@ -274,6 +296,15 @@ class RealtimeWs
                 $payload = $un;
             }
 
+            // 每连接令牌桶（先于一切分发）：容量 10 突发、每秒回 5 —— 正常心跳远够用，
+            // 狂发帧者在这里被断掉，不让 CPU 与后续写库被拖进放大
+            $nowT = microtime(true);
+            $dt = $seat['tbAt'] > 0 ? ($nowT - $seat['tbAt']) : 0.0;
+            $seat['tb'] = min(self::TB_CAPACITY, (float)$seat['tb'] + $dt * self::TB_REFILL);
+            $seat['tbAt'] = $nowT;
+            if ($seat['tb'] < 1.0) { self::closeSeat($seat, 1008, 'rate limit'); return; }
+            $seat['tb'] -= 1.0;
+
             $seat['lastAt'] = time();
             switch ($op) {
                 case 0x1: self::handleText($seat, $payload); break;
@@ -290,6 +321,8 @@ class RealtimeWs
             $live = self::$seats[(int)$seat['fp']];
             $live['buf'] = $buf;
             $live['lastAt'] = $seat['lastAt'];
+            $live['tb'] = $seat['tb'];
+            $live['tbAt'] = $seat['tbAt'];
             self::$seats[(int)$seat['fp']] = $live;
         }
     }
@@ -307,6 +340,19 @@ class RealtimeWs
             case 'sub':
                 $room = (int)($m['room'] ?? 0);
                 if ($room < 0 || $room > 1000000000) $room = 0;
+                // 订阅鉴权（安全清单：「握手认证、每条消息也要授权」的同口径落地）：
+                // 用与 HTTP poll 完全同一把尺 roomAccessOk —— 未授权进入的房间静默降级为
+                // 「不订阅」（连「该房间有人上下线」的存在性信号也不给）。P1 帧里没有任何
+                // 房间数据，这条把「订阅权」对齐 poll 的鉴权口径，不新增任何规则。
+                if ($room > 0) {
+                    try {
+                        $r = Chat::room($room);
+                        // ⚠️ roomAccessOk 是强类型 array：必须先判 null（直接传 null 会 TypeError）。
+                        // 密码房的通行授权记在会话里（$_SESSION['room_pass']），守护进程看不到 →
+                        // 密码房订阅一律静默降级：仅失去「秒级在线刷新」，成员仍走原 20s 长轮询，语义不差。
+                        if (!$r || !Chat::roomAccessOk($r, $seat['actor'])) $room = 0;
+                    } catch (Throwable $e) { $room = 0; }
+                }
                 if ($room !== (int)$seat['room']) {
                     $old = (int)$seat['room'];
                     $live = self::$seats[(int)$seat['fp']] ?? null;
