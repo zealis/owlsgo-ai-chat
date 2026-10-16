@@ -1,5 +1,5 @@
 /**
- * 批量操作插件 · 聊天页（batch-ops v1.2.1）
+ * 批量操作插件 · 聊天页（batch-ops v1.2.2）
  *
  * ── 两块内容 ──────────────────────────────────────────────────
  * ① 消息多选：消息右键「多选」（或「转发」单条直达）进入选择模式，
@@ -162,14 +162,21 @@
        点击卡片 → 弹窗看完整记录：条目复用核心 OwChat.buildMessage 渲染，
        图片/文件/混排/引用都用全站同一套消息样式，不另造轮子。
        ========================================================================== */
-    var recCache = {};    // token -> {title,count,preview} | null（不存在/过期）
+    var recCache = {};    // token -> {title,count,preview} | null（服务端**明确回答**「不存在」才算过期）
+    var recFail = {};     // token -> 1：拉取失败（显示「点击重试」，绝不当作过期）
+    var recRetried = {};  // token -> 1：失败后已自动重试过一次
     var recPending = {};  // token -> 在途标记（防重复入队）
     var recQueue = [];
     var recTimer = null;
 
     function recHtml(tok) {
         var info = recCache[tok];
-        if (info === undefined) return '<div class="owb-rec-t">聊天记录</div><div class="owb-rec-s">加载中…</div>';
+        if (info === undefined) {
+            /* 失败与「加载中」分开呈现：失败给「点击重试」的明示（点卡片即重拉），
+               绝不显示「已过期」——那会把一次网络抖动说成记录没了。 */
+            if (recFail[tok]) return '<div class="owb-rec-t">聊天记录</div><div class="owb-rec-s">加载失败，点击重试</div>';
+            return '<div class="owb-rec-t">聊天记录</div><div class="owb-rec-s">加载中…</div>';
+        }
         if (info === null) return '<div class="owb-rec-t">聊天记录</div><div class="owb-rec-s">聊天记录已过期或不存在</div>';
         var h = '<div class="owb-rec-t">' + esc(info.title || '聊天记录') + '</div>';
         for (var i = 0; i < info.preview.length; i++) {
@@ -202,21 +209,49 @@
         if (recCache[tok] !== undefined || recPending[tok]) return;
         recPending[tok] = true;
         recQueue.push(tok);
+        scheduleFlush(250);   // 合并同一批渲染出的多张卡，少发几次请求
+    }
+    function scheduleFlush(ms) {
         if (recTimer) return;
-        recTimer = setTimeout(function () { recTimer = null; flushRec(); }, 250);   // 合并同一批渲染出的多张卡，少发几次请求
+        recTimer = setTimeout(function () { recTimer = null; flushRec(); }, ms);
     }
     function flushRec() {
         if (!recQueue.length) return;
         var batch = recQueue.splice(0, 20);
         w.OwApi.post('plugin_batch_ops_record_get', { tokens: batch.join(',') }, function (r) {
-            var data = (r && r.ok && r.data) || {};
+            /* ⚠️ 请求失败 ≠ 记录不存在。绝不能把「拉取失败」负缓存成「已过期」：
+               一次网络抖动或服务端瞬时状态（如插件文件替换后的清单重建窗口）
+               会永久毒化本页会话，用户看到的就是「刚发的记录却显示已过期」。
+               失败最多自动重试一次，仍失败则标记「点击重试」，点卡片时会再拉。 */
+            if (!r || !r.ok) {
+                for (var k = 0; k < batch.length; k++) {
+                    var tk = batch[k];
+                    delete recPending[tk];
+                    if (!recRetried[tk]) {
+                        recRetried[tk] = 1;
+                        recQueue.push(tk);
+                        scheduleFlush(2000);
+                    } else {
+                        recFail[tk] = 1;
+                        updateCards(tk);
+                    }
+                }
+                return;
+            }
+            var data = r.data || {};
             for (var i = 0; i < batch.length; i++) {
                 var t = batch[i];
                 delete recPending[t];
-                recCache[t] = data[t] || null;
+                delete recRetried[t];
+                if (data[t] !== undefined) {
+                    recCache[t] = data[t];             // null（明确不存在）也是有效答案
+                    delete recFail[t];
+                } else {
+                    recFail[t] = 1;                    // 响应形状异常：按失败处理，不当作过期
+                }
                 updateCards(t);
             }
-            if (recQueue.length) { recTimer = setTimeout(function () { recTimer = null; flushRec(); }, 200); }
+            if (recQueue.length) scheduleFlush(200);
         });
     }
     function updateCards(tok) {
@@ -241,8 +276,22 @@
         w.OwApi.post('plugin_batch_ops_record_get', { tokens: tok, full: '1' }, function (r) {
             var box = byId('owbRecView');
             if (!box) return;   // 用户已经关掉弹窗
-            var info = (r && r.ok && r.data) ? r.data[tok] : null;
+            /* 请求失败 / 响应形状异常 → 「加载失败 + 重试」，不误报「已过期」； */
+            var has = !!(r && r.ok && r.data && r.data[tok] !== undefined);
+            if (!has) {
+                recFail[tok] = 1;
+                updateCards(tok);
+                box.innerHTML = '<div class="ow-sr-empty">聊天记录加载失败</div>'
+                    + '<div style="text-align:center;padding:0 0 10px"><button type="button" class="ow-btn ow-btn-ghost" id="owbRecRetry">重试</button></div>';
+                var rb = byId('owbRecRetry');
+                if (rb) rb.onclick = function () { openRecord(tok); };
+                return;
+            }
+            /* 到这里才是服务端的**明确回答**：null = 记录不存在/已过期 */
+            var info = r.data[tok];
             if (!info) { box.innerHTML = '<div class="ow-sr-empty">聊天记录已过期或不存在</div>'; return; }
+            delete recFail[tok];
+            delete recRetried[tok];
             var h3 = d.querySelector('#owModal h3');
             if (h3) h3.textContent = info.title || '聊天记录';
             recCache[tok] = { title: info.title || '聊天记录', count: info.count, preview: info.preview || [] };
