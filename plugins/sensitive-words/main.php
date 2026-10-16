@@ -1323,7 +1323,6 @@ Plugin::adminPage('sensitive-words', '垃圾信息控制', function () {
         . '<input class="ow-input" id="owSpamLexApiTest" placeholder="粘一段文本，看接口认不认、认出了哪些词"></div>'
         . '<button class="ow-btn ow-btn-ghost" onclick="OwSW.lexApiTest()">测试接口</button></div>'
         . '<div id="owSpamLexApiStat" style="font-size:12px;color:var(--ow-text-sub);margin:4px 0"></div>'
-        . '<button class="ow-btn ow-btn-primary" onclick="OwSW.save(\'lex\')">保存违禁词设置</button>'
         . '<hr class="ow-spam-hr">'
         . '<div class="ow-form-row" style="align-items:center">'
         . '<div class="ow-form-item" style="flex:1"><label>词库目录</label>'
@@ -1346,11 +1345,18 @@ Plugin::adminPage('sensitive-words', '垃圾信息控制', function () {
         . ($lex['truncated']
             ? '<p style="font-size:12px;color:var(--ow-red)">部分词库超出单文件或总词数上限，已被截断，未全部生效。</p>' : '')
         . '<div class="ow-form-row" style="margin:12px 0 6px">'
-        . '<b style="margin-right:auto">词库文件（未勾选的不会生效）</b>'
+        // 「即时生效」必须写在标题里：这张表的启用/停用走自己的路由，不归下面那个保存按钮管 ——
+        // 不写清的话，管理员会去点保存、或者反过来以为点了就存好了
+        . '<b style="margin-right:auto">词库文件（启用/停用即时生效，无需保存）</b>'
         . '<button class="ow-btn ow-btn-ghost" onclick="OwSW.lexAll(true)">全部启用</button>'
         . '<button class="ow-btn ow-btn-ghost" onclick="OwSW.lexAll(false)">全部停用</button>'
         . '</div>'
         . '<div class="ow-table-wrap"><table class="ow-table" id="owSpamLexTable"></table></div>'
+        // 保存按钮压在**本页所有需要保存的设置**下面：它提交的是上面那些开关与输入框
+        // （词库列表的启停走即时路由，不受它影响，已在标题里写明）
+        . '<div class="ow-form-row" style="margin-top:16px">'
+        . '<button class="ow-btn ow-btn-primary" onclick="OwSW.save(\'lex\')">保存违禁词设置</button>'
+        . '</div>'
         . '</div>';
 
     $h .= '</div>';

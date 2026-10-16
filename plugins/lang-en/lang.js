@@ -400,7 +400,8 @@
         '自动检测词库更新': 'Check for lexicon updates automatically',
         '检测间隔(小时)': 'Check interval (hours)',
         '有更新时通知管理员': 'Notify admins when an update is available',
-        '词库文件（未勾选的不会生效）': 'Lexicon files (unchecked ones are not applied)',
+        '词库文件（启用/停用即时生效，无需保存）':
+            'Lexicon files (enable/disable applies immediately — no need to save)',
         '全部启用': 'Enable all',
         '全部停用': 'Disable all',
         '词库文件': 'Lexicon file',
