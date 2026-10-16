@@ -17,7 +17,14 @@ DST_HOST="/d/Program Files/phpstudy_pro/WWW/owlsgo"
 #   .htaccess / nginx.htaccess —— phpStudy 面板生成
 #   core/config.php —— 安装向导会往副本里写入随机 secret 与 db 配置，
 #                      仓库里是占位值 CHANGE_ME_RANDOM_64_CHARS，同步过去会让全站签名失效
-robocopy "$SRC" "$DST" /MIR /XD data uploads .git .workbuddy .birdview .tools /XF .htaccess nginx.htaccess core/config.php /NFL /NDL /NJH > /dev/null
+#
+# 后面四条排除的是**本地专用料**（未跟踪、不该进运行目录）：
+#   参考文献      姊妹实现源码与截图，整目录静态可访问等于把参考料挂到站点根下
+#   _test_www     测试插件目录（没有 plugin.json 不会被登记，但没必要挂在运行副本里）
+#   .box-agent / .box-agent-scratch   代理任务状态与空壳暂存；ci-preview.html 视觉预览草稿
+# ⚠️ robocopy 对被 /XD /XF 命中的项**既不复制也不清除** —— 所以早先那次 /MIR 灌进副本的
+#    这四样不会靠本脚本自动消失，要手工删一次（本机已删；再次出现时按路径删即可）。
+robocopy "$SRC" "$DST" /MIR /XD data uploads .git .workbuddy .birdview .tools .box-agent .box-agent-scratch "参考文献" _test_www /XF .htaccess nginx.htaccess core/config.php ci-preview.html /NFL /NDL /NJH > /dev/null
 RC=$?
 if [ "$RC" -gt 7 ]; then echo "robocopy 失败 exit=$RC"; exit "$RC"; fi
 
