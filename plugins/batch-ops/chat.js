@@ -1,5 +1,5 @@
 /**
- * 批量操作插件 · 聊天页（batch-ops v1.2.3）
+ * 批量操作插件 · 聊天页（batch-ops v1.2.4）
  *
  * ── 两块内容 ──────────────────────────────────────────────────
  * ① 消息多选：消息右键「多选」（或「转发」单条直达）进入选择模式，
@@ -260,6 +260,7 @@
     }
     /** 点开某张卡片：弹窗看完整记录（全宽消息流，条目复用核心消息渲染） */
     function openRecord(tok) {
+        if (!tok) return;   // 防御：假 token（历史缺陷会传 null）不发请求
         w.OwChat.openModal(
             '<h3>聊天记录</h3>'
             + '<div class="owb-rec-view" id="owbRecView"><div class="ow-sr-empty">加载中…</div></div>'
@@ -269,7 +270,7 @@
             // 流内再嵌记录（mini 卡）→ 直接在本弹窗里打开它
             view.onclick = function (e) {
                 var t = e.target || e.srcElement, node = t;
-                while (node && node !== view && !(node.className && String(node.className).indexOf('owb-rec-mini') >= 0)) node = node.parentNode;
+                while (node && node !== view && String(node.className || '') !== 'owb-rec-mini') node = node.parentNode;
                 if (node && node !== view) openRecord(node.getAttribute('data-token'));
             };
         }
@@ -1311,11 +1312,16 @@
             }).observe(msgBox, { childList: true });
         }
         /* 点卡片看完整记录（冒泡阶段；多选模式的捕获处理器会先 stopPropagation，
-           所以选消息时点卡片 = 切换勾选，不会误开弹窗） */
+           所以选消息时点卡片 = 切换勾选，不会误开弹窗）。
+           ⚠️ 必须向上走到**卡片容器本身**（class 恰为 owb-rec）再取 data-token：
+           卡片内部的标题/预览行（.owb-rec-t / .owb-rec-l…）className 也以 owb-rec
+           开头，若按「前缀匹配」，点击落在文字上就会在子节点提前命中 —— 它们没有
+           data-token，取到 null → 发出 tokens=null → 空响应 → 被显示成「加载失败」。
+           这就是站方报的「点文字必失败、点卡片边缘偶尔能开」的根因。 */
         msgBox.addEventListener('click', function (e) {
             if (OwBatch.mode) return;
             var t = e.target || e.srcElement, node = t;
-            while (node && node !== msgBox && !(node.className && String(node.className).indexOf('owb-rec') === 0)) node = node.parentNode;
+            while (node && node !== msgBox && String(node.className || '') !== 'owb-rec') node = node.parentNode;
             if (!node || node === msgBox) return;
             openRecord(node.getAttribute('data-token'));
         });
