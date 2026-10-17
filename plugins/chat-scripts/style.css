@@ -1,5 +1,5 @@
 /* ==========================================================================
-   chat-scripts · 群聊自动化（v1.1.2）— 前台话术面板 / 群聊设置·自动化 / 后台管理页共用样式
+   chat-scripts · 群聊自动化（v1.2.3）— 前台话术面板 / 群聊设置·自动化 / 后台管理页共用样式
    --------------------------------------------------------------------------
    颜色纪律：本文件不出现任何写死色值，一律引用核心 --ow-* 变量。
      全站深浅两套主题只靠重定义这些变量切换，插件写死颜色 = 深色模式下露亮斑。
@@ -41,33 +41,49 @@
 .ow-cs-q { flex: 1; -webkit-flex: 1; min-width: 0; padding: 6px 10px; font-size: 13px; }
 /* v1.1.0：头部右侧的 ✕ 关闭按钮已撤（用户要求），.ow-cs-x 一并删掉 —— 留着就是死规则。 */
 
-/* 分组页签（公共 / 群聊 / 我的）——与全站「选中 = 主色实心」同语言。
-   v1.1.2：整条加一层浅底圆角轨道，读起来是一组分段控件，而不是三个各自为政的按钮。
-   轨道与胶囊都引 --ow-bg-sub / --ow-primary-strong，深色模式跟着翻；
+/* 分组页签（公共 / 群聊 / 我的）——几何对齐时光机 ow-tm-head 里那组分栏（.ow-tm-tabs）：
+   灰槽轨道（--ow-bg-sub + 9px 圆角 + 3px 内边距）+ 2px 标签间距 + 6px 标签圆角，
+   13px 字号、line-height:1；选中 = 主色实心（--ow-primary-strong + --ow-on-accent），
+   刻意不加粗（13px 中文加粗会撑宽、切换时两颗标签重排）。与核心 .ow-tabs / .ow-tab 同一套数值。
    ⚠️ 未选中的页签必须 transparent —— 让轨道的颜色透上来，
-      否则哪天改了轨道色，页签会留下一块跟不上的死色。 */
+      否则哪天改了轨道色，页签会留下一块跟不上的死色。
+   与时光机的唯一差异：本插件的页签独占一行（右侧没有按钮），所以标签 flex:1 均分撑满
+   轨道，读起来是一组完整的 segmented control；时光机那组靠左（inline-flex），因为右边
+   挂着「发波文」。轨道带 overflow-x 横向滚动兜底，窄屏也不折行。 */
 .ow-cs-tabs {
     display: flex; display: -webkit-flex;
-    gap: 4px;
+    gap: 2px;
     background: var(--ow-bg-sub);
-    border-radius: 10px;
-    padding: 4px;
+    border-radius: 9px;
+    padding: 3px;
     margin-bottom: 16px;            /* 后台页：与下方卡片隔开 */
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
 }
+.ow-cs-tabs::-webkit-scrollbar { display: none; }
 /* 话术面板里那一条：左右各让出 8px，与搜索框落在同一条内边距线上 */
 .ow-cs-tabs-in { margin: 8px 8px 10px; }
 .ow-cs-tab {
-    flex: 1; -webkit-flex: 1;
+    flex: 1 1 0; -webkit-flex: 1 1 0;
+    min-width: 0;
     border: none;
     background: transparent;
     color: var(--ow-text-sub);
-    font-size: 12.5px;
-    padding: 6px 0;
+    font-size: 13px;
+    line-height: 1;
+    padding: 6px 10px;
     border-radius: 6px;
     cursor: pointer;
     font-family: inherit;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;    /* 兜底：极端窄屏截断而不是撑破轨道 */
+    transition: background-color .15s, color .15s;
+    -webkit-transition: background-color .15s, color .15s;
 }
 .ow-cs-tab:hover { color: var(--ow-text-title); }
+/* is-active 写在 :hover 之后：同特异性（0,2,0）下靠源码顺序保证「选中态悬停不变色」 */
 .ow-cs-tab.is-active {
     background: var(--ow-primary-strong);
     color: var(--ow-on-accent);
@@ -180,21 +196,36 @@
     font-size: 12px;
     color: var(--ow-text-sub);
 }
-/* 管理弹窗内的子档切换（我的话术 / 本群话术）——与面板 tabs 同一「选中 = 主色实心」语言 */
+/* 管理弹窗内的子档切换（我的话术 / 本群话术）——与 .ow-cs-tabs 同一套时光机几何：
+   灰槽轨道 + 6px 标签 + 主色实心选中；弹窗里标签不长，inline-flex 靠左即可，不撑满整行。 */
 .ow-cs-mg-tabs {
-    display: flex; display: -webkit-flex;
-    gap: 4px;
-    margin-bottom: 10px;
-}
-.ow-cs-mg-tab {
-    border: none;
+    display: inline-flex; display: -webkit-inline-flex;
+    align-items: center; -webkit-align-items: center;
+    gap: 2px;
+    padding: 3px;
     background: var(--ow-bg-sub);
+    border-radius: 9px;
+    margin-bottom: 10px;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+}
+.ow-cs-mg-tabs::-webkit-scrollbar { display: none; }
+.ow-cs-mg-tab {
+    flex: 0 0 auto; -webkit-flex: 0 0 auto;
+    border: none;
+    background: transparent;
     color: var(--ow-text-sub);
-    font-size: 12.5px;
+    font-size: 13px;
+    line-height: 1;
     font-family: inherit;
-    padding: 6px 14px;
+    padding: 6px 12px;
     border-radius: 6px;
     cursor: pointer;
+    white-space: nowrap;
+    transition: background-color .15s, color .15s;
+    -webkit-transition: background-color .15s, color .15s;
 }
 .ow-cs-mg-tab:hover { color: var(--ow-text-title); }
 .ow-cs-mg-tab.is-active {
@@ -238,10 +269,9 @@
 .ow-ca-notice .ow-btn { margin-top: 6px; }
 
 /* --------------------------------------------------------------------------
-   后台：页签 / 页签按钮 / 表单按钮行
+   后台：表单按钮行
+   （页签样式已与前台／时光机统一成同一套灰槽分段控件，见上；后台不再需要尺寸补丁）
    -------------------------------------------------------------------------- */
-/* 轨道本身在上面的「前台」段统一定义了（含 margin-bottom）；这里只补后台页签的尺寸 */
-.ow-cs-tabs .ow-cs-tab { padding: 7px 16px; font-size: 13px; }
 .ow-cs-mf-btns { margin-top: 6px; }
 
 /* 后台列表工具条 + 条数统计（v1.1.1）。
@@ -296,5 +326,6 @@
     }
     .ow-cs-item { min-height: 44px; }
     .ow-cs-send { padding: 6px 12px; }
-    .ow-cs-tab { padding: 8px 0; }
+    .ow-cs-tab { padding: 8px 10px; }        /* 触屏：页签加高（约 29px 热区） */
+    .ow-cs-mg-tab { padding: 8px 12px; }
 }

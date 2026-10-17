@@ -91,7 +91,7 @@
                 CS.tab = t;
                 var all = d.querySelectorAll('.ow-cs-tab'), j, pane;
                 for (j = 0; j < all.length; j++) {
-                    all[j].className = all[j].getAttribute('data-tab') === t ? 'ow-btn ow-cs-tab is-active' : 'ow-btn ow-cs-tab';
+                    all[j].className = all[j].getAttribute('data-tab') === t ? 'ow-cs-tab is-active' : 'ow-cs-tab';
                 }
                 var ids = ['snip', 'bot', 'log'];
                 for (j = 0; j < ids.length; j++) {

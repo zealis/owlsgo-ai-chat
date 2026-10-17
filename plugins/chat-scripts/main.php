@@ -1074,10 +1074,13 @@ Plugin::adminPage('chat-scripts', '群聊自动化', function () {
         . '<b>自动回复与定时群发不在这里 —— 它们跟着群走：</b>入口是「群聊设置 → 自动化」，群主在自己群里直接管本群规则，'
         . '且只能管本群（每个群最多 8 条自动回复、8 条定时群发）。'
         . '这个后台页管三件事：公共话术、机器人账号、发送记录。</p>'
+        /* 页签：灰槽分段控件（几何对齐时光机 ow-tm-tabs / 核心 .ow-tabs）。
+           不再挂 ow-btn —— 那颗类的 14px 字号 / 8px 18px 内边距 / line-height 1.4 会跟
+           页签自己的几何打架；选中态由 .ow-cs-tab.is-active 的主色实心表达。 */
         . '<div class="ow-cs-tabs">'
-        . '<button class="ow-btn ow-cs-tab is-active" type="button" data-tab="snip">公共话术</button>'
-        . '<button class="ow-btn ow-cs-tab" type="button" data-tab="bot">机器人账号</button>'
-        . '<button class="ow-btn ow-cs-tab" type="button" data-tab="log">发送记录</button>'
+        . '<button class="ow-cs-tab is-active" type="button" data-tab="snip">公共话术</button>'
+        . '<button class="ow-cs-tab" type="button" data-tab="bot">机器人账号</button>'
+        . '<button class="ow-cs-tab" type="button" data-tab="log">发送记录</button>'
         . '</div>'
 
         /* ---- 公共话术（通用列表：筛选 + 批量 + 分页，与登录日志同一套轮子） ---- */
