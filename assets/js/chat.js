@@ -7845,15 +7845,14 @@
             return '<svg class="ow-clock-d" viewBox="0 0 44 80" aria-hidden="true">' + h + '</svg>';
         },
         clockHtml: function () {
-            var wd = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'], i, strip = '';
-            for (i = 0; i < 7; i++) strip += '<span data-w="' + i + '">' + wd[i] + '</span>';
-            var face = '';
+            var face = '', i;
             for (i = 0; i < 6; i++) {
                 face += '<span class="ow-clock-slot" data-i="' + i + '"></span>';
                 // 冒号是两枚点（不是字符）：与段码同一视觉重量，也不会被行高拉偏
                 if (i === 1 || i === 3) face += '<span class="ow-clock-c"><i></i><i></i></span>';
             }
-            return '<div class="ow-clock"><div class="ow-clock-wd" id="owClockWd">' + strip + '</div>'
+            // v1.4.4：星期条删了（站方判它是装饰）—— 日期行 + AM/PM 两枚角标足够
+            return '<div class="ow-clock">'
                  + '<div class="ow-clock-face" id="owClockFace">' + face + '</div>'
                  + '<div class="ow-clock-date" id="owClockDate"></div>'
                  + '<div class="ow-clock-ap" id="owClockAp"></div></div>';
@@ -7871,10 +7870,6 @@
                     el.setAttribute('data-ch', txt.charAt(i));
                     el.innerHTML = OwAdmin._segSvg(txt.charAt(i));
                 }
-            }
-            var wd = $('owClockWd'), today = (d.getDay() + 6) % 7;   // 星期条按 MON 起排，getDay() 的 0 是周日
-            if (wd) for (i = 0; i < wd.children.length; i++) {
-                wd.children[i].className = i === today ? 'is-today' : '';
             }
             var ap = $('owClockAp'); if (ap) ap.textContent = h < 12 ? 'AM' : 'PM';
             var date = $('owClockDate');
@@ -8065,9 +8060,12 @@
                     + '<div id="owRVBatch"></div>'
                     + '<div class="ow-table-wrap"><table class="ow-table" id="owRVTable"></table></div>'
                     + '<div id="owRVPager" style="margin-top:10px"></div></div>'
-                    + '<div class="ow-card"><h3 style="margin:0 0 10px;font-size:14px">审核回收站</h3>'
+                    + '<div class="ow-card">'
+                    // v1.4.4：回收站改吃通用列表顶栏 .ow-list-head —— 标题在左、分页 tab 在右，
+                    // 下沿一条分割线接住下面的表格（原先是 h3 + 行内样式，分页器孤零零在表底下）。
+                    + '<div class="ow-list-head"><b class="ow-list-head-t">审核回收站</b>'
+                    + '<div id="owTrashPager"></div></div>'
                     + '<div class="ow-table-wrap"><table class="ow-table" id="owRoomTrash"></table></div>'
-                    + '<div id="owTrashPager" style="margin-top:10px"></div>'
                     + '<p style="font-size:12px;color:var(--ow-text-sub);margin:8px 0 0">撤销有顺序依赖：群聊被删除后，需先撤销「删除」才能恢复其之前的名称 / 头像 / 封禁状态。</p></div>';
                 // 批量操作改下拉（v1.2.60）：原先平铺 4 个按钮，窄屏会折成两行并挤掉统计位
                 OwAdmin.uiBatchBar({

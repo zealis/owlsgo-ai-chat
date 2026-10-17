@@ -2527,6 +2527,31 @@ span.ow-panel-entry-ico.ow-avatar { width: 24px; height: 24px; line-height: 24px
     padding: 18px;
     margin-bottom: 16px;
 }
+/* ---------- 列表面板顶栏（通用，v1.4.4）----------
+   由时光机的 .ow-tm-head 提升而来（站方：「把 ow-tm-head 样式做成通用样式，
+   如果有分页 tab 优先使用这个样式」）：一行 = 左标题/分栏 tab + 右动作/分页，
+   下沿细分割线，作为内容岛首块时正好接上 8px 圆角。
+   放进 .ow-card（内边距 18px）时自动满宽出血，页面不必各自再算负边距。
+   ⚠️ sticky 不在这里：吸顶只在「面板自己是滚动容器」时才有意义（时光机自己加）。 */
+.ow-list-head {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    justify-content: space-between; -webkit-justify-content: space-between;
+    flex-wrap: wrap; -webkit-flex-wrap: wrap;
+    gap: 10px;
+    padding: 8px 12px;
+    background: var(--ow-surface);
+    border-bottom: 1px solid var(--ow-border);
+    border-radius: 8px 8px 0 0;
+}
+.ow-card > .ow-list-head { margin: -18px -18px 14px; padding: 12px 18px; }
+.ow-list-head-t { font-size: 14px; font-weight: 600; color: var(--ow-text-title); }
+/* 分页器搬进顶栏后不该再自带那一档上边距，也不再居中 —— 顶栏里它靠右 */
+.ow-list-head .ow-pager { margin-top: 0; justify-content: flex-end; }
+@media (max-width: 720px) {
+    .ow-list-head { padding: 8px 10px; }
+    .ow-card > .ow-list-head { margin: -18px -18px 12px; padding: 8px 12px; }
+}
 /* ---------- 仪表盘（v1.3.158，后台首屏） ----------
    计数卡 + 今日新增 + 近 7 天柱图 + 常用设置快捷入口。
    颜色一律走 token（卡片 --ow-bg、柱子 --ow-primary/--ow-primary-strong、快捷键 --ow-bg-sub），
@@ -2581,32 +2606,27 @@ span.ow-panel-entry-ico.ow-avatar { width: 24px; height: 24px; line-height: 24px
 .ow-set-hit { animation: owSetHit 1.6s ease-out; }
 @keyframes owSetHit { 0% { box-shadow: 0 0 0 3px var(--ow-primary); border-radius: 6px; } 100% { box-shadow: 0 0 0 3px transparent; } }
 /* ---------- 仪表盘「当前时间」段码时钟（v1.4.3，站方参考 ChatNet 的数码管样式） ----------
-   面板底色**刻意是深色**的（数码管要深底才像一台设备），所以这里给一对局部变量，
-   深色模式只把面板压暗一档、字色略降，不跟随主题反色。
-   文字色按 ≥4.5:1 配过：星期条未选中 = 面板前景 55% 不透明度（实测 5.2:1），
-   日期 / AM 档 60%（5.7:1）；段码的「鬼影段」是装饰（8%），不参与阅读。 */
+   v1.4.4 按站方要求改两处：**面板底走令牌**（浅色即白底深字，深色模式自动反相，
+   不再写死深色），并**删掉星期条**（那排 MON–SUN 只是把「今天星期几」再说一遍，
+   旁边日期行一眼可得 —— 属装饰）。
+   段码的「鬼影段」是未点亮段的淡影（装饰，不参与阅读）；日期与 AM 档用 --ow-text-sub，
+   与 .ow-stat-l 同一对配色，对比度沿用令牌基线。 */
 .ow-clock {
-    --ow-clock-bg: #1B2230; --ow-clock-fg: #E9EEF7;
-    position: relative; background: var(--ow-clock-bg); color: var(--ow-clock-fg);
-    border: 1px solid rgba(233, 248, 255, .12); border-radius: 10px;
-    padding: 14px 18px 34px; margin-bottom: 16px; overflow: hidden;
+    position: relative; background: var(--ow-surface); color: var(--ow-text-title);
+    border: 1px solid var(--ow-border); border-radius: 8px;
+    padding: 16px 18px 34px; margin-bottom: 16px; overflow: hidden;
 }
-[data-theme="dark"] .ow-clock { --ow-clock-bg: #10151F; --ow-clock-fg: #DCE4F0; }
-.ow-clock-wd { display: flex; justify-content: center; gap: 18px; font-size: 12px; letter-spacing: 1px; }
-.ow-clock-wd span { color: rgba(233, 238, 247, .55); }
-.ow-clock-wd .is-today { color: var(--ow-clock-fg); font-weight: 600; }
-.ow-clock-face { display: flex; align-items: center; justify-content: center; gap: 5px; margin-top: 8px; }
+.ow-clock-face { display: flex; align-items: center; justify-content: center; gap: 5px; }
 .ow-clock-slot { display: block; }
 .ow-clock-d { display: block; height: 58px; width: 32px; }
-.ow-clock-d .ow-seg { fill: currentColor; opacity: .08; }
-.ow-clock-d .ow-seg-on { opacity: .95; }
+.ow-clock-d .ow-seg { fill: currentColor; opacity: .1; }
+.ow-clock-d .ow-seg-on { opacity: 1; }
 /* 冒号用两枚点而非字符：与段码同一视觉重量，也不会被行高拉偏 */
 .ow-clock-c { display: flex; flex-direction: column; justify-content: center; gap: 15px; padding: 0 3px; }
-.ow-clock-c i { width: 6px; height: 6px; border-radius: 1px; background: currentColor; opacity: .8; }
-.ow-clock-ap { position: absolute; right: 18px; bottom: 12px; font-size: 13px; letter-spacing: 1px; color: rgba(233, 238, 247, .6); }
-.ow-clock-date { position: absolute; left: 18px; bottom: 12px; font-size: 12px; letter-spacing: .5px; color: rgba(233, 238, 247, .6); font-variant-numeric: tabular-nums; }
+.ow-clock-c i { width: 6px; height: 6px; border-radius: 1px; background: currentColor; opacity: .75; }
+.ow-clock-ap { position: absolute; right: 18px; bottom: 12px; font-size: 13px; letter-spacing: 1px; color: var(--ow-text-sub); }
+.ow-clock-date { position: absolute; left: 18px; bottom: 12px; font-size: 12px; letter-spacing: .5px; color: var(--ow-text-sub); font-variant-numeric: tabular-nums; }
 @media (max-width: 720px) {
-    .ow-clock-wd { gap: 10px; font-size: 11px; }
     .ow-clock-d { height: 38px; width: 21px; }
     .ow-clock-c { gap: 9px; }
     .ow-clock-c i { width: 4px; height: 4px; }
