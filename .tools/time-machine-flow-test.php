@@ -134,6 +134,14 @@ check('feed 下发 attach 描述', isset($d['attach']) && is_array($d['attach'])
 check('没装附件插件时 can_attach=false', $d['attach']['on'] === false);
 check('提示里点名「附件上传」插件', strpos((string)$d['attach']['hint'], '附件上传') !== false);
 
+/* 回归：插件**已启用但本次请求没被加载**（按需加载，函数不存在）——
+   早前的实现只认 function_exists，会误报「未安装」。这里补一条 plugins 行模拟。 */
+DB::insert('plugins', ['name' => 'attachment-manager', 'enabled' => 1, 'config' => '']);
+[$d2] = call('plugin_time_machine_feed', ['actor' => $actA, 'post' => ['tab' => 'new', 'page' => 1]]);
+check('已启用但未加载时仍判为可用（不为懒加载误报未安装）', $d2['attach']['on'] === true);
+check('可用时给出上限与扩展名', ($d2['attach']['max_mb'] ?? 0) > 0 && strpos((string)$d2['attach']['accept'], '.pdf') !== false);
+DB::run("DELETE FROM plugins WHERE name='attachment-manager'");
+
 echo "\n== 发波文（图 + 文件附件）==\n";
 [$d, $c] = call('plugin_time_machine_post', ['actor' => $actA, 'post' => ['content' => '', 'media' => '[]']]);
 check('纯空内容被拒', $c === 400);
@@ -187,6 +195,21 @@ check('计数回传 comments=1', $d['comments'] === 1);
 check('评论列表 1 条', count($d['comments']) === 1 && (int)$d['comments'][0]['uid'] === $uidB);
 [$d, $c] = call('plugin_time_machine_comment_add', ['actor' => $actB, 'post' => ['post_id' => $pid, 'content' => str_repeat('长', 501)]]);
 check('超长评论被拒（400）', $c === 400);
+
+echo "\n== 评论随流下发 + 点赞用户（默认展开） ==\n";
+[$d] = call('plugin_time_machine_feed', ['actor' => $actA, 'post' => ['tab' => 'new', 'page' => 1]]);
+$p0 = $d['posts'][0] ?? [];
+check('feed 直接带评论数组（不用点开再拉）', isset($p0['comments']) && is_array($p0['comments']) && count($p0['comments']) === 1);
+check('评论行字段齐全', ((int)($p0['comments'][0]['uid'] ?? 0)) === $uidB && ($p0['comments'][0]['content'] ?? '') === '沙发！');
+check('计数改名 comment_cnt', ($p0['comment_cnt'] ?? 0) === 1);
+check('feed 带点赞用户（B 没点，只有结构）', isset($p0['likers']) && is_array($p0['likers']));
+check('feed 下发 me_profile', isset($d['me_profile']['uid']) && (int)$d['me_profile']['uid'] === $uidA);
+call('plugin_time_machine_like', ['actor' => $actB, 'post' => ['id' => $pid]]);
+[$d] = call('plugin_time_machine_feed', ['actor' => $actA, 'post' => ['tab' => 'new', 'page' => 1]]);
+$likers = ($d['posts'][0] ?? [])['likers'] ?? [];
+check('点赞用户带昵称与头像（取 users 实时值）',
+    count($likers) === 1 && $likers[0]['uid'] === $uidB && strpos((string)$likers[0]['avatar'], 'http') === 0);
+call('plugin_time_machine_like', ['actor' => $actB, 'post' => ['id' => $pid]]);   // 取消，回到原状
 
 echo "\n== 浏览去重（v1.1.0） ==\n";
 [$d] = call('plugin_time_machine_feed', ['actor' => $actGuest, 'post' => ['tab' => 'new', 'page' => 1]]);

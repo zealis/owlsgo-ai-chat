@@ -1,6 +1,6 @@
 <?php
 /**
- * 时光机插件（time-machine v1.2.0）
+ * 时光机插件（time-machine v1.3.0）
  *
  * ── 做什么 ────────────────────────────────────────────────────
  * 类似朋友圈的动态广场。入口是 rail 上的一枚「时光机」按钮（sidebar.rail 钩子，
@@ -212,7 +212,8 @@ function owTmOut(array $r): array
         'visibility' => $vis,
         'views' => (int)$r['views'],
         'likes' => (int)$r['likes'],
-        'comments' => (int)$r['comments'],
+        // 计数走 comment_cnt；comments 留给 feed 填的评论数组（默认展开，随流下发）
+        'comment_cnt' => (int)$r['comments'],
         'created_at' => (int)$r['created_at'],
     ];
 }
@@ -259,10 +260,36 @@ function owTmVisCond(int $uid, bool $isAdmin, array &$params): string
      · 文件走 plugin_attachment_manager_upload_file → 插件做 MIME 白名单 / 体积 / 配额校验
    本插件自己不再有任何上传路由：没装/没启用就明确告诉用户，并不给上传入口。 */
 
-/** 附件上传插件是否可用（装了且后台启用） */
+/**
+ * 附件上传插件的开关与上限。
+ *
+ * ⚠️ 坑（实测踩到）：插件是**按需加载**的 —— 本次请求没碰过它，owATEnabled() 这类
+ *    函数就根本不存在，`function_exists()` 判出来是「没装」，可路由其实能用
+ *    （真实站点上就出现过「上传成功但界面提示未安装」）。
+ * 所以分两档：函数存在就用它（口径与插件一致）；不存在就查启用清单 + 它自己的
+ * 配置表 plugin_attachment_config（只读，不为问一句配置去加载整个插件）。
+ */
+function owTmAttachCfg(): array
+{
+    if (function_exists('owATConfig')) return owATConfig();
+    $out = ['enabled' => '1', 'max_mb' => '10', 'exts' => 'jpg,jpeg,png,gif,webp,bmp,zip,rar,7z,pdf,txt,md,doc,docx,xls,xlsx,ppt,pptx,mp3,mp4,webm'];
+    try {
+        foreach (DB::all('SELECT k, v FROM plugin_attachment_config') as $r) {
+            if (array_key_exists($r['k'], $out)) $out[$r['k']] = (string)$r['v'];
+        }
+    } catch (Throwable $e) { /* 表不存在（插件从未初始化）→ 用默认值 */ }
+    return $out;
+}
+
+/** 附件上传插件是否可用（已安装 + 后台启用） */
 function owTmAttachOn(): bool
 {
-    return function_exists('owATEnabled') && owATEnabled();
+    if (function_exists('owATEnabled')) return owATEnabled();
+    $on = false;
+    try {
+        $on = (int)DB::val("SELECT COUNT(*) FROM plugins WHERE name='attachment-manager' AND enabled=1") > 0;
+    } catch (Throwable $e) { $on = false; }
+    return $on && owTmAttachCfg()['enabled'] === '1';
 }
 
 /** 给前端的附件能力描述（能不能传、上限、允许的扩展名、提示文案） */
@@ -276,16 +303,20 @@ function owTmAttachInfo(): array
             'max_mb' => 0,
         ];
     }
-    $exts = function_exists('owATExts') ? owATExts() : [];
+    $cfg = owTmAttachCfg();
     $imgExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'];
-    $all = array_values(array_unique(array_merge($imgExts, $exts)));
-    $maxMb = function_exists('owATMaxBytes') ? (int)round(owATMaxBytes() / 1048576) : 0;
-    $accept = implode(',', array_map(fn($e) => '.' . $e, $all));
+    // 图片由插件的图片路由收（会按后台开关压缩），其余走文件路由（白名单由后台配置）
+    $fileExts = [];
+    foreach (preg_split('/[\s,，;；]+/u', (string)$cfg['exts']) ?: [] as $e) {
+        $e = strtolower(ltrim(trim((string)$e), '.'));
+        if ($e !== '' && !in_array($e, $imgExts, true)) $fileExts[] = $e;
+    }
+    $all = array_values(array_unique(array_merge($imgExts, $fileExts)));
+    $maxMb = max(1, (int)$cfg['max_mb']);
     return [
         'on' => true,
-        'hint' => '图片与文件均由「附件上传」插件处理'
-            . ($maxMb > 0 ? '，单个不超过 ' . $maxMb . ' MB' : '') . '，最多 9 个。',
-        'accept' => $accept,
+        'hint' => '图片与文件均由「附件上传」插件处理，单个不超过 ' . $maxMb . ' MB，最多 9 个。',
+        'accept' => implode(',', array_map(fn($e) => '.' . $e, $all)),
         'max_mb' => $maxMb,
         'image_exts' => $imgExts,
     ];
@@ -306,6 +337,53 @@ function owTmMineSets(array $ids, int $uid): array
         $faved[(int)$row['post_id']] = true;
     }
     return [$liked, $faved];
+}
+
+/**
+ * 一批波文的评论（默认全展开，不需要点开才加载）。
+ * 每条波文最多 50 条、按 id 正序（旧→新）；一条帖 10 次查询比一次大 IN 更好控
+ * （IN 版式在多帖共用一个 LIMIT 时会把靠后的帖挤掉）。
+ */
+function owTmCommentsOf(array $ids): array
+{
+    $out = [];
+    foreach ($ids as $pid) {
+        $rows = DB::all(
+            'SELECT id, uid, nickname, avatar, role, content, created_at FROM plugin_time_machine_comment'
+            . ' WHERE post_id=? ORDER BY id ASC LIMIT 50',
+            [(int)$pid]
+        );
+        $out[(int)$pid] = $rows;
+    }
+    return $out;
+}
+
+/**
+ * 一批波文的点赞用户（内容下方直接展示）。
+ * 点赞表只存 uid，昵称/头像取 users 表实时值 —— 点赞是动态行为，展示最新资料更合理；
+ * 每帖最多 10 人，其余用「等 N 人」概括（总数在 likes 上）。
+ */
+function owTmLikersOf(array $ids): array
+{
+    $out = [];
+    foreach ($ids as $pid) {
+        $rows = DB::all(
+            'SELECT l.uid, u.nickname, u.avatar, u.avatar_type, u.avatar_style, u.avatar_seed, u.role'
+            . ' FROM plugin_time_machine_like l INNER JOIN users u ON u.id = l.uid'
+            . ' WHERE l.post_id=? ORDER BY l.created_at ASC LIMIT 10',
+            [(int)$pid]
+        );
+        $list = [];
+        foreach ($rows as $r) {
+            $list[] = [
+                'uid' => (int)$r['uid'],
+                'nickname' => (string)$r['nickname'],
+                'avatar' => Auth::avatarUrlFor($r, (string)$r['uid']),
+            ];
+        }
+        $out[(int)$pid] = $list;
+    }
+    return $out;
 }
 
 /* ============================ rail 入口 ============================ */
@@ -436,6 +514,8 @@ owTmRoute('plugin_time_machine_feed', function (array $ctx): void {
     $ids = [];
     foreach ($rows as $r) $ids[] = (int)$r['id'];
     [$liked, $faved] = owTmMineSets($ids, $uid);
+    $comments = owTmCommentsOf($ids);   // 评论默认展开：随流下发
+    $likers = owTmLikersOf($ids);       // 点赞用户：内容下方直接展示
 
     // 浏览计数（v1.1.0）：按访问者去重，同一人对同一条只记一次；作者看自己的不计。
     // $bumped 记住「本次真的计上了」的那些，回给前端时把这一次显示出来（行是查在前、更在后）。
@@ -470,6 +550,8 @@ owTmRoute('plugin_time_machine_feed', function (array $ctx): void {
         if (isset($bumped[$o['id']])) $o['views'] = (int)$o['views'] + 1;
         $o['liked'] = isset($liked[$o['id']]);
         $o['faved'] = isset($faved[$o['id']]);
+        $o['comments'] = $comments[$o['id']] ?? [];          // 默认展开，随流下发
+        $o['likers'] = $likers[$o['id']] ?? [];              // 点赞用户（内容下方展示）
         $posts[] = $o;
     }
 
@@ -481,6 +563,13 @@ owTmRoute('plugin_time_machine_feed', function (array $ctx): void {
         ];
     }
 
+    // 「我」的资料：前端点赞后要把自己加进点赞用户行，不能靠前端猜头像
+    $meProfile = null;
+    if ($isUser) {
+        $mu = DB::one('SELECT nickname, avatar, avatar_type, avatar_style, avatar_seed FROM users WHERE id=?', [$uid]);
+        if ($mu) $meProfile = ['uid' => $uid, 'nickname' => (string)$mu['nickname'], 'avatar' => Auth::avatarUrlFor($mu, (string)$uid)];
+    }
+
     Api::json([
         'ok' => true,
         'posts' => $posts,
@@ -489,6 +578,7 @@ owTmRoute('plugin_time_machine_feed', function (array $ctx): void {
         'can_post' => $isUser,
         'is_admin' => $isAdmin,
         'me' => $uid,
+        'me_profile' => $meProfile,
         'stats' => $stats,
         'attach' => owTmAttachInfo(),   // 附件能力（能不能传 / 上限 / 扩展名 / 提示）
     ]);

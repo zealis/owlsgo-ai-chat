@@ -161,6 +161,41 @@
 }
 .ow-tm-imgs.g2 .ow-tm-img { width: 48%; height: 124px; }
 
+/* ---------- 卡片右上角「···」：常显（收藏/复制都从这里进，不做悬停才出现） ---------- */
+.ow-tm-more {
+    flex-shrink: 0; -webkit-flex-shrink: 0;
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    justify-content: center; -webkit-justify-content: center;
+    width: 26px; height: 26px;
+    margin: -3px -6px -3px 0;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: none;
+    color: var(--ow-text-sub);
+    cursor: pointer;
+}
+.ow-tm-more:hover { background: var(--ow-hover-bg); color: var(--ow-text); }
+/* 删除按钮（原 hover 才出现的垃圾桶）不再需要 —— 删除进了「···」菜单 */
+.ow-tm-del { display: none; }
+
+/* ---------- 内容下方的点赞用户行 ----------
+   头像叠放（负 margin）+ 昵称，都点得开资料卡；
+   没有点赞时整行不渲染（不留空行）。 */
+.ow-tm-likers {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+}
+.ow-tm-like-avs { display: flex; display: -webkit-flex; }
+.ow-tm-like-avs .ow-avatar { margin-right: -8px; }        /* 头像叠放，最后一个也叠（不收回） */
+.ow-tm-like-avs .ow-avatar:last-child { margin-right: 0; }
+.ow-tm-like-names { font-size: 12.5px; color: var(--ow-text-sub); line-height: 1.6; }
+.ow-tm-like-n { color: var(--ow-text); cursor: pointer; }
+.ow-tm-like-n:hover { color: var(--ow-primary-dark); }
+
 /* ---------- 可见性徽标（好友可见 / 私密；公开是默认，不占位置） ----------
    与核心 .ow-tag 同一档：12px 字、6px 圆角、次级文字色；私密给一条边框强调 */
 .ow-tm-vis {

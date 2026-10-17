@@ -53,6 +53,10 @@
             body = '<path d="M12 4v11"/><path d="M7.5 11L12 15.5 16.5 11"/><path d="M4.5 19.5h15"/>';
         } else if (name === 'smile') {
             body = '<circle cx="12" cy="12" r="9"/><path d="M8.5 14.5c1 1.5 2.2 2.2 3.5 2.2s2.5-.7 3.5-2.2"/><line x1="9" y1="9.5" x2="9" y2="10.5"/><line x1="15" y1="9.5" x2="15" y2="10.5"/>';
+        } else if (name === 'more') {   // 三个点（横向）：卡片右上角的下拉菜单入口
+            body = '<circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"/>'
+                + '<circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/>'
+                + '<circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"/>';
         } else if (name === 'paperclip') {
             body = '<path d="M16.5 7.5l-7 7a3.5 3.5 0 0 0 5 5l7-7a5.5 5.5 0 0 0-8-8L6 12a7.5 7.5 0 0 0 11 11"/>';
         } else {   // send
@@ -106,6 +110,8 @@
         canPost: false,
         isAdmin: false,
         me: 0,
+        meProfile: null,
+        posts: {},          // pid → 波文数据（点赞/评论后局部更新用，不重画整张卡）
         busy: false,
         _titleBefore: '',
 
@@ -202,6 +208,7 @@
                 self.canPost = !!r.can_post;
                 self.isAdmin = !!r.is_admin;
                 self.me = r.me | 0;
+                self.meProfile = r.me_profile || null;
                 self.hasMore = !!r.has_more;
                 // 附件能力由服务端判定（依赖「附件上传」插件是否安装并启用）
                 self.attach = r.attach || { on: false, hint: '', accept: '', max_mb: 0, image_exts: [] };
@@ -236,7 +243,10 @@
             } else {
                 list.innerHTML = '';
             }
-            for (i = 0; i < posts.length; i++) list.insertAdjacentHTML('beforeend', this.card(posts[i]));
+            for (i = 0; i < posts.length; i++) {
+                this.posts[posts[i].id] = posts[i];          // 缓存：点赞/评论后局部更新
+                list.insertAdjacentHTML('beforeend', this.card(posts[i]));
+            }
         },
 
         card: function (p) {
@@ -261,6 +271,8 @@
             var visTag = '';
             if (p.visibility === 'friends') visTag = '<span class="ow-tm-vis" data-vis="friends">好友可见</span>';
             else if (p.visibility === 'private') visTag = '<span class="ow-tm-vis" data-vis="private">私密</span>';
+            /* 右上角「···」：收藏 / 复制 / 删除收进下拉菜单（复用核心 .ow-ctx-menu 外壳）。
+               删除只在「本人或管理员」时出现在菜单里。 */
             var h = '<article class="ow-tm-card" data-pid="' + p.id + '">'
                 + '<div class="ow-tm-card-av">' + avatarCell(p.avatar, p.nickname, 'ow-avatar-lg') + '</div>'
                 + '<div class="ow-tm-card-main">'
@@ -268,26 +280,62 @@
                 + '<span class="ow-tm-nick" onclick="OwChat.userCard(' + p.uid + ',' + jsAttr(p.nickname) + ')">' + esc(p.nickname) + '</span>'
                 + visTag
                 + '<span class="ow-tm-time">' + esc(fmtTime(p.created_at)) + '</span>'
-                + (canDel ? '<button class="ow-tm-del" type="button" title="删除" aria-label="删除" data-tm-act="del">'
-                    + ico('trash', 15) + '</button>' : '')
+                + '<button class="ow-tm-more" type="button" title="更多" aria-label="更多" data-tm-act="menu">'
+                + ico('more', 16) + '</button>'
                 + '</div>'
                 + (p.content ? '<div class="ow-tm-text">' + nl2br(p.content) + '</div>' : '')
                 + (ih ? '<div class="ow-tm-imgs' + g + '">' + ih + '</div>' : '')
                 + (fh ? '<div class="ow-tm-files">' + fh + '</div>' : '')
+                + this.likersRow(p)
                 + '<div class="ow-tm-acts">'
                 + '<button type="button" class="ow-tm-act' + (p.liked ? ' is-on' : '') + '" data-tm-act="like" title="点赞">'
                 + ico(p.liked ? 'heart-fill' : 'heart', 16) + '<i>' + (p.likes | 0) + '</i></button>'
                 + '<button type="button" class="ow-tm-act" data-tm-act="cmt" title="评论">'
-                + ico('bubble', 16) + '<i>' + (p.comments | 0) + '</i></button>'
+                + ico('bubble', 16) + '<i>' + (p.comment_cnt | 0) + '</i></button>'
                 + '<span class="ow-tm-act ow-tm-plain" title="浏览">' + ico('eye', 16) + '<i>' + (p.views | 0) + '</i></span>'
-                + '<button type="button" class="ow-tm-act' + (p.faved ? ' is-on' : '') + '" data-tm-act="fav" title="收藏">'
-                + ico('bookmark', 16) + '<i>' + (p.faved ? '已收藏' : '收藏') + '</i></button>'
-                + '<button type="button" class="ow-tm-act" data-tm-act="copy" title="复制">'
-                + ico('copy', 16) + '<i>复制</i></button>'
                 + '</div>'
-                + '<div class="ow-tm-cmts" style="display:none"></div>'
+                + this.cmtsBox(p)
                 + '</div></article>';
             return h;
+        },
+
+        /** 内容下方的点赞用户行：头像叠放（最多 5 个）+ 昵称（最多 3 个 + 等 N 人） */
+        likersRow: function (p) {
+            var ls = p.likers || [];
+            if (!ls.length) return '';
+            var av = '', names = '', k, n;
+            for (k = 0; k < ls.length && k < 5; k++) {
+                av += avatarCell(ls[k].avatar, ls[k].nickname, 'ow-avatar-xs');
+            }
+            for (k = 0; k < ls.length && k < 3; k++) {
+                names += (k ? '、' : '')
+                    + '<span class="ow-tm-like-n" onclick="OwChat.userCard(' + ls[k].uid + ',' + jsAttr(ls[k].nickname) + ')">'
+                    + esc(ls[k].nickname) + '</span>';
+            }
+            n = ls.length;
+            if (n > 3) names += ' 等 ' + n + ' 人';
+            else if (n > 1) names += ' 觉得很赞';
+            return '<div class="ow-tm-likers">'
+                + '<span class="ow-tm-like-avs">' + av + '</span>'
+                + '<span class="ow-tm-like-names">' + names + '</span></div>';
+        },
+
+        /** 评论区：默认展开（不需要点开）。已登录给输入行，游客给一句提示 */
+        cmtsBox: function (p) {
+            var cs = p.comments || [], i, h = '';
+            for (i = 0; i < cs.length; i++) h += this.cmtRow(cs[i]);
+            h = '<div class="ow-tm-cmt-list">' + (h || '<div class="ow-tm-cmt-load">还没有评论，抢个沙发</div>') + '</div>';
+            // 评论后追加本地行时也走这里：缓存里补一条，保持「等 N 人」这类汇总口径一致
+            if (this.posts[p.id]) this.posts[p.id].comments = p.comments || cs;
+            if (this.canPost) {
+                h += '<div class="ow-tm-cmt-row">'
+                    + '<input type="text" class="ow-input ow-tm-cmt-in" maxlength="500" placeholder="写评论，Enter 发送">'
+                    + '<button class="ow-btn ow-btn-primary ow-btn-mini" type="button" data-tm-act="cmtsend">发送</button>'
+                    + '</div>';
+            } else {
+                h += '<div class="ow-tm-cmt-load">登录后可评论</div>';
+            }
+            return '<div class="ow-tm-cmts" data-loaded="1">' + h + '</div>';
         },
 
         /* ---------- 事件委托（绑一次，重建不丢） ---------- */
@@ -312,11 +360,23 @@
                 if (act === 'compose') { self.openComposer(); return; }
                 if (!pid) return;
                 if (act === 'like') self.toggle('like', pid, card);
-                else if (act === 'fav') self.toggle('fav', pid, card);
-                else if (act === 'cmt') self.toggleComments(card, pid);
-                else if (act === 'copy') self.copyCard(card, pid);
-                else if (act === 'del') self.confirmDel(card, pid);
+                else if (act === 'cmt') self.focusComment(card);
+                else if (act === 'menu') self.openMenu(card, pid);
                 else if (act === 'cmtsend') self.addComment(card, pid);
+            });
+            // 点菜单外任意处 / Esc → 收起下拉菜单（菜单是 body 级浮层）
+            d.addEventListener('click', function (e) {
+                var t = e.target || e.srcElement;
+                var menu = $('owTmMenu');
+                if (!menu || menu.style.display !== 'block') return;
+                while (t && t !== menu && !(t.getAttribute && t.getAttribute('data-tm-act') === 'menu')) t = t.parentNode;
+                if (!t || t === menu) menu.style.display = 'none';
+            });
+            d.addEventListener('keydown', function (e) {
+                e = e || w.event;
+                if ((e.keyCode || e.which) !== 27) return;
+                var m = $('owTmMenu');
+                if (m) m.style.display = 'none';
             });
             box.addEventListener('keydown', function (e) {
                 e = e || w.event;
@@ -352,6 +412,54 @@
             return null;
         },
 
+        /* ---------- 「···」下拉菜单（收藏 / 复制 / 删除） ----------
+           复用核心 .ow-ctx-menu 外壳（同款底色/圆角/行高/悬停主色），不另造一套。
+           定位跟随按钮，越界时往回挪（与核心 showUserMenu 同一手法）。 */
+        openMenu: function (card, pid) {
+            var p = this.posts[pid] || {};
+            var canDel = (p.uid === this.me) || this.isAdmin;
+            var items = [];
+            items.push({
+                t: p.faved ? '取消收藏' : '收藏', icon: 'bookmark',
+                run: function () { OwTM.toggle('fav', pid, card); }
+            });
+            items.push({ t: '复制', icon: 'copy', run: function () { OwTM.copyCard(card, pid); } });
+            if (canDel) items.push({ t: '删除', icon: 'trash', run: function () { OwTM.confirmDel(card, pid); } });
+            var btn = card.querySelector('[data-tm-act="menu"]');
+            if (!btn) return;
+            var r = btn.getBoundingClientRect();
+            var menu = $('owTmMenu');
+            if (!menu) {
+                menu = d.createElement('div');
+                menu.className = 'ow-ctx-menu';
+                menu.id = 'owTmMenu';
+                menu.style.display = 'none';
+                d.body.appendChild(menu);
+            }
+            var h = '', i;
+            for (i = 0; i < items.length; i++) {
+                h += '<a class="ow-ctx-item" href="javascript:;" data-i="' + i + '">'
+                    + ico(items[i].icon, 14, 'ow-ctx-ico') + esc(items[i].t) + '</a>';
+            }
+            menu.innerHTML = h;
+            menu._items = items;
+            menu.style.display = 'block';
+            var vw = w.innerWidth || 900, vh = w.innerHeight || 700;
+            var mw = menu.offsetWidth || 140, mh = menu.offsetHeight || items.length * 34;
+            menu.style.left = Math.max(4, r.right - mw) + 'px';
+            menu.style.top = Math.max(4, (r.bottom + mh > vh ? r.top - mh : r.bottom + 4)) + 'px';
+            var as = menu.getElementsByTagName('a'), k;
+            for (k = 0; k < as.length; k++) {
+                as[k].onclick = (function (n) {
+                    return function () {
+                        menu.style.display = 'none';
+                        var it = menu._items[n];
+                        if (it && typeof it.run === 'function') it.run();
+                    };
+                })(parseInt(as[k].getAttribute('data-i'), 10));
+            }
+        },
+
         /* ---------- 点赞 / 收藏 ---------- */
         toggle: function (type, pid, card) {
             if (!this.canPost) { toast('请先登录后再互动'); return; }
@@ -361,11 +469,37 @@
             OwApi.post('plugin_time_machine_' + type, { id: pid }, function (r) {
                 if (btn) btn.disabled = false;
                 if (!r || !r.ok) { toast((r && r.msg) || '操作失败'); return; }
+                var p = self.posts[pid];
+                if (p) {
+                    p[type === 'like' ? 'liked' : 'faved'] = !!r.on;
+                    if (type === 'like') {
+                        p.likes = r.likes | 0;
+                        // 点赞用户行跟着变：把自己加进去 / 摘出来（me_profile 由 feed 下发）
+                        var me = self.meProfile || {};
+                        if (r.on && me.uid) {
+                            var has = false, i;
+                            for (i = 0; i < (p.likers || []).length; i++) if (p.likers[i].uid === me.uid) has = true;
+                            if (!has) p.likers.push(me);
+                        } else {
+                            var keep = [], j;
+                            for (j = 0; j < (p.likers || []).length; j++) if (p.likers[j].uid !== self.me) keep.push(p.likers[j]);
+                            p.likers = keep;
+                        }
+                    }
+                }
                 if (type === 'like') {
                     if (btn) {
                         var on = !!r.on;
                         btn.className = 'ow-tm-act' + (on ? ' is-on' : '');
                         btn.innerHTML = ico(on ? 'heart-fill' : 'heart', 16) + '<i>' + (r.likes | 0) + '</i>';
+                    }
+                    // 点赞用户行整块重画（头像 + 昵称 + 等 N 人）
+                    var row = card.getElementsByClassName('ow-tm-likers')[0];
+                    if (row) {
+                        var fresh = self.likersRow(self.posts[pid] || {});
+                        var wrap = row.parentNode;
+                        wrap.removeChild(row);
+                        if (fresh) wrap.insertAdjacentHTML('afterbegin', fresh);
                     }
                 } else {
                     var onf = !!r.on;
@@ -373,8 +507,20 @@
                         btn.className = 'ow-tm-act' + (onf ? ' is-on' : '');
                         btn.innerHTML = ico('bookmark', 16) + '<i>' + (onf ? '已收藏' : '收藏') + '</i>';
                     }
+                    if (self.tab === 'fav' && !onf) {
+                        var el = self.findCard(pid);
+                        if (el && el.parentNode) el.parentNode.removeChild(el);
+                    }
                 }
             });
+        },
+
+        /* ---------- 聚焦评论（评论默认展开，点动作条只是把光标送进输入框） ---------- */
+        focusComment: function (card) {
+            var inp = card.getElementsByClassName('ow-tm-cmt-in')[0];
+            if (inp) { inp.focus(); return; }
+            var el = card.getElementsByClassName('ow-tm-cmts')[0];
+            if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
         },
 
         /**
@@ -394,33 +540,7 @@
                 + '<a class="ow-file-dl" href="' + href + '" title="下载">' + ico('download', 18) + '</a></div>';
         },
 
-        /* ---------- 评论 ---------- */
-        toggleComments: function (card, pid) {
-            var box = card.getElementsByClassName('ow-tm-cmts')[0];
-            if (!box) return;
-            if (box.style.display !== 'none') { box.style.display = 'none'; return; }
-            box.style.display = '';
-            if (box.getAttribute('data-loaded') === '1') return;
-            box.innerHTML = '<div class="ow-tm-cmt-load">加载评论…</div>';
-            var self = this;
-            OwApi.post('plugin_time_machine_comments', { post_id: pid }, function (r) {
-                if (!r || !r.ok) { box.innerHTML = '<div class="ow-tm-cmt-load">' + esc((r && r.msg) || '加载失败') + '</div>'; return; }
-                box.setAttribute('data-loaded', '1');
-                var h = '<div class="ow-tm-cmt-list">';
-                var cs = r.comments || [], i;
-                if (!cs.length) h += '<div class="ow-tm-cmt-load">还没有评论，抢个沙发</div>';
-                for (i = 0; i < cs.length; i++) h += self.cmtRow(cs[i]);
-                h += '</div>';
-                if (self.canPost) {
-                    h += '<div class="ow-tm-cmt-row">'
-                        + '<input type="text" class="ow-input ow-tm-cmt-in" maxlength="500" placeholder="写评论，Enter 发送">'
-                        + '<button class="ow-btn ow-btn-primary ow-btn-mini" type="button" data-tm-act="cmtsend">发送</button>'
-                        + '</div>';
-                }
-                box.innerHTML = h;
-            });
-        },
-
+        /* ---------- 评论（默认展开，无需点开） ---------- */
         cmtRow: function (c) {
             return '<div class="ow-tm-cmt">'
                 + avatarCell(c.avatar, c.nickname, 'ow-avatar-xs')
@@ -453,6 +573,13 @@
                 }
                 var cnt = card.querySelector('[data-tm-act="cmt"] i');
                 if (cnt) cnt.textContent = r.comments | 0;
+                // 缓存同步：计数 + 评论数组（下次局部更新用）
+                var cp = self.posts[pid];
+                if (cp) {
+                    cp.comment_cnt = r.comments | 0;
+                    if (!cp.comments) cp.comments = [];
+                    cp.comments.push(r.comment);
+                }
             });
         },
 
