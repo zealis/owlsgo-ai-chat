@@ -262,7 +262,29 @@
 .ow-tm-cmt-row .ow-btn { flex-shrink: 0; -webkit-flex-shrink: 0; }
 
 /* ---------- 发波文编辑器（弹窗内） ---------- */
-.ow-tm-ta { width: 100%; resize: vertical; min-height: 96px; line-height: 1.7; }
+/* 输入框与消息输入区同一套：rows=1 自动增高（40~120）+ 拖拽手柄自定义高度（40~320） */
+.ow-tm-ta-wrap { position: relative; }
+.ow-tm-ta {
+    width: 100%;
+    min-height: 40px;
+    resize: none;                 /* 高度由自动增高与拖拽手柄管，不用浏览器原生缩放手柄 */
+    line-height: 1.7;
+}
+/* 拖拽手柄：与核心 .ow-input-resize 同形同档（18×14 / ns-resize / hover 主色），
+   只是位置按本编辑器布局放在输入框右下角 */
+.ow-tm-resize {
+    position: absolute;
+    right: 4px; bottom: 3px;
+    width: 18px; height: 14px;
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    justify-content: center; -webkit-justify-content: center;
+    color: var(--ow-text-sub);
+    cursor: ns-resize;
+    user-select: none; -webkit-user-select: none;
+}
+.ow-tm-resize:hover { opacity: .9; color: var(--ow-primary-strong); }
+@media (max-width: 720px) { .ow-tm-resize { display: none; } }
 
 /* 工具条（表情 / 附件 / 字数）：与输入区同一档高度，图标钮 28px 方角，悬停灰底 */
 .ow-tm-cmp-bar {
@@ -288,15 +310,17 @@
 .ow-tm-cmp-btn.is-off { opacity: .45; }
 .ow-tm-cmp-cnt { margin-left: auto; font-size: 12px; color: var(--ow-text-sub); }
 
-/* 表情面板：复用核心 .ow-emoji-item，落点是这里的 textarea（不是聊天输入框） */
+/* 表情面板：外观对齐核心 .ow-emoji-panel（白面 + 细边 + 8px 圆角），
+   内容复用前台同一份表情表与 .ow-emoji-item，落点是这里的 textarea */
 .ow-tm-emoji {
     margin-top: 8px;
     max-height: 168px;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     padding: 8px;
-    background: var(--ow-bg-sub);
-    border-radius: 6px;
+    background: var(--ow-bg);
+    border: 1px solid var(--ow-border);
+    border-radius: 8px;
 }
 .ow-tm-emoji .ow-emoji-item { cursor: pointer; }
 

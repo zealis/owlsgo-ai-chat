@@ -57,6 +57,8 @@
             body = '<circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"/>'
                 + '<circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/>'
                 + '<circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"/>';
+        } else if (name === 'resize') {   // 拖拽手柄：两条斜线（与核心 ow_icon('resize') 同形）
+            body = '<path d="M5 13l7-7"/><path d="M10 15l7-7"/>';
         } else if (name === 'paperclip') {
             body = '<path d="M16.5 7.5l-7 7a3.5 3.5 0 0 0 5 5l7-7a5.5 5.5 0 0 0-8-8L6 12a7.5 7.5 0 0 0 11 11"/>';
         } else {   // send
@@ -652,6 +654,20 @@
         composerMedia: [],
         composerBusy: false,
         composerVis: 'public',
+        taUserH: 0,          // 用户手动拖出的输入框高度（0=走自动增高，与核心 inputUserH 同义）
+
+        /** 输入框自动增高：与核心 OwChat.autoGrow 同一组参数（最小 40 / 自动上限 120 / 手动上限 320） */
+        autoGrowTa: function () {
+            var ta = $('owTmTa');
+            if (!ta) return;
+            ta.style.height = 'auto';
+            var h = ta.scrollHeight + 2, min = 40;
+            if (this.taUserH > 0) {
+                ta.style.height = Math.max(min, Math.min(Math.max(h, this.taUserH), 320)) + 'px';
+                return;
+            }
+            ta.style.height = Math.max(min, Math.min(h, 120)) + 'px';
+        },
 
         openComposer: function () {
             if (!this.canPost) { toast('请先登录后再发波文'); return; }
@@ -661,7 +677,11 @@
             var at = this.attach || {};
             var h = '<h3>发波文</h3>'
                 + '<div class="ow-tm-cmp">'
-                + '<textarea class="ow-input ow-tm-ta" id="owTmTa" maxlength="2000" rows="5" placeholder="这一刻的想法…"></textarea>'
+                // 输入框与消息输入区同一套：rows=1 自动增高 + 右下角拖拽手柄自定义高度
+                + '<div class="ow-tm-ta-wrap">'
+                + '<textarea class="ow-input ow-tm-ta" id="owTmTa" maxlength="2000" rows="1" placeholder="这一刻的想法…"></textarea>'
+                + '<span class="ow-tm-resize" id="owTmResize" title="拖动调整输入框高度">' + ico('resize', 14) + '</span>'
+                + '</div>'
                 + '<div class="ow-tm-cmp-bar">'
                 + '<button type="button" class="ow-tm-cmp-btn" id="owTmEmo" title="表情" aria-label="表情">' + ico('smile', 18) + '</button>'
                 + '<button type="button" class="ow-tm-cmp-btn' + (at.on ? '' : ' is-off') + '" id="owTmAdd" title="添加图片或文件" aria-label="添加图片或文件">'
@@ -686,11 +706,35 @@
             if (this._fileInput) { try { d.body.removeChild(this._fileInput); } catch (e) {} this._fileInput = null; }
             var ta = $('owTmTa'), self = this;
             if (ta) {
+                // 恢复上次手动拖出的高度（与核心 owl_input_h 同思路，键名独立）
+                try { this.taUserH = parseInt(w.localStorage.getItem('owl_tm_h') || '0', 10) || 0; } catch (e) { this.taUserH = 0; }
                 ta.oninput = function () {
                     var c = $('owTmCnt');
                     if (c) c.textContent = ta.value.length + ' / 2000';
+                    self.autoGrowTa();
                 };
+                this.autoGrowTa();
                 ta.focus();
+            }
+            /* 拖拽手柄：与核心 bindInputResize 同一套参数（40~320，写入 localStorage），
+               手动设过高度后自动增高只升不降地尊重它。 */
+            var rs = $('owTmResize');
+            if (rs && ta) {
+                rs.onmousedown = function (e) {
+                    e = e || w.event;
+                    var startY = e.clientY || 0, startH = ta.offsetHeight;
+                    if (e.preventDefault) e.preventDefault(); else e.returnValue = false;
+                    d.onmousemove = function (ev) {
+                        ev = ev || w.event;
+                        var hh = startH + (((ev.clientY || 0) - startY));
+                        hh = Math.max(40, Math.min(hh, 320));
+                        self.taUserH = hh;
+                        ta.style.height = hh + 'px';
+                        try { w.localStorage.setItem('owl_tm_h', String(hh)); } catch (err) {}
+                    };
+                    d.onmouseup = function () { d.onmousemove = null; d.onmouseup = null; };
+                    return false;
+                };
             }
             /* 表情：复用前台同一份表情表与核心 .ow-emoji-* 样式，只是把落点从
                聊天输入框换成这里的 textarea（核心面板写死插 #owInput，够不着）。 */
