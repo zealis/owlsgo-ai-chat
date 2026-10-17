@@ -516,6 +516,24 @@
     padding-bottom: 10px;
     border-bottom: 1px solid var(--ow-border);
 }
+/* 后台页签的白色衬底（v1.1.3）：管理后台页面底色是 --ow-bg-sub（#F5F5F5，body 全局
+   底色），与未选中页签的灰底同色 —— 不衬白底，那几颗灰页签「消失」在页面里。
+   白块用 --ow-bg + 1px --ow-border + 8px 圆角，与 .ow-card 同一语言；chat-scripts
+   的 .ow-cs-tabs-bar、时光机的 .ow-tm-head 白面是同一机制。 */
+.ow-sh-tabs-bar {
+    background: var(--ow-bg);
+    border: 1px solid var(--ow-border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    margin-bottom: 14px;
+}
+/* 衬底内部：页签条自己的下间距与下划线收掉 —— 白块自带边框充当分隔，
+   再留一条就是双重线；间距由白块统一给。 */
+.ow-sh-tabs-bar .ow-sh-tabs {
+    margin: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+}
 .ow-sh-tab {
     appearance: none; -webkit-appearance: none;
     border: 1px solid transparent; border-radius: 8px;

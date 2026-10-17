@@ -2461,13 +2461,17 @@ Plugin::adminPage('starlight-hall', '星光殿堂', function () {
         . '1 天 = 1 级，等级再反过来解锁头像 / 贴纸 / 加好友 / 建群 / 文件等能力。'
         . '下面是四张页签：概览看整体活跃，签到与等级各自配参数，用户把两边的档案合在一张卡里查。</p>';
 
-    /* ---------- 页签 ---------- */
-    $h .= '<div class="ow-sh-tabs" id="owShTabs">'
+    /* ---------- 页签（v1.1.3：外包白色衬底） ---------- */
+    /* 为什么衬白底：管理后台的页面底色是 --ow-bg-sub（#F5F5F5，body 全局底色），
+       与未选中页签的灰底同色 —— 不衬一块白底，那几颗灰页签「消失」在页面里
+       （用户原话「增加白色块，把灰色块展示出来」）。与 chat-scripts 后台页签
+       同一处理（.ow-cs-tabs-bar）；前台面板没有页签，不受影响。 */
+    $h .= '<div class="ow-sh-tabs-bar"><div class="ow-sh-tabs" id="owShTabs">'
         . '<button type="button" class="ow-sh-tab is-active" data-p="overview" onclick="OwSHAdmin.tab(\'overview\')">概览</button>'
         . '<button type="button" class="ow-sh-tab" data-p="checkin" onclick="OwSHAdmin.tab(\'checkin\')">签到</button>'
         . '<button type="button" class="ow-sh-tab" data-p="level" onclick="OwSHAdmin.tab(\'level\')">等级</button>'
         . '<button type="button" class="ow-sh-tab" data-p="user" onclick="OwSHAdmin.tab(\'user\')">用户</button>'
-        . '</div>';
+        . '</div></div>';
 
     /* ---------- ① 概览 ---------- */
     $h .= '<div class="ow-sh-pane is-active" data-p="overview">'
