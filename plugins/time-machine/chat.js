@@ -278,10 +278,11 @@
             for (k = 0; k < files.length; k++) {
                 fh += this.fileRow({ post: p.id }, media.indexOf(files[k]), files[k]);
             }
-            // 可见性徽标：公开不占地方（默认就是公开），好友/私密各给一枚小标签
-            var visTag = '';
-            if (p.visibility === 'friends') visTag = '<span class="ow-tm-vis" data-vis="friends">好友可见</span>';
-            else if (p.visibility === 'private') visTag = '<span class="ow-tm-vis" data-vis="private">私密</span>';
+            /* 可见性徽标（v1.4.4）：作者/管理员点它就能直接改可见范围 —— 不必先翻「···」菜单。
+               公开是默认值：别人的公开波文不挂标签；自己的挂一枚「公开」淡字，
+               否则「公开」的波文在卡片上就没有任何「谁可以看」的入口了。 */
+            var canEditVis = mine || this.isAdmin;
+            var visTag = (p.visibility === 'public' && !canEditVis) ? '' : this.visTagHtml(p, canEditVis);
             /* 右上角「···」：收藏 / 复制 / 删除收进下拉菜单（复用核心 .ow-ctx-menu 外壳）。
                删除只在「本人或管理员」时出现在菜单里。 */
             var h = '<article class="ow-tm-card" data-pid="' + p.id + '">'
@@ -388,6 +389,7 @@
                 if (act === 'like') self.toggle('like', pid, card);
                 else if (act === 'cmt') self.focusComment(card);
                 else if (act === 'menu') self.openMenu(card, pid);
+                else if (act === 'vis') self.editVis(pid);
                 else if (act === 'cmtsend') self.addComment(card, pid);
                 else if (act === 'cmtemo') self.toggleCmtEmoji(card);
                 else if (act === 'cmtatt') self.pickCmtFile(pid);
@@ -483,6 +485,15 @@
             };
         },
 
+        /** 可见性徽标 HTML：卡片渲染与「改完后就地更新」共用同一份，避免两处标记漂移 */
+        visTagHtml: function (p, canEdit) {
+            var vis = p.visibility || 'public';
+            var txt = vis === 'friends' ? '好友可见' : (vis === 'private' ? '私密' : '公开');
+            var attr = ' data-vis="' + esc(vis) + '"';
+            if (canEdit) attr += ' data-tm-act="vis" title="点击修改谁可以看"';
+            return '<span class="ow-tm-vis' + (canEdit ? ' is-edit' : '') + '"' + attr + '>' + txt + '</span>';
+        },
+
         /** 就地更新卡片的可见性徽标 + 缓存（不重画整张卡，评论输入不丢） */
         applyVis: function (pid, vis) {
             var p = this.posts[pid];
@@ -492,12 +503,15 @@
             var top = card.getElementsByClassName('ow-tm-card-top')[0];
             if (!top) return;
             var old = top.getElementsByClassName('ow-tm-vis')[0];
-            if (old && old.parentNode) old.parentNode.removeChild(old);
-            var tag = vis === 'friends' ? '<span class="ow-tm-vis" data-vis="friends">好友可见</span>'
-                : (vis === 'private' ? '<span class="ow-tm-vis" data-vis="private">私密</span>' : '');
-            if (!tag) return;
-            var nick = top.getElementsByClassName('ow-tm-nick')[0];
-            if (nick) nick.insertAdjacentHTML('afterend', tag);
+            var canEdit = !!p && (p.uid === this.me || this.isAdmin);
+            var html = (vis === 'public' && !canEdit) ? '' : this.visTagHtml({ visibility: vis }, canEdit);
+            if (old) {
+                if (html) old.insertAdjacentHTML('beforebegin', html);
+                old.parentNode.removeChild(old);
+            } else if (html) {
+                var nick = top.getElementsByClassName('ow-tm-nick')[0];
+                if (nick) nick.insertAdjacentHTML('afterend', html);
+            }
         },
 
         /* ---------- 「···」下拉菜单（收藏 / 复制 / 删除） ----------
@@ -515,7 +529,7 @@
             // 谁可以看：只有作者（或管理员）能改，点了开一个小弹窗选三档
             if (canDel) {
                 var visCn = p.visibility === 'friends' ? '好友' : (p.visibility === 'private' ? '私密' : '公开');
-                items.push({ t: '谁可以看（' + visCn + '）', icon: 'eye', run: function () { OwTM.editVis(pid); } });
+                items.push({ t: '修改谁可以看（' + visCn + '）', icon: 'eye', run: function () { OwTM.editVis(pid); } });
             }
             if (canDel) items.push({ t: '删除', icon: 'trash', run: function () { OwTM.confirmDel(card, pid); } });
             var btn = card.querySelector('[data-tm-act="menu"]');

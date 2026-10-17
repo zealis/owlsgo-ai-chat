@@ -215,6 +215,13 @@
     line-height: 1.6;
 }
 .ow-tm-vis[data-vis="private"] { border: 1px solid var(--ow-border-control); }
+/* 作者的徽标可点（点它改「谁可以看」）：手型 + hover 主色边框；别人的仍只是标签 */
+.ow-tm-vis.is-edit { cursor: pointer; }
+.ow-tm-vis.is-edit:hover {
+    border: 1px solid var(--ow-primary);
+    background: var(--ow-blue-light);
+    color: var(--ow-primary-dark);
+}
 
 /* ---------- 文件附件行：直接复用核心 .ow-file-card 那套（消息里的文件卡同款） ---------- */
 .ow-tm-files { margin-top: 8px; }
