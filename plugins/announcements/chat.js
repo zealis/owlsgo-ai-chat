@@ -1,19 +1,43 @@
 /**
  * 群公告插件 - 前端交互
  * 依赖主程序：OwApi / esc / toast / OwChat.onRoomSwitch / OwChat.onRoomEdit /
- *             OwChat.openModal / OwChat.closeModal / OwApi.secure（敏感操作票据）
+ *             OwChat.onViewChange / OwChat.openModal / OwChat.closeModal /
+ *             OwApi.secure（敏感操作票据）
+ *
+ * v1.3.0：聊天室上方公告条重设计（模仿主流现代聊天室的主色实底通栏）：
+ *   - 形态：喇叭图标 + [置顶徽章] + 公告文字 + 右侧圆形关闭按钮；实底白字通栏。
+ *   - 多条公告 5 秒轮播、0.3s 淡入淡出；单条静态显示。
+ *   - 桌面端文字单行溢出省略；移动端（≤960px）仅在实际溢出时按距离折算速度匀速横滚。
+ *   - 关闭按钮只在**本次页面会话**内隐藏（不写 localStorage：新公告应能再次提醒）。
+ *   - 点击条体 / 键盘回车仍进入群公告页面（Owlsgo 增强）。
  */
 (function (w, d) {
     'use strict';
 
     var current = { roomId: 0, roomName: '', list: [], isAdmin: false, isOwner: false };
 
-    /* 公告条底色（v1.2.0）：四档预设，空串 = 跟随主题的默认灰。
+    /* 公告条底色（四档预设，空串 = 跟随主题的默认主色）。
        ⚠️ 前端也过一道白名单：这个值是从库里读出来的，会被拼进 class 名。
           服务端存的时候已经筛过一次，这里再筛是因为万一库里有历史脏数据
           （手工改库、或将来某次迁移写坏），也不能让它变成一个任意 class。 */
     var BAR_COLORS = { blue: 1, green: 1, orange: 1, red: 1 };
     function colorCls(c) { return BAR_COLORS[c] ? ' oa-bar-' + c : ''; }
+
+    /* 条内两枚图标（currentColor 描边，随条的配色走）。
+       形状与核心 ow_icon() 注册表同源：mega = 喇叭（「群聊信息」入口行同一形状）、
+       close = 叉。公告条由前端动态创建，拿不到 PHP 端的 ow_icon()，故内联同一份 path。 */
+    var ICON_MEGA = '<svg class="ow-ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11v3l4 .5V10.5z"/><path d="M7 10.5L18 5v13l-11-4.5"/><path d="M9 15.5V18a2 2 0 0 0 4 .5"/></svg>';
+    var ICON_CLOSE = '<svg class="ow-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>';
+
+    /* rAF 兜底：极老的浏览器没有它时退化成 16ms 定时器（测量只差一帧，无功能影响） */
+    var raf = w.requestAnimationFrame || function (f) { return setTimeout(f, 16); };
+    var caf = w.cancelAnimationFrame || function (h) { clearTimeout(h); };
+
+    /* 公告条骨架引用与轮播状态（v1.3.0：条体只建一次，之后仅更新内容与配色类） */
+    var bar = null, barPin = null, barText = null, barTc = null;
+    var bars = [];               /* 当前群的 bar 类型公告（轮播队列，已按置顶优先排序） */
+    var barClosed = false;       /* 本次页面会话内用户点了关闭 */
+    var carTimer = null, fadeTimer = null, measureRaf = 0;
 
     function fmtTime(ts) {
         var dt = new Date(ts * 1000);
@@ -21,29 +45,122 @@
         return dt.getFullYear() + '/' + p(dt.getMonth() + 1) + '/' + p(dt.getDate()) + ' ' + p(dt.getHours()) + ':' + p(dt.getMinutes());
     }
 
-    /** 公告条：只显示一条 bar 类型（置顶优先，其次最新），点击进入群公告页面 */
-    function renderBar() {
+    function stopCarousel() {
+        if (carTimer) { clearTimeout(carTimer); carTimer = null; }
+        if (fadeTimer) { clearTimeout(fadeTimer); fadeTimer = null; }
+        if (measureRaf) { caf(measureRaf); measureRaf = 0; }
+    }
+
+    /** 撤掉公告条（切群 / 切视图 / 无公告 / 用户关闭） */
+    function hideBar() {
+        stopCarousel();
+        bars = [];
+        if (bar && bar.parentNode) bar.parentNode.removeChild(bar);
+        bar = barPin = barText = barTc = null;
+    }
+
+    /** 建公告条骨架（只建一次；事件也只在此时绑一次，避免轮播重画时重复绑定） */
+    function ensureBar() {
         var main = d.querySelector('.ow-main');
-        if (!main) return;
-        var bar = d.getElementById('oaBar');
-        var top = null;
+        if (!main || !d.getElementById('owMessages')) return false;
+        bar = d.createElement('div');
+        bar.id = 'oaBar';
+        bar.setAttribute('role', 'button');
+        bar.setAttribute('tabindex', '0');
+        bar.title = '查看群公告';
+        bar.innerHTML = '<span class="oa-bar-ico">' + ICON_MEGA + '</span>'
+            + '<span class="oa-bar-pin" id="oaBarPin" style="display:none">置顶</span>'
+            + '<div class="oa-bar-text" id="oaBarText"><span class="oa-bar-tc" id="oaBarTc"></span></div>'
+            + '<button class="oa-bar-close" id="oaBarClose" type="button" title="关闭公告" aria-label="关闭公告">' + ICON_CLOSE + '</button>';
+        // ⚠️ 用 querySelector 而不是 getElementById：bar 此刻还没 insertBefore 进文档，
+        //    getElementById 拿不到（返回 null，设置 onclick 直接抛异常、整条公告都建不出来）。
+        barPin = bar.querySelector('.oa-bar-pin');
+        barText = bar.querySelector('.oa-bar-text');
+        barTc = bar.querySelector('.oa-bar-tc');
+        // 关闭：仅本次会话隐藏，不写 localStorage —— 群里发新公告时应能再次提醒
+        bar.querySelector('.oa-bar-close').onclick = function (e) {
+            e.stopPropagation();
+            barClosed = true;
+            hideBar();
+        };
+        // 条体点击 / 键盘（Enter、Space）→ 群公告页面
+        bar.onclick = function () { showPage(); };
+        bar.onkeydown = function (e) {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showPage(); }
+        };
+        main.insertBefore(bar, d.getElementById('owMessages'));
+        return true;
+    }
+
+    /**
+     * 溢出测量（v1.3.0）：文字实际宽度超出容器时才挂横滚动画。
+     * 速度按溢出距离折算（约 50px/秒，夹在 4~14 秒）—— 长公告滚得慢、
+     * 短公告滚得快，不会一律固定时长晕车；CSS 两端各留 8% 停顿。
+     * ⚠️ 必须用 scrollWidth 而不是 offsetWidth：.oa-bar-tc 是 display:block，
+     *    offsetWidth 恒等于容器宽（block 占满一行），永远测不出溢出；
+     *    scrollWidth 才是「nowrap 内容的实际宽」，超出部分也在里面。
+     */
+    function measureScroll() {
+        if (measureRaf) { caf(measureRaf); measureRaf = 0; }
+        if (!barText || !barTc) return;
+        measureRaf = raf(function () {
+            measureRaf = 0;
+            if (!barText || !barTc) return;
+            var overflow = barTc.scrollWidth - barText.clientWidth;
+            if (overflow > 4) {
+                var dur = Math.max(4, Math.min(14, overflow / 50));
+                barText.style.setProperty('--oa-scroll-distance', '-' + overflow + 'px');
+                barText.style.setProperty('--oa-scroll-duration', dur + 's');
+                barText.classList.add('is-overflow');
+            } else {
+                barText.classList.remove('is-overflow');
+                barText.style.removeProperty('--oa-scroll-distance');
+                barText.style.removeProperty('--oa-scroll-duration');
+            }
+        });
+    }
+
+    /** 轮播第 i 条：0.3s 淡出 → 换字（含配色类）→ 淡入 →（多条时）5s 后下一条 */
+    function showMessage(i) {
+        if (barClosed || !barText || i >= bars.length) return;
+        var a = bars[i];
+        barText.className = 'oa-bar-text is-out';
+        fadeTimer = setTimeout(function () {
+            fadeTimer = null;
+            if (barClosed || !bar || i >= bars.length) return;
+            // 配色跟着当前这条走：不同公告的 bar_color 可以不同，
+            // 只换文字会把上一条的底色留在条上（v1.3.0 修）。
+            bar.className = 'oa-bar' + colorCls(a.bar_color);
+            barPin.style.display = (a.pinned === 1 || a.pinned === '1') ? '' : 'none';
+            barTc.textContent = a.content;   // textContent：内容已过服务端敏感词过滤
+            barText.className = 'oa-bar-text';
+            measureScroll();
+            if (bars.length > 1) carTimer = setTimeout(function () { showMessage(i + 1); }, 5000);
+        }, 300);
+    }
+
+    /** 渲染公告条：取置顶优先的最新 bar 公告；多条进轮播，单条静态 */
+    function renderBar() {
+        bars = [];
         for (var i = 0; i < current.list.length; i++) {
             if (current.list[i].type !== 'bar') continue;   // 弹窗通知不占公告条
-            if (!top || (current.list[i].pinned === 1 && top.pinned !== 1)) top = current.list[i];
+            bars.push(current.list[i]);
         }
-        if (!top) { if (bar) bar.parentNode.removeChild(bar); return; }
-        if (!bar) {
-            bar = d.createElement('div');
-            bar.id = 'oaBar';
-            main.insertBefore(bar, d.getElementById('owMessages'));
+        if (!bars.length || barClosed) { hideBar(); return; }
+        // 接口按 pinned DESC, id DESC 排序：bars[0] 即「置顶优先、其次最新」
+        if (!bar && !ensureBar()) return;
+        // 每次重画都重写 className：条体元素复用，切到另一条公告（底色不同）时只改
+        // innerHTML 会把上一条的配色类留在条上。
+        bar.className = 'oa-bar' + colorCls(bars[0].bar_color);
+        stopCarousel();
+        if (bars.length === 1) {
+            barPin.style.display = (bars[0].pinned === 1 || bars[0].pinned === '1') ? '' : 'none';
+            barTc.textContent = bars[0].content;
+            barText.className = 'oa-bar-text';
+            measureScroll();
+        } else {
+            showMessage(0);
         }
-        // 每次重画都重写 className：公告条元素是复用的，切到另一条公告（底色不同）时
-        // 只改 innerHTML 会把上一条的底色留在条上。
-        bar.className = 'oa-bar' + colorCls(top.bar_color);
-        bar.innerHTML = '<span class="oa-bar-pin' + (top.pinned === 1 ? ' is-pin' : '') + '">' + (top.pinned === 1 ? '置顶' : '公告') + '</span>'
-            + '<span class="oa-bar-text">' + esc(top.content) + '</span>'
-            + '<span class="oa-bar-more" title="群公告">›</span>';
-        bar.onclick = function () { showPage(); };
     }
 
     /** 拉取当前群公告并渲染公告条 */
@@ -57,7 +174,8 @@
         var my = ++loadGen;
         var rid = current.roomId;
         current.list = [];
-        renderBar();                        // 同步撤掉上一个群的公告条，不等接口
+        barClosed = false;      // 换群重置「已关闭」：新群的公告要能提醒（参考站同款语义）
+        renderBar();            // 同步撤掉上一个群的公告条，不等接口
         if (!rid) return;
         OwApi.post('plugin_announcements_list', { room_id: rid }, function (r) {
             if (my !== loadGen || current.roomId !== rid) return;   // 已切走：迟到响应丢弃
@@ -253,6 +371,8 @@
     // 私聊、系统通知流、联系人名单、还没点选会话，四种都是「没有房间」。
     // v1.1.11：原来这里判的是 `!== 'dm'`，等于默认「非私聊即群聊」；核心补上真实视图名后
     // 改成反向判定：只要不是 'room' 就清场，以后核心再加新视图（插件面板之类）也不会漏。
+    // v1.3.0：这里**不重置 barClosed** —— 用户关过公告条后，切走再切回本群不应又弹出来；
+    // 只有切换到另一个群（onRoomSwitch → load）才重置。
     w.OwChat.onViewChange(function (ctx) {
         if (ctx.view === 'room') return;    // 群聊视图：onRoomSwitch 已经负责刷新
         loadGen++;                          // 作废在途请求：切走之后不许再把公告画回来
