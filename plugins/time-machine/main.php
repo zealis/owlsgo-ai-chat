@@ -1,6 +1,6 @@
 <?php
 /**
- * 时光机插件（time-machine v1.4.0）
+ * 时光机插件（time-machine v1.4.1）
  *
  * ── 做什么 ────────────────────────────────────────────────────
  * 类似朋友圈的动态广场。入口是 rail 上的一枚「时光机」按钮（sidebar.rail 钩子，
@@ -215,8 +215,12 @@ function owTmMediaOut(string $json): array
     $raw = json_decode($json, true);
     if (!is_array($raw)) return $media;
     foreach ($raw as $it) {
-        if (!is_array($it)) continue;
-        if ((string)($it['k'] ?? '') === 'file') {
+        /* ⚠️ 顺序要紧：v1.1.x 存的元素是**纯 URL 字符串**（`["uploads/image/…", …]`），
+           必须最先判。曾经写成 `if (!is_array($it)) continue;` 打头，字符串在进入
+           任何分支之前就被跳过了 —— 老波文的图片因此在列表里全部消失（线上实证）。 */
+        if (is_string($it)) {
+            if ($it !== '' && Upload::mediaRel($it) !== null) $media[] = ['k' => 'image', 'url' => $it];
+        } elseif (is_array($it) && (string)($it['k'] ?? '') === 'file') {
             $p = (string)($it['path'] ?? '');
             if (Upload::fileAbs($p) === null) continue;
             $media[] = [
@@ -226,14 +230,10 @@ function owTmMediaOut(string $json): array
                 'size' => (int)($it['size'] ?? 0),
                 'ext' => strtolower((string)($it['ext'] ?? '')),
             ];
-        } elseif ((string)($it['k'] ?? '') === 'image') {
+        } elseif (is_array($it)) {
             $u = (string)($it['url'] ?? '');
             if ($u === '' || Upload::mediaRel($u) === null) continue;
             $media[] = ['k' => 'image', 'url' => $u];
-        } else {
-            // 旧形态（v1.1.x）：元素是纯图片 URL 字符串
-            $u = is_string($it) ? $it : '';
-            if ($u !== '' && Upload::mediaRel($u) !== null) $media[] = ['k' => 'image', 'url' => $u];
         }
         if (count($media) >= 9) break;
     }
@@ -846,7 +846,7 @@ owTmRoute('plugin_time_machine_comment_add', function (array $ctx): void {
     ]);
 });
 
-/* ============================ API：修改可见性（v1.4.0） ============================ */
+/* ============================ API：修改可见性（v1.4.1） ============================ */
 
 /**
  * 改「谁可以看」：只允许作者本人或管理员。

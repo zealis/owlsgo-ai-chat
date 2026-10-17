@@ -179,6 +179,20 @@ $p0 = $dFeedA['posts'][0] ?? [];
 check('下发 media 含图与文件两种', count($p0['media'] ?? []) === 2
     && ($p0['media'][0]['k'] ?? '') === 'image' && ($p0['media'][1]['k'] ?? '') === 'file');
 
+/* 回归（v1.4.1）：v1.1.x 存的 images 是**纯 URL 字符串数组**。
+   抽 owTmMediaOut() 时曾把字符串分支放在 `if (!is_array($it)) continue;` 之后，
+   老波文的图片在列表里全部消失（线上实证）。这里直接塞一条旧形态的数据守住它。 */
+$legacyPid = (int)DB::insert('plugin_time_machine_post', [
+    'uid' => $uidA, 'nickname' => '小明', 'avatar' => $avA, 'role' => 'user',
+    'content' => '旧形态波文', 'images' => (string)json_encode([$imgUrl]),
+    'visibility' => 'public', 'created_at' => time(),
+]);
+[$dLegacy] = call('plugin_time_machine_feed', ['actor' => $actA, 'post' => ['tab' => 'new', 'page' => 1]]);
+$legacyMedia = [];
+foreach (($dLegacy['posts'] ?? []) as $one) if ((int)$one['id'] === $legacyPid) $legacyMedia = $one['media'];
+check('旧形态（纯 URL 字符串数组）仍能出图', $legacyMedia, [['k' => 'image', 'url' => $imgUrl]]);
+DB::run('DELETE FROM plugin_time_machine_post WHERE id=?', [$legacyPid]);
+
 echo "\n== 点赞 / 收藏 ==\n";
 [$d] = call('plugin_time_machine_like', ['actor' => $actB, 'post' => ['id' => $pid]]);
 check('B 点赞 on=true likes=1', $d['on'] === true && $d['likes'] === 1);
