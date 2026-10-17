@@ -34,20 +34,10 @@
     border-radius: 8px;
 }
 
-/* 顶栏（分栏 + 发波文）：sticky 常驻滚动容器顶部；白底盖住下面的行，不做半透明 */
-.ow-tm-head {
-    position: sticky;
-    top: 0;
-    z-index: 5;
-    display: flex; display: -webkit-flex;
-    align-items: center; -webkit-align-items: center;
-    justify-content: space-between; -webkit-justify-content: space-between;
-    gap: 10px;
-    padding: 8px 12px;
-    background: var(--ow-surface);
-    border-bottom: 1px solid var(--ow-border);
-    border-radius: 8px 8px 0 0;
-}
+/* 顶栏（分栏 + 发波文）：v1.4.4 起几何由核心通用类 .ow-list-head 提供（站方「把 ow-tm-head
+   做成通用样式」），这里只补本面板需要的那一条 —— 顶栏常驻滚动容器顶部。
+   ⚠️ sticky 不进通用类：它只在「面板自己是滚动容器」时才有意义，后台卡片用了会乱贴。 */
+.ow-tm .ow-list-head { position: sticky; top: 0; z-index: 5; }
 
 /* 分栏控件：与 .ow-tabs 同一几何（灰槽 + 分隔标签），只是不铺满整行 */
 .ow-tm-tabs {
@@ -399,7 +389,6 @@
 /* ---------- 移动端（≤720px，与核心断点一致）：岛保留，只收内边距、放大点击区 ---------- */
 @media (max-width: 720px) {
     .ow-tm { max-width: none; }
-    .ow-tm-head { padding: 8px 10px; }
     .ow-tm-tab { padding: 6px 9px; }
     .ow-tm-card { padding: 12px 14px; }
     .ow-tm-nick { max-width: 50%; }
