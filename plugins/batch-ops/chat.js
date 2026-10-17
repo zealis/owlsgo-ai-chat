@@ -1,5 +1,5 @@
 /**
- * 批量操作插件 · 聊天页（batch-ops v1.2.2）
+ * 批量操作插件 · 聊天页（batch-ops v1.2.3）
  *
  * ── 两块内容 ──────────────────────────────────────────────────
  * ① 消息多选：消息右键「多选」（或「转发」单条直达）进入选择模式，
@@ -273,7 +273,7 @@
                 if (node && node !== view) openRecord(node.getAttribute('data-token'));
             };
         }
-        w.OwApi.post('plugin_batch_ops_record_get', { tokens: tok, full: '1' }, function (r) {
+        w.OwApi.post('plugin_batch_ops_record_get', { tokens: tok }, function (r) {   // v1.2.3：与预取同形（单 token 自带完整条目），不再带 full
             var box = byId('owbRecView');
             if (!box) return;   // 用户已经关掉弹窗
             /* 请求失败 / 响应形状异常 → 「加载失败 + 重试」，不误报「已过期」； */

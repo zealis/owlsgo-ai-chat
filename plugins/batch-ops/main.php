@@ -186,7 +186,8 @@ Plugin::route('plugin_batch_ops_record_save', function (array $ctx): void {
 });
 
 /**
- * 读取聊天记录：tokens（逗号分隔，≤20），full=1 时带完整条目（弹窗用；卡片预览只取 summary）。
+ * 读取聊天记录：tokens（逗号分隔，≤20）。单 token（点开卡片）带完整条目，
+ * 多 token（一页多张卡的预取）只回标题/条数/前 4 行预览。
  * 返回 {token: {title, count, preview, items?}}；token 不存在返回 null → 前端显示「已过期」。
  */
 Plugin::route('plugin_batch_ops_record_get', function (array $ctx): void {
@@ -202,7 +203,12 @@ Plugin::route('plugin_batch_ops_record_get', function (array $ctx): void {
         if (preg_match('/^[a-f0-9]{32}$/', $t) && !in_array($t, $tokens, true)) $tokens[] = $t;
         if (count($tokens) >= 20) break;
     }
-    $full = (string)($p['full'] ?? '') === '1';
+    /* v1.2.3：**请求形状与「卡片预取」完全一致**（只带 tokens，不再区分 full）。
+       单 token（= 点开某张卡）直接带完整条目，多 token 批量（= 一页多张卡的预取）
+       只回预览。站方反馈「点击弹窗请求 100% 失败、预取 100% 成功」后这样收口：
+       点击走的就是那条已验证可用的请求形状。旧页面传来的 full=1 仍然认（兼容），
+       新客户端不再发送。 */
+    $withItems = count($tokens) === 1 || (string)($p['full'] ?? '') === '1';
     $out = [];
     foreach ($tokens as $t) {
         $row = DB::one('SELECT * FROM plugin_batch_ops_record WHERE token=?', [$t]);
@@ -218,7 +224,7 @@ Plugin::route('plugin_batch_ops_record_get', function (array $ctx): void {
             'count' => (int)$row['cnt'],
             'preview' => $preview,
         ];
-        if ($full) $entry['items'] = array_slice($items, 0, 200);
+        if ($withItems) $entry['items'] = array_slice($items, 0, 200);
         $out[$t] = $entry;
     }
     Api::json(['ok' => true, 'data' => $out]);
