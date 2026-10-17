@@ -1,17 +1,19 @@
 <?php
 /**
- * 时光机插件全链路流程测试（v1.0.0）
+ * 时光机插件全链路流程测试（v1.1.1）
  *
  *   php .tools/time-machine-flow-test.php
  *
  * 在临时 SQLite 上走真实路由闭包（Plugin::dispatch）：feed / post / upload 校验 /
  * like / fav / comments / comment_add / delete（含权限判定与敏感清单），
  * 图片地址复核用真实 Upload（临时上传目录 + 真实文件）。
- * Api::json 在 CLI 里以异常桩替代（核心 Api 在 index.php，本 harness 不加载它）。
+ * Api::json 在 CLI 里以异常桩替代（核心 Api 在 index.php，本 harness 不加载它）；
+ * 定义 OW_TM_TEST_HARNESS 让插件路由的异常兜底知道「这个异常不是错误」。
  */
 declare(strict_types=1);
 
 define('OWLSGO_VERSION', '0.0.0-test');
+define('OW_TM_TEST_HARNESS', true);
 
 /* ow_abs_url / ow_site_url 定义在 index.php（harness 不加载它），给最小桩 */
 if (!function_exists('ow_site_url')) {

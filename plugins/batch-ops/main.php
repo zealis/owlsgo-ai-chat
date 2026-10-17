@@ -38,6 +38,13 @@ if (!defined('OWLSGO_VERSION')) exit;   // 禁止直接 HTTP 访问本文件
 
 /* ============================ 建表 ============================ */
 
+/*
+ * ⚠️ DB::textCol() 返回的是**完整列定义（含列名）**，前面不能再写一遍列名。
+ *   这里犯过一次（v1.2.6 修）：`items  " . DB::textCol('items')` 生成
+ *   `items  items TEXT NULL` —— SQLite 当成「列名 + 多词类型名」容忍了（本地一直绿灯），
+ *   MySQL 直接 1064（link-card v1.2.1 / time-machine v1.1.1 是同一个坑）。
+ *   后果：合并转发第一次落快照时建表失败 → 该路由 500。长文本列照下表的写法。
+ */
 /** 懒建表：聊天记录快照（只在真正读写记录时执行） */
 function owbBoot(): void
 {
@@ -52,7 +59,7 @@ function owbBoot(): void
         title      VARCHAR(64)  NOT NULL DEFAULT '',   -- 卡片/弹窗标题（群聊的聊天记录 / 聊天记录）
         src        VARCHAR(64)  NOT NULL DEFAULT '',   -- 来源名（群名/对方昵称，存档说明用）
         cnt        INTEGER      NOT NULL DEFAULT 0,    -- 快照条数
-        items      " . DB::textCol('items') . ",       -- JSON：消息行子集（见 owbSnapshotRow）
+        " . DB::textCol('items') . ",                  -- JSON：消息行子集（见 owbSnapshotRow）
         created_at INTEGER      NOT NULL DEFAULT 0
     )");
     DB::createIndex('idx_owb_rec_token', 'plugin_batch_ops_record', 'token', true);

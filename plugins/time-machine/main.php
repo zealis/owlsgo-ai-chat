@@ -1,6 +1,6 @@
 <?php
 /**
- * 时光机插件（time-machine v1.1.0）
+ * 时光机插件（time-machine v1.1.1）
  *
  * ── 做什么 ────────────────────────────────────────────────────
  * 类似朋友圈的动态广场。入口是 rail 上的一枚「时光机」按钮（sidebar.rail 钩子，
@@ -29,55 +29,85 @@ if (!defined('OWLSGO_VERSION')) exit;   // 禁止直接 HTTP 访问本文件
 
 /* ============================ 建表 ============================ */
 
-/** 懒建表：波文 / 评论 / 点赞 / 收藏（只在真正读写时执行） */
+/**
+ * 四张表的 CREATE TABLE 语句（按当前驱动生成）。
+ *
+ * 抽成函数是为了能被 `.tools/time-machine-ddl-test.php` 在**三种驱动下各生成一遍**并断言：
+ * 这类「SQLite 容忍、MySQL 1064」的方言坑本地 SQLite 永远测不出来，只能靠生成物本身对账。
+ *
+ * ⚠️ DB::textCol() 返回的是**完整列定义（含列名）**，前面不能再写一遍列名。
+ *   本插件 v1.1.0 犯过一次：`content  {$txt}`（$txt = DB::textCol('content')）
+ *   生成 `content  content TEXT NULL` —— SQLite 当成「列名 + 多词类型名」容忍了，
+ *   MySQL 直接 1064。后果：owTmBoot() 建表即抛异常 → **全部路由 500**，
+ *   前端表现为「网络错误（500）」且 can_post 取不到 → 点发波文提示「请先登录」
+ *   （与 link-card v1.2.1 修的是同一个坑）。长文本列一律照下表的写法。
+ *
+ * @return array<string,string> 表名 => CREATE TABLE 语句
+ */
+function owTmDdl(): array
+{
+    $id = DB::autoId();
+    return [
+        'plugin_time_machine_post' => "CREATE TABLE IF NOT EXISTS plugin_time_machine_post (
+        id         {$id},
+        uid        INTEGER      NOT NULL DEFAULT 0,
+        nickname   VARCHAR(64)  NOT NULL DEFAULT '',   -- 发送时快照（与 messages 同语义）
+        " . DB::textCol('avatar') . ",
+        role       VARCHAR(20)  NOT NULL DEFAULT '',
+        " . DB::textCol('content') . ",
+        " . DB::textCol('images') . ",                 -- JSON 数组：本站 uploads/ 的图片 URL（≤9 张）
+        views      INTEGER      NOT NULL DEFAULT 0,
+        likes      INTEGER      NOT NULL DEFAULT 0,
+        comments   INTEGER      NOT NULL DEFAULT 0,
+        created_at INTEGER      NOT NULL DEFAULT 0
+    )",
+        'plugin_time_machine_comment' => "CREATE TABLE IF NOT EXISTS plugin_time_machine_comment (
+        id         {$id},
+        post_id    INTEGER      NOT NULL DEFAULT 0,
+        uid        INTEGER      NOT NULL DEFAULT 0,
+        nickname   VARCHAR(64)  NOT NULL DEFAULT '',
+        " . DB::textCol('avatar') . ",
+        role       VARCHAR(20)  NOT NULL DEFAULT '',
+        content    VARCHAR(500) NOT NULL DEFAULT '',
+        created_at INTEGER      NOT NULL DEFAULT 0
+    )",
+        'plugin_time_machine_like' => "CREATE TABLE IF NOT EXISTS plugin_time_machine_like (
+        post_id    INTEGER      NOT NULL DEFAULT 0,
+        uid        INTEGER      NOT NULL DEFAULT 0,
+        created_at INTEGER      NOT NULL DEFAULT 0
+    )",
+        'plugin_time_machine_fav' => "CREATE TABLE IF NOT EXISTS plugin_time_machine_fav (
+        post_id    INTEGER      NOT NULL DEFAULT 0,
+        uid        INTEGER      NOT NULL DEFAULT 0,
+        created_at INTEGER      NOT NULL DEFAULT 0
+    )",
+        'plugin_time_machine_view' => "CREATE TABLE IF NOT EXISTS plugin_time_machine_view (
+        post_id    INTEGER      NOT NULL DEFAULT 0,
+        viewer     VARCHAR(48)  NOT NULL DEFAULT '',   -- u<uid> / g<24位匿名摘要>
+        seen_at    INTEGER      NOT NULL DEFAULT 0
+    )",
+    ];
+}
+
+/** 建表 + 建索引（只在真正读写时执行） */
 function owTmBoot(): void
 {
     static $done = false;
     if ($done) return;
     $done = true;
 
-    $id = DB::autoId();
-    $txt = DB::textCol('content');
-    DB::run("CREATE TABLE IF NOT EXISTS plugin_time_machine_post (
-        id         {$id},
-        uid        INTEGER      NOT NULL DEFAULT 0,
-        nickname   VARCHAR(64)  NOT NULL DEFAULT '',   -- 发送时快照（与 messages 同语义）
-        avatar     " . DB::textCol('avatar') . ",
-        role       VARCHAR(20)  NOT NULL DEFAULT '',
-        content    {$txt},
-        images     " . DB::textCol('images') . ",      -- JSON 数组：本站 uploads/ 的图片 URL（≤9 张）
-        views      INTEGER      NOT NULL DEFAULT 0,
-        likes      INTEGER      NOT NULL DEFAULT 0,
-        comments   INTEGER      NOT NULL DEFAULT 0,
-        created_at INTEGER      NOT NULL DEFAULT 0
-    )");
+    $ddl = owTmDdl();
+    DB::run($ddl['plugin_time_machine_post']);
     DB::createIndex('idx_otm_post_time', 'plugin_time_machine_post', 'created_at', false);
     DB::createIndex('idx_otm_post_uid', 'plugin_time_machine_post', 'uid', false);
 
-    DB::run("CREATE TABLE IF NOT EXISTS plugin_time_machine_comment (
-        id         {$id},
-        post_id    INTEGER      NOT NULL DEFAULT 0,
-        uid        INTEGER      NOT NULL DEFAULT 0,
-        nickname   VARCHAR(64)  NOT NULL DEFAULT '',
-        avatar     " . DB::textCol('avatar') . ",
-        role       VARCHAR(20)  NOT NULL DEFAULT '',
-        content    VARCHAR(500) NOT NULL DEFAULT '',
-        created_at INTEGER      NOT NULL DEFAULT 0
-    )");
+    DB::run($ddl['plugin_time_machine_comment']);
     DB::createIndex('idx_otm_cmt_post', 'plugin_time_machine_comment', 'post_id', false);
 
-    DB::run("CREATE TABLE IF NOT EXISTS plugin_time_machine_like (
-        post_id    INTEGER      NOT NULL DEFAULT 0,
-        uid        INTEGER      NOT NULL DEFAULT 0,
-        created_at INTEGER      NOT NULL DEFAULT 0
-    )");
+    DB::run($ddl['plugin_time_machine_like']);
     DB::createIndex('idx_otm_like_key', 'plugin_time_machine_like', 'post_id,uid', true);
 
-    DB::run("CREATE TABLE IF NOT EXISTS plugin_time_machine_fav (
-        post_id    INTEGER      NOT NULL DEFAULT 0,
-        uid        INTEGER      NOT NULL DEFAULT 0,
-        created_at INTEGER      NOT NULL DEFAULT 0
-    )");
+    DB::run($ddl['plugin_time_machine_fav']);
     DB::createIndex('idx_otm_fav_key', 'plugin_time_machine_fav', 'post_id,uid', true);
 
     /* 浏览去重（v1.1.0）：views 只增不刷 —— 同一访问者对同一条波文只计一次。
@@ -91,11 +121,7 @@ function owTmBoot(): void
     $fresh = false;
     try { DB::val('SELECT COUNT(*) FROM plugin_time_machine_view'); }
     catch (Throwable $e) { $fresh = true; }
-    DB::run("CREATE TABLE IF NOT EXISTS plugin_time_machine_view (
-        post_id    INTEGER      NOT NULL DEFAULT 0,
-        viewer     VARCHAR(48)  NOT NULL DEFAULT '',   -- u<uid> / g<24位匿名摘要>
-        seen_at    INTEGER      NOT NULL DEFAULT 0
-    )");
+    DB::run($ddl['plugin_time_machine_view']);
     DB::createIndex('idx_otm_view_key', 'plugin_time_machine_view', 'post_id,viewer', true);
     if ($fresh) DB::run('UPDATE plugin_time_machine_post SET views=0');
 }
@@ -206,11 +232,38 @@ function owTmVersion(): string
 /* ============================ API：波文流 ============================ */
 
 /**
+ * 注册一条插件路由，并给它的处理器套一层兜底。
+ *
+ * 为什么要这一层：v1.1.0 在 MySQL 上建表语法错（1064）→ owTmBoot() 抛异常 →
+ * **每一条路由都返回裸 500**，前端只能显示「网络错误（500）」，什么线索都没有，
+ * 排障只能靠猜。现在异常统一转成带原因的 JSON（OwApi 照样解析得出来），
+ * 用户看到的是「时光机出错：……」而不是一句没有信息量的状态码。
+ * 正常分支不受影响：处理器自己已经用 Api::json 结束，这里只接它没接住的。
+ */
+function owTmRoute(string $action, callable $fn): void
+{
+    Plugin::route($action, function (array $ctx) use ($fn, $action): void {
+        try {
+            $fn($ctx);
+        } catch (Throwable $e) {
+            // 核心 Api::json 以 exit 收尾（永不返回），自检桩用异常模拟它 ——
+            // 那不是错误，必须原样放行，否则测试拿到的会是这条兜底报文而不是真实响应。
+            if (defined('OW_TM_TEST_HARNESS')) throw $e;
+            Api::json([
+                'ok' => false,
+                'msg' => '时光机出错：' . $e->getMessage(),
+                'at' => $action,
+            ], 500);
+        }
+    });
+}
+
+/**
  * 分栏拉取：tab=new/hot/mine/fav，page 从 1 起。每页 10 条，多取 1 条算 has_more。
- * 浏览计数：本次下发的波文各 +1（mine 分栏不计，自己刷自己不算浏览）。
+ * 浏览计数：按访问者去重（同一人反复刷新只记一次，作者看自己的不计）。
  * 顺带下发 can_post / is_admin / me，前端不用再猜权限；mine 分栏带 stats（条数 + 收到的点赞）。
  */
-Plugin::route('plugin_time_machine_feed', function (array $ctx): void {
+owTmRoute('plugin_time_machine_feed', function (array $ctx): void {
     owTmBoot();
     $actor = $ctx['actor'] ?? [];
     $p = $ctx['post'] ?? [];
@@ -311,7 +364,7 @@ Plugin::route('plugin_time_machine_feed', function (array $ctx): void {
 
 /* ============================ API：发波文 ============================ */
 
-Plugin::route('plugin_time_machine_post', function (array $ctx): void {
+owTmRoute('plugin_time_machine_post', function (array $ctx): void {
     $actor = $ctx['actor'] ?? [];
     if (($actor['kind'] ?? '') !== 'user') Api::json(['ok' => false, 'msg' => '请先登录后再发波文'], 403);
     owTmBoot();
@@ -364,7 +417,7 @@ Plugin::route('plugin_time_machine_post', function (array $ctx): void {
 /* ============================ API：图片上传 ============================ */
 
 /** 波文配图：走核心 Upload::handle（kind=image，附件插件的 WebP 压缩钩子照常生效） */
-Plugin::route('plugin_time_machine_upload', function (array $ctx): void {
+owTmRoute('plugin_time_machine_upload', function (array $ctx): void {
     $actor = $ctx['actor'] ?? [];
     if (($actor['kind'] ?? '') !== 'user') Api::json(['ok' => false, 'msg' => '请先登录后再上传'], 403);
     if (empty($_FILES['file'])) Api::json(['ok' => false, 'msg' => '未接收到文件']);
@@ -379,7 +432,7 @@ Plugin::route('plugin_time_machine_upload', function (array $ctx): void {
 
 /** 点赞开关（同一批 SQL 形状，用 $type 区分 like / fav 两张表） */
 foreach (['like' => 'plugin_time_machine_like', 'fav' => 'plugin_time_machine_fav'] as $owType => $owTable) {
-    Plugin::route('plugin_time_machine_' . $owType, function (array $ctx) use ($owType, $owTable): void {
+    owTmRoute('plugin_time_machine_' . $owType, function (array $ctx) use ($owType, $owTable): void {
         $actor = $ctx['actor'] ?? [];
         if (($actor['kind'] ?? '') !== 'user') Api::json(['ok' => false, 'msg' => '请先登录'], 403);
         owTmBoot();
@@ -412,7 +465,7 @@ foreach (['like' => 'plugin_time_machine_like', 'fav' => 'plugin_time_machine_fa
 /* ============================ API：评论 ============================ */
 
 /** 评论列表：整楼平铺（≤200 条，旧→新），前端展开时一次拉全 */
-Plugin::route('plugin_time_machine_comments', function (array $ctx): void {
+owTmRoute('plugin_time_machine_comments', function (array $ctx): void {
     owTmBoot();
     $actor = $ctx['actor'] ?? [];
     if (!Sec::rateLimit('otm_cmts', ($actor['kind'] ?? 'n') . (int)($actor['id'] ?? 0), 60, 90)) {
@@ -429,7 +482,7 @@ Plugin::route('plugin_time_machine_comments', function (array $ctx): void {
     Api::json(['ok' => true, 'comments' => $rows]);
 });
 
-Plugin::route('plugin_time_machine_comment_add', function (array $ctx): void {
+owTmRoute('plugin_time_machine_comment_add', function (array $ctx): void {
     $actor = $ctx['actor'] ?? [];
     if (($actor['kind'] ?? '') !== 'user') Api::json(['ok' => false, 'msg' => '请先登录后再评论'], 403);
     owTmBoot();
@@ -479,7 +532,7 @@ Plugin::route('plugin_time_machine_comment_add', function (array $ctx): void {
 /* ============================ API：删除（敏感） ============================ */
 
 /** 删除波文：作者本人或管理员；连带清评论 / 点赞 / 收藏。敏感操作（票据 + 二次确认）。 */
-Plugin::route('plugin_time_machine_delete', function (array $ctx): void {
+owTmRoute('plugin_time_machine_delete', function (array $ctx): void {
     $actor = $ctx['actor'] ?? [];
     if (($actor['kind'] ?? '') !== 'user') Api::json(['ok' => false, 'msg' => '请先登录'], 403);
     owTmBoot();
