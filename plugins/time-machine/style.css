@@ -223,9 +223,10 @@
 .ow-tm-acts {
     display: flex; display: -webkit-flex;
     align-items: center; -webkit-align-items: center;
+    justify-content: flex-end; -webkit-justify-content: flex-end;   /* 点赞 / 评论 / 阅读量靠右 */
     gap: 2px;
     margin-top: 8px;
-    margin-left: -6px;          /* 图标左边缘与正文对齐（抵消热区左内边距） */
+    margin-right: -6px;         /* 图标右边缘与正文右边界对齐（抵消热区右内边距） */
 }
 .ow-tm-act {
     display: flex; display: -webkit-flex;
@@ -253,14 +254,15 @@
 .ow-tm-act i, .ow-tm-plain i { font-style: normal; }
 
 /* ---------- 评论区（灰底块 + 6px 圆角，与弹窗里的说明块同一档） ---------- */
+/* 评论区：不铺灰底（站方要求），直接嵌在白卡里；靠间距与上方动作条分开 */
 .ow-tm-cmts {
     margin-top: 8px;
-    padding: 8px 10px;
-    background: var(--ow-bg-sub);
-    border-radius: 6px;
+    padding: 0;
 }
 .ow-tm-cmt-load { font-size: 12.5px; color: var(--ow-text-sub); padding: 2px 0; }
-.ow-tm-cmt { display: flex; display: -webkit-flex; gap: 8px; padding: 5px 0; }
+.ow-tm-cmt { display: flex; display: -webkit-flex; gap: 8px; padding: 6px 0; }
+/* 无灰底后，多条评论之间用极细分割线撑开层次（单条时不画，避免多一条多余的线） */
+.ow-tm-cmt + .ow-tm-cmt { border-top: 1px solid var(--ow-border); }
 .ow-tm-cmt-main { flex: 1 1 auto; -webkit-flex: 1 1 auto; min-width: 0; }
 .ow-tm-cmt-meta { display: flex; display: -webkit-flex; align-items: baseline; -webkit-align-items: baseline; gap: 8px; }
 .ow-tm-cmt-text { font-size: 13.5px; line-height: 1.65; color: var(--ow-text); word-break: break-word; margin-top: 1px; }
