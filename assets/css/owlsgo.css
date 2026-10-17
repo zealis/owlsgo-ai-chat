@@ -1192,11 +1192,15 @@ input[type=range] {
     /* v1.3.6：品牌条移到布局顶层后横跨全宽，防止被 flex 压缩；
        搜索按钮的负边距上限（-8px）在视口宽度下更是毫无压力。 */
     flex-shrink: 0; -webkit-flex-shrink: 0;
-    /* v1.3.7：底色改为 #E4E4E4（比 --ow-bg-chat #F5F5F5 深一档，把品牌区从内容灰底里拎出来）。
-       对比度：站点名 --ow-text-title #1A1A1A 对本底 ≈ 15:1，远高于 WCAG AA 的 4.5:1。
-       v1.3.37：改为 --ow-brand-bg —— 写死 #E4E4E4 导致深色模式下这条顶部导航永远是浅灰
-       （用户实测反馈「导航栏没有变色」）。 */
-    background: var(--ow-brand-bg);
+    /* v1.5.3：站方要求品牌条底色改成 #F5F5F5 —— 与顶栏 / rail / 两侧栏同色，
+       整条顶部带子（.ow-head）不再有左右两档灰的落差。
+       ⚠️ 这里**不能**改 --ow-brand-bg：那个令牌还被 .ow-side-search（侧栏顶部搜索框）
+          用着，而侧栏底色本身就是 #F5F5F5 —— 一起改过去搜索框会直接隐形
+          （v1.3.48 注释里踩过同款）。所以品牌条单独取 --ow-bg-chat：
+          浅色 #F5F5F5、深色 #1A1A1C，两种主题下都与顶栏一致。
+       历史（v1.3.7~v1.5.2）：曾用 --ow-brand-bg(#E4E4E4) 把品牌区从内容灰底里「拎出来」，
+       那是品牌条还独占一整行时的做法；并进带子后这层深色反而把一条横带切成两半。 */
+    background: var(--ow-bg-chat);
     font-weight: 600;
     color: var(--ow-text-title);
     /* 条高真源见文件头 --ow-brand-h。
