@@ -110,7 +110,8 @@ echo "\n== 懒建表 ==\n";
 check('owTmBoot 可调用（main.php 已被清单加载）', is_callable('owTmBoot'), true);
 owTmBoot();
 foreach (['plugin_time_machine_post', 'plugin_time_machine_comment',
-          'plugin_time_machine_like', 'plugin_time_machine_fav'] as $t) {
+          'plugin_time_machine_like', 'plugin_time_machine_fav',
+          'plugin_time_machine_view'] as $t) {
     $n = (int)DB::val("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", [$t]);
     check('  表存在：' . $t, $n === 1);
 }

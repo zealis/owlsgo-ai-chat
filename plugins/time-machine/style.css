@@ -1,10 +1,18 @@
 /**
- * 时光机插件（time-machine v1.0.0）
+ * 时光机插件（time-machine v1.1.0）
  *
- * 全部颜色只引用核心 --ow-* 变量，深浅两套主题自动跟随（不写 [data-theme] 覆盖块）。
- * 布局基准：波文卡片浮在 --ow-bg-chat 灰底上（与聊天气泡同一底色语境），
- * 卡片用 --ow-surface 白面 + --ow-border 细边；品牌交互色只用于选中态与主按钮。
- * 前缀 ow-tm-，不触碰任何核心通用类。
+ * 设计语言对齐核心（不再自造一套）：
+ *   · 一屏一块「内容岛」：整块用 --ow-surface 白面 + 1px --ow-border 边框 + 8px 圆角，
+ *     条目之间靠 1px 细分割线切分 —— 与后台表格、消息流同一个做法，
+ *     不再用「每张卡片各自浮起 + 14px 大圆角」那种自成体系的样式；
+ *   · 分栏控件照抄 .ow-tabs 的几何：--ow-bg-sub 灰槽、3px 内边距、9px 槽圆角、
+ *     6px 标签圆角、13px 字号；**选中 = 主色实心白字**（--ow-primary-strong），
+ *     与 .ow-tab.is-active / .ow-btn-primary 同一套「选中即主色」的语言，且不加粗
+ *     （中文字体 13px 加粗会撑宽重排，核心显式禁止）；
+ *   · 圆角只用 4 / 6 / 8 三档（核心按钮 6、迷你 4、内容块 8），不出现 14/16 的胶囊；
+ *   · 交互态：悬停 --ow-hover-bg、激活 --ow-active-bg；点赞/收藏的「已选中」
+ *     用主色（--ow-primary-dark），红色只留给删除这类危险动作（--ow-red）。
+ * 全部颜色只引用 --ow-* 变量，深浅主题自动跟随。
  */
 
 /* ---------- rail 入口图标（站方指定的填充式字形，fill=currentColor 跟随按钮态） ---------- */
@@ -12,15 +20,21 @@
 
 /* ---------- 侧栏面板 ---------- */
 .ow-tm-side { padding: 14px 12px; }
-.ow-tm-side-h { font-size: 15px; font-weight: 600; color: var(--ow-text-title); margin-bottom: 6px; }
+.ow-tm-side-h { font-size: 14px; font-weight: 600; color: var(--ow-text-title); margin-bottom: 6px; }
 .ow-tm-side-d { font-size: 12.5px; color: var(--ow-text-sub); line-height: 1.7; margin: 0 0 12px; }
 .ow-tm-side-stats { margin-top: 12px; font-size: 12px; color: var(--ow-text-sub); line-height: 1.6; }
 .ow-tm-side-stats b { color: var(--ow-text-title); }
 
-/* ---------- 主区：时间流 ---------- */
-.ow-tm { max-width: 640px; margin: 0 auto; }
+/* ---------- 主区：整块内容岛 ---------- */
+.ow-tm {
+    max-width: 640px;
+    margin: 0 auto;
+    background: var(--ow-surface);
+    border: 1px solid var(--ow-border);
+    border-radius: 8px;
+}
 
-/* 顶栏（分栏 + 发波文）：sticky 常驻在 #owMessages 滚动容器顶部（与 batch-ops 操作条同一手法） */
+/* 顶栏（分栏 + 发波文）：sticky 常驻滚动容器顶部；白底盖住下面的行，不做半透明 */
 .ow-tm-head {
     position: sticky;
     top: 0;
@@ -28,69 +42,64 @@
     display: flex; display: -webkit-flex;
     align-items: center; -webkit-align-items: center;
     justify-content: space-between; -webkit-justify-content: space-between;
-    gap: 8px;
-    margin: -12px -16px 10px;          /* 抵消 #owMessages 的内边距，做成通栏 */
-    padding: 0 16px;
-    background: var(--ow-bg-chat);
+    gap: 10px;
+    padding: 8px 12px;
+    background: var(--ow-surface);
     border-bottom: 1px solid var(--ow-border);
+    border-radius: 8px 8px 0 0;
 }
-.ow-tm-tabs { display: flex; display: -webkit-flex; gap: 2px; }
+
+/* 分栏控件：与 .ow-tabs 同一几何（灰槽 + 分隔标签），只是不铺满整行 */
+.ow-tm-tabs {
+    display: inline-flex;
+    display: -webkit-inline-flex;
+    align-items: center; -webkit-align-items: center;
+    gap: 2px;
+    padding: 3px;
+    background: var(--ow-bg-sub);
+    border-radius: 9px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+}
+.ow-tm-tabs::-webkit-scrollbar { display: none; }
 .ow-tm-tab {
-    position: relative;
-    padding: 11px 10px 9px;
+    flex: 0 0 auto;
+    padding: 6px 10px;
     border: none;
-    background: none;
-    font-size: 14px;
+    background: transparent;
+    border-radius: 6px;
+    font-size: 13px;
+    line-height: 1;
     color: var(--ow-text-sub);
     cursor: pointer;
     white-space: nowrap;
+    transition: background-color .15s, color .15s;
+    -webkit-transition: background-color .15s, color .15s;
 }
-.ow-tm-tab:hover { color: var(--ow-text); }
-/* 选中态：品牌色 + 底部短横条（自绘，不依赖核心下划线控件） */
-.ow-tm-tab.is-on { color: var(--ow-primary-dark); font-weight: 600; }
-.ow-tm-tab.is-on::after {
-    content: "";
-    position: absolute;
-    left: 50%; bottom: 0;
-    width: 22px; height: 2.5px;
-    margin-left: -11px;
-    border-radius: 2px;
-    background: var(--ow-primary);
-}
-.ow-tm-sendbtn {
-    flex-shrink: 0; -webkit-flex-shrink: 0;
-    padding: 6px 14px;
-    border: none;
-    border-radius: 16px;
-    background: var(--ow-primary-strong);
-    color: var(--ow-on-accent);
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-}
-.ow-tm-sendbtn:hover { background: var(--ow-primary-dark); }
+.ow-tm-tab:hover { color: var(--ow-text-title); }
+/* 选中 = 主色实心（颜色差异之外几何不动，切换不跳宽）；刻意不加粗 */
+.ow-tm-tab.is-on { background: var(--ow-primary-strong); color: var(--ow-on-accent); }
 
-/* 空态 / 加载态 */
+/* 空态 / 加载态 / 翻页 */
 .ow-tm-empty { padding: 48px 16px; text-align: center; font-size: 13px; color: var(--ow-text-sub); }
-.ow-tm-foot { padding: 4px 0 12px; text-align: center; }
+.ow-tm-foot { padding: 10px 0 12px; text-align: center; }
 
-/* ---------- 波文卡片 ---------- */
+/* ---------- 波文条目：一行一块，细分割线切分（内容岛内不再各自成卡） ---------- */
 .ow-tm-card {
     display: flex; display: -webkit-flex;
     gap: 10px;
     padding: 14px 16px;
-    margin-bottom: 10px;
-    background: var(--ow-surface);
-    border: 1px solid var(--ow-border);
-    border-radius: 14px;
+    border-bottom: 1px solid var(--ow-border);
 }
+.ow-tm-card:last-child { border-bottom: none; }
 .ow-tm-card-av { flex-shrink: 0; -webkit-flex-shrink: 0; }
 .ow-tm-card-main { flex: 1 1 auto; -webkit-flex: 1 1 auto; min-width: 0; }
 
 .ow-tm-card-top {
     display: flex; display: -webkit-flex;
     align-items: baseline; -webkit-align-items: baseline;
-    gap: 8px;
+    gap: 6px;
 }
 .ow-tm-nick {
     font-size: 14px;
@@ -100,20 +109,21 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 60%;
+    max-width: 62%;
 }
-.ow-tm-nick:hover { text-decoration: underline; }
+.ow-tm-nick:hover { color: var(--ow-primary-dark); }
 .ow-tm-nick-s { font-size: 13px; }
 .ow-tm-time { font-size: 12px; color: var(--ow-text-sub); flex: 1 1 auto; -webkit-flex: 1 1 auto; }
-/* 删除：桌面悬停浮现，触屏设备常显（无 hover 可言，不玩隐藏） */
+/* 删除：图标钮与核心 .ow-icon-btn 同档（24px 热区、4px 圆角）；桌面悬停浮现，触屏常显 */
 .ow-tm-del {
     flex-shrink: 0; -webkit-flex-shrink: 0;
     display: flex; display: -webkit-flex;
     align-items: center; -webkit-align-items: center;
     justify-content: center; -webkit-justify-content: center;
-    width: 26px; height: 26px;
+    width: 24px; height: 24px;
+    padding: 0;
     border: none;
-    border-radius: 50%;
+    border-radius: 4px;
     background: none;
     color: var(--ow-text-sub);
     cursor: pointer;
@@ -122,74 +132,76 @@
 .ow-tm-del:hover { background: var(--ow-hover-bg); color: var(--ow-red); }
 .ow-tm-card:hover .ow-tm-del { opacity: 1; }
 @media (hover: none) {
-    .ow-tm-del { opacity: .72; }
+    .ow-tm-del { opacity: .7; }
 }
 
 .ow-tm-text {
-    margin-top: 5px;
-    font-size: 14.5px;
-    line-height: 1.75;
+    margin-top: 4px;
+    font-size: 14px;
+    line-height: 1.7;
     color: var(--ow-text);
     word-break: break-word;
     overflow-wrap: break-word;
 }
 
-/* ---------- 配图九宫格 ---------- */
+/* ---------- 配图九宫格（圆角 6 = 核心 .ow-msg-img 同档，不加边框不投影） ---------- */
 .ow-tm-imgs { display: flex; display: -webkit-flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .ow-tm-img {
     display: block;
-    border-radius: 8px;
-    border: 1px solid var(--ow-border);
-    cursor: zoom-in;
+    border-radius: 6px;
     background: var(--ow-bg-sub);
+    cursor: zoom-in;
 }
-/* 1 张：大图自由比例；2~4 张：两列；5 张起：三列（方格裁切） */
-.ow-tm-imgs.g1 .ow-tm-img { max-width: 320px; max-height: 320px; }
+.ow-tm-imgs.g1 .ow-tm-img { max-width: 300px; max-height: 300px; }
 .ow-tm-imgs.g2 .ow-tm-img,
 .ow-tm-imgs.g3 .ow-tm-img {
     width: 31.5%;
     height: 96px;
     object-fit: cover;
 }
-.ow-tm-imgs.g2 .ow-tm-img { width: 47.5%; height: 128px; }
+.ow-tm-imgs.g2 .ow-tm-img { width: 48%; height: 124px; }
 
-/* ---------- 动作条 ---------- */
+/* ---------- 动作条（文字 + 16px 线性图标，方角小热区，不做胶囊） ---------- */
 .ow-tm-acts {
     display: flex; display: -webkit-flex;
     align-items: center; -webkit-align-items: center;
-    gap: 4px;
-    margin-top: 10px;
+    gap: 2px;
+    margin-top: 8px;
+    margin-left: -6px;          /* 图标左边缘与正文对齐（抵消热区左内边距） */
 }
 .ow-tm-act {
     display: flex; display: -webkit-flex;
     align-items: center; -webkit-align-items: center;
-    gap: 5px;
-    padding: 5px 9px;
+    gap: 4px;
+    padding: 4px 6px;
     border: none;
-    border-radius: 14px;
+    border-radius: 4px;
     background: none;
     font-size: 12.5px;
+    line-height: 1;
     color: var(--ow-text-sub);
     cursor: pointer;
     white-space: nowrap;
 }
 .ow-tm-act:hover { background: var(--ow-hover-bg); color: var(--ow-text); }
 .ow-tm-act:disabled { opacity: .5; cursor: default; }
-.ow-tm-act.is-on { color: var(--ow-red); }
-.ow-tm-act.is-on:hover { background: var(--ow-hover-bg); color: var(--ow-red); }
-/* 非按钮的展示项（浏览数）：去手型、不上浮色 */
+/* 已选中（点赞 / 收藏）= 主色，与 .ow-tab.is-active / .ow-room-item.active 同一语言；
+   红色只表达危险（删除），不拿来表达「喜欢」 */
+.ow-tm-act.is-on { color: var(--ow-primary-dark); }
+.ow-tm-act.is-on:hover { color: var(--ow-primary-dark); background: var(--ow-hover-bg); }
+/* 纯展示项（浏览数）：没有点击行为，就不给手型和悬停反馈 */
 .ow-tm-plain { cursor: default; }
 .ow-tm-plain:hover { background: none; color: var(--ow-text-sub); }
 .ow-tm-act i, .ow-tm-plain i { font-style: normal; }
 
-/* ---------- 评论区 ---------- */
+/* ---------- 评论区（灰底块 + 6px 圆角，与弹窗里的说明块同一档） ---------- */
 .ow-tm-cmts {
-    margin-top: 10px;
-    padding: 10px 12px;
+    margin-top: 8px;
+    padding: 8px 10px;
     background: var(--ow-bg-sub);
-    border-radius: 10px;
+    border-radius: 6px;
 }
-.ow-tm-cmt-load { font-size: 12.5px; color: var(--ow-text-sub); padding: 4px 0; }
+.ow-tm-cmt-load { font-size: 12.5px; color: var(--ow-text-sub); padding: 2px 0; }
 .ow-tm-cmt { display: flex; display: -webkit-flex; gap: 8px; padding: 5px 0; }
 .ow-tm-cmt-main { flex: 1 1 auto; -webkit-flex: 1 1 auto; min-width: 0; }
 .ow-tm-cmt-meta { display: flex; display: -webkit-flex; align-items: baseline; -webkit-align-items: baseline; gap: 8px; }
@@ -205,18 +217,20 @@
 .ow-tm-thumb {
     position: relative;
     width: 72px; height: 72px;
-    border-radius: 8px;
+    border-radius: 6px;
     overflow: hidden;
-    border: 1px solid var(--ow-border);
+    background: var(--ow-bg-sub);
 }
 .ow-tm-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
-/* 缩略图上的移除按钮：图像像素语义的半透明黑底白叉（唯一允许写死的一处，见 PLUGIN.md 例外 1） */
+/* 缩略图上的移除钮：压在图像像素上的遮罩，是唯一不引 --ow-* 的地方
+   （图像语义：任何主题下都需要半透明黑底 + 白叉才看得清） */
 .ow-thumb-x {
     position: absolute;
     top: 3px; right: 3px;
     width: 20px; height: 20px;
+    padding: 0;
     border: none;
-    border-radius: 50%;
+    border-radius: 4px;
     background: rgba(0, 0, 0, .55);
     color: #fff;
     display: flex; display: -webkit-flex;
@@ -227,7 +241,7 @@
 .ow-tm-addimg {
     width: 72px; height: 72px;
     border: 1px dashed var(--ow-border-control);
-    border-radius: 8px;
+    border-radius: 6px;
     background: none;
     color: var(--ow-text-sub);
     cursor: pointer;
@@ -238,15 +252,15 @@
 .ow-tm-addimg:hover { border-color: var(--ow-primary); color: var(--ow-primary-dark); background: var(--ow-hover-bg); }
 .ow-tm-cmp-tip { font-size: 12px; color: var(--ow-text-sub); margin-top: 10px; }
 
-/* ---------- 移动端（≤720px，与核心断点一致） ---------- */
+/* ---------- 移动端（≤720px，与核心断点一致）：岛保留，只收内边距、放大点击区 ---------- */
 @media (max-width: 720px) {
     .ow-tm { max-width: none; }
-    .ow-tm-head { padding: 0 12px; margin: -12px -12px 8px; }
-    .ow-tm-tab { padding: 10px 8px 8px; font-size: 13.5px; }
-    .ow-tm-card { padding: 12px; border-radius: 12px; }
-    .ow-tm-nick { max-width: 48%; }
-    .ow-tm-imgs.g3 .ow-tm-img { width: 47.5%; height: 104px; }
-    .ow-tm-imgs.g2 .ow-tm-img { width: 47.5%; height: 104px; }
-    .ow-tm-text { font-size: 14px; }
-    .ow-tm-act { padding: 5px 7px; }
+    .ow-tm-head { padding: 8px 10px; }
+    .ow-tm-tab { padding: 6px 9px; }
+    .ow-tm-card { padding: 12px 14px; }
+    .ow-tm-nick { max-width: 50%; }
+    /* 动作条在窄屏放大热区（手指点击目标 ≥ 32px 高），图标与文字对齐不变 */
+    .ow-tm-act { padding: 6px 8px; }
+    .ow-tm-imgs.g3 .ow-tm-img { width: 48%; height: 104px; }
+    .ow-tm-imgs.g2 .ow-tm-img { width: 48%; height: 104px; }
 }

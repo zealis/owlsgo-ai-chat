@@ -1,6 +1,6 @@
 <?php
 /**
- * 时光机插件（time-machine v1.0.0）
+ * 时光机插件（time-machine v1.1.0）
  *
  * ── 做什么 ────────────────────────────────────────────────────
  * 类似朋友圈的动态广场。入口是 rail 上的一枚「时光机」按钮（sidebar.rail 钩子，
@@ -12,8 +12,9 @@
  * ── 能力 ──────────────────────────────────────────────────────
  *   · 分栏：最新（时间序）/ 热门（点赞序）/ 我的 / 收藏；每页 10 条，「加载更多」翻页；
  *   · 互动：点赞（每人每条一次，可取消）、收藏（可取消）、评论（≤500 字，平铺无楼中楼）、
- *     浏览计数（feed 拉到哪条就给哪条 +1）、正文一键复制；
- *   · 删除：作者本人或管理员；走敏感操作（POST + 一次性票据），连带清评论/点赞/收藏；
+ *     **浏览计数（v1.1.0 按访问者去重：同一人反复刷新只记一次，作者看自己的不计）**、
+ *     正文一键复制；
+ *   · 删除：作者本人或管理员；走敏感操作（POST + 一次性票据），连带清评论/点赞/收藏/浏览记录；
  *   · 游客：可浏览（rail 对游客也渲染，复用核心行为），所有写操作要求登录；
  *   · 内容安全：文字过 Chat::filterText / Chat::checkText（scene=message，
  *     sensitive-words 等插件照常打码/拦截）；图片只认本站 uploads/ 产物
@@ -78,6 +79,32 @@ function owTmBoot(): void
         created_at INTEGER      NOT NULL DEFAULT 0
     )");
     DB::createIndex('idx_otm_fav_key', 'plugin_time_machine_fav', 'post_id,uid', true);
+
+    /* 浏览去重（v1.1.0）：views 只增不刷 —— 同一访问者对同一条波文只计一次。
+       v1.0.0 的写法是「feed 拉到就 +1」，一次刷新加一次，轻轻松松刷成几百，
+       站方指出计数不准确。现在用这张表记住「谁看过哪条」：
+         · 登录用户逐账号去重（viewer = u<uid>）；
+         · 游客按匿名会话键去重（Sec::anonKey() 派生，同一浏览器只算一个人）；
+         · 作者看自己的波文不计（自己刷自己的浏览没有意义）。
+       表不存在（从 v1.0.0 升级上来）时顺手把旧计数清零：那些数字全是刷出来的，
+       保留它等于把错的数留在新逻辑里。表存在性用一次 SELECT 试探 —— 三种驱动都适用。 */
+    $fresh = false;
+    try { DB::val('SELECT COUNT(*) FROM plugin_time_machine_view'); }
+    catch (Throwable $e) { $fresh = true; }
+    DB::run("CREATE TABLE IF NOT EXISTS plugin_time_machine_view (
+        post_id    INTEGER      NOT NULL DEFAULT 0,
+        viewer     VARCHAR(48)  NOT NULL DEFAULT '',   -- u<uid> / g<24位匿名摘要>
+        seen_at    INTEGER      NOT NULL DEFAULT 0
+    )");
+    DB::createIndex('idx_otm_view_key', 'plugin_time_machine_view', 'post_id,viewer', true);
+    if ($fresh) DB::run('UPDATE plugin_time_machine_post SET views=0');
+}
+
+/** 浏览去重用的访问者键：登录用户逐账号，游客按匿名会话（同一浏览器算一个人） */
+function owTmViewerKey(array $actor): string
+{
+    if (($actor['kind'] ?? '') === 'user') return 'u' . (int)($actor['id'] ?? 0);
+    return 'g' . substr(md5(Sec::anonKey()), 0, 24);
 }
 
 /* ============================ 行组装 ============================ */
@@ -154,11 +181,27 @@ Plugin::asset('css', 'time-machine/style.css');
 /**
  * 核心「消息/联系人」标签是 display 切换，插件面板交给 onShow 后主区归插件管，
  * 样式必须无条件注入（弹窗里的发波文编辑器也用它），做法与 batch-ops 同一口径。
+ * ⚠️ 版本参数用**插件自己的版本**（pv）：核心版本不变时只改插件 CSS，
+ *    若只带 OWLSGO_VERSION，浏览器会命中旧缓存，站方会以为样式没生效。
  */
 Plugin::on('page.head', function (): void {
     echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=time-machine&file=style.css&v='
-        . OWLSGO_VERSION . '">' . "\n";
+        . OWLSGO_VERSION . '&pv=' . rawurlencode(owTmVersion()) . '">' . "\n";
 });
+
+/** 插件自身版本（取自 plugin.json；读不到就回落到 0，只影响缓存键） */
+function owTmVersion(): string
+{
+    static $v = null;
+    if ($v !== null) return $v;
+    $v = '0';
+    $f = __DIR__ . '/plugin.json';
+    if (is_file($f)) {
+        $j = json_decode((string)@file_get_contents($f), true);
+        if (is_array($j) && !empty($j['version'])) $v = (string)$j['version'];
+    }
+    return $v;
+}
 
 /* ============================ API：波文流 ============================ */
 
@@ -210,17 +253,37 @@ Plugin::route('plugin_time_machine_feed', function (array $ctx): void {
     foreach ($rows as $r) $ids[] = (int)$r['id'];
     [$liked, $faved] = owTmMineSets($ids, $uid);
 
-    // 浏览计数：feed 拉到即算浏览（mine 除外）；批量 +1，一次 SQL
-    if ($ids && $tab !== 'mine') {
+    // 浏览计数（v1.1.0）：按访问者去重，同一人对同一条只记一次；作者看自己的不计。
+    // $bumped 记住「本次真的计上了」的那些，回给前端时把这一次显示出来（行是查在前、更在后）。
+    $bumped = [];
+    if ($ids) {
+        $viewer = owTmViewerKey($actor);
         $ph = implode(',', array_fill(0, count($ids), '?'));
-        DB::run("UPDATE plugin_time_machine_post SET views=views+1 WHERE id IN ({$ph})", $ids);
+        $seen = [];
+        foreach (DB::all("SELECT post_id FROM plugin_time_machine_view WHERE viewer=? AND post_id IN ({$ph})",
+            array_merge([$viewer], $ids)) as $v) {
+            $seen[(int)$v['post_id']] = true;
+        }
+        foreach ($rows as $r) {
+            $pid = (int)$r['id'];
+            if (isset($seen[$pid])) continue;
+            if ($uid > 0 && (int)$r['uid'] === $uid) continue;   // 自己刷自己的浏览没有意义
+            // insertIgnore：并发下两条请求同时到，也只会写入一行
+            DB::insertIgnore('plugin_time_machine_view', [
+                'post_id' => $pid, 'viewer' => $viewer, 'seen_at' => time(),
+            ], ['post_id', 'viewer']);
+            $bumped[$pid] = true;
+        }
+        if ($bumped) {
+            $bph = implode(',', array_fill(0, count($bumped), '?'));
+            DB::run("UPDATE plugin_time_machine_post SET views=views+1 WHERE id IN ({$bph})", array_keys($bumped));
+        }
     }
 
     $posts = [];
     foreach ($rows as $r) {
         $o = owTmOut($r);
-        // 浏览数返回**自增后**的值：行是先取后更新的，旧值会让首次浏览显示 0
-        if ($tab !== 'mine') $o['views'] = (int)$o['views'] + 1;
+        if (isset($bumped[$o['id']])) $o['views'] = (int)$o['views'] + 1;
         $o['liked'] = isset($liked[$o['id']]);
         $o['faved'] = isset($faved[$o['id']]);
         $posts[] = $o;
@@ -430,6 +493,7 @@ Plugin::route('plugin_time_machine_delete', function (array $ctx): void {
     DB::run('DELETE FROM plugin_time_machine_comment WHERE post_id=?', [$pid]);
     DB::run('DELETE FROM plugin_time_machine_like WHERE post_id=?', [$pid]);
     DB::run('DELETE FROM plugin_time_machine_fav WHERE post_id=?', [$pid]);
+    DB::run('DELETE FROM plugin_time_machine_view WHERE post_id=?', [$pid]);
     Sec::log('time_machine_delete', (string)$actor['id'], ['post' => $pid, 'owner' => (int)$r['uid']]);
     Api::json(['ok' => true, 'msg' => '已删除']);
 });
