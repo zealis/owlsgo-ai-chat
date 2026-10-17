@@ -1,5 +1,5 @@
 /**
- * 批量操作插件（batch-ops v1.2.0）
+ * 批量操作插件（batch-ops v1.2.5）
  *
  * 全部颜色只引用核心 --ow-* 变量，深浅两套主题自动跟随（不写 [data-theme] 覆盖块）。
  * 涉及的类都在核心语义内挑过：选中态「比底色深一档」用 --ow-active-bg，
@@ -142,11 +142,18 @@
 
 /* ---------- 聊天记录卡片（合并转发的落地形态，仿微信） ----------
    卡片替掉原气泡（正文就是 [聊天记录]#token# 标记），落在消息体里；
-   mine 消息的 .ow-msg-body 是右对齐，卡内显式恢复左读。 */
+   mine 消息的 .ow-msg-body 是右对齐，卡内显式恢复左读。
+   v1.2.5：**固定尺寸 300×164**（与链接卡片同一取向）——标题单行、
+   预览恒占 4 行（不足由空行补位）、底栏贴底，加载/失败态同高，
+   一屏里多张卡不会参差不齐。窄屏宽度随容器收缩（max-width:100%），
+   高度不变；每行 nowrap + 省略号，长内容不会把卡片撑开。 */
 .owb-rec {
-    display: inline-block;
-    width: 100%;
-    max-width: 300px;
+    display: inline-flex; display: -webkit-inline-flex;
+    flex-direction: column; -webkit-flex-direction: column;
+    width: 300px;
+    max-width: 100%;
+    height: 164px;
+    box-sizing: border-box;
     text-align: left;
     background: var(--ow-bg);
     border: 1px solid var(--ow-border);
@@ -156,22 +163,34 @@
     vertical-align: top;
 }
 .owb-rec:hover { border-color: var(--ow-primary); }
-.owb-rec-t { font-size: 14px; color: var(--ow-text-title); margin-bottom: 6px; }
+.owb-rec-t {
+    flex: none; -webkit-flex: none;
+    font-size: 14px;
+    line-height: 20px;
+    color: var(--ow-text-title);
+    margin-bottom: 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
 .owb-rec-l {
+    flex: none; -webkit-flex: none;
+    height: 22px;
+    line-height: 22px;
     font-size: 13px;
     color: var(--ow-text-sub);
-    line-height: 1.7;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 .owb-rec-n { color: var(--ow-text); }          /* 昵称比内容深半档 */
-.owb-rec-s { font-size: 12px; color: var(--ow-text-sub); padding: 2px 0; }
+.owb-rec-s { flex: none; -webkit-flex: none; font-size: 12px; line-height: 22px; color: var(--ow-text-sub); }
 .owb-rec-f {
-    margin-top: 8px;
+    margin-top: auto;                          /* 贴底：上方内容多少都不影响底栏位置 */
     padding-top: 8px;
     border-top: 1px solid var(--ow-border);
     font-size: 12px;
+    line-height: 17px;
     color: var(--ow-text-sub);
 }
 /* 记录里再嵌记录（弹窗里的小卡）：一行占位，点击继续下钻 */

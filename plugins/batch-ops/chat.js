@@ -1,5 +1,5 @@
 /**
- * 批量操作插件 · 聊天页（batch-ops v1.2.4）
+ * 批量操作插件 · 聊天页（batch-ops v1.2.5）
  *
  * ── 两块内容 ──────────────────────────────────────────────────
  * ① 消息多选：消息右键「多选」（或「转发」单条直达）进入选择模式，
@@ -179,9 +179,13 @@
         }
         if (info === null) return '<div class="owb-rec-t">聊天记录</div><div class="owb-rec-s">聊天记录已过期或不存在</div>';
         var h = '<div class="owb-rec-t">' + esc(info.title || '聊天记录') + '</div>';
-        for (var i = 0; i < info.preview.length; i++) {
-            h += '<div class="owb-rec-l"><span class="owb-rec-n">' + esc(info.preview[i].nick) + '</span> '
-                + esc(info.preview[i].text) + '</div>';
+        /* 预览恒占 4 行（不足补空行）：卡片高度固定后，每条记录的卡片
+           无论内容多少都保持同一尺寸，一屏多张卡不会参差不齐。 */
+        for (var i = 0; i < 4; i++) {
+            var pv = info.preview[i];
+            h += pv
+                ? '<div class="owb-rec-l"><span class="owb-rec-n">' + esc(pv.nick) + '</span> ' + esc(pv.text) + '</div>'
+                : '<div class="owb-rec-l"></div>';
         }
         h += '<div class="owb-rec-f">查看 ' + esc(info.count) + ' 条转发消息</div>';
         return h;
