@@ -18,7 +18,6 @@
 
     var $ = function (id) { return d.getElementById(id); };
     var A = 'plugin_starlight_hall_';
-    var booted = false;
     var curUid = 0;
 
     /* ---------- 小工具 ---------- */
@@ -449,19 +448,26 @@
 
     /* ================= 启动 ================= */
 
+    /**
+     * 初始化（幂等）。
+     * ⚠️ 「已初始化」标记必须挂在**被注入的 DOM 元素**上，不能存成模块变量：
+     *    后台是 SPA，点侧边栏同一个插件项会重新拉一次页面 HTML —— 空容器
+     *    （#owShLvStats / #owShLvTrend 都是空的）覆盖掉已渲染内容；模块变量此时
+     *    仍是 true，初始化被挡住 → 二次进入页面时卡片全空、只有页签和标题。
+     *    标记随元素一起被替换，新 HTML 自然没有标记 → 重跑。与 attachment-manager
+     *    的 data-am-inited、login-logs 的 data-ll-inited 同一写法。
+     */
     function boot() {
-        if (booted || !$('owShLvStats')) return;
-        booted = true;
+        var el = $('owShLvStats');
+        if (!el || el.getAttribute('data-sh-inited') === '1') return;
+        el.setAttribute('data-sh-inited', '1');
         w.OwSHAdmin.load();
     }
 
     function watch() {
         var main = d.getElementById('owAdminMain');
         if (!main || !w.MutationObserver) { boot(); return; }
-        new w.MutationObserver(function () {
-            if (!$('owShLvStats')) { booted = false; return; }
-            boot();
-        }).observe(main, { childList: true, subtree: true });
+        new w.MutationObserver(boot).observe(main, { childList: true, subtree: true });
         boot();
     }
 

@@ -12,7 +12,6 @@
 
     var $ = function (id) { return d.getElementById(id); };
     var A = 'plugin_redis_';
-    var booted = false;
 
     function esc(s) {
         return String(s == null ? '' : s)
@@ -262,9 +261,19 @@
 
     /* ================= 启动 ================= */
 
+    /**
+     * 初始化（幂等）。
+     * ⚠️ 「已初始化」标记必须挂在**被注入的 DOM 元素**上，不能存成模块变量：
+     *    后台是 SPA，点侧边栏同一个插件项会重新拉一次页面 HTML —— 空容器覆盖掉
+     *    已渲染内容；模块变量此时仍是 true，初始化被挡住 → 二次进入时卡片全空
+     *    （starlight-hall 2026-10-18 用户截图暴露的同一病灶）。
+     *    标记随元素一起被替换，新 HTML 没有标记 → 重跑。与 attachment-manager
+     *    的 data-am-inited、login-logs 的 data-ll-inited 同一写法。
+     */
     function boot() {
-        if (booted || !$('owRdsKpi')) return;
-        booted = true;
+        var el = $('owRdsKpi');
+        if (!el || el.getAttribute('data-rds-inited') === '1') return;
+        el.setAttribute('data-rds-inited', '1');
         R.load();
         R.probe();
     }
@@ -272,10 +281,7 @@
     function watch() {
         var main = d.getElementById('owAdminMain');
         if (!main || !w.MutationObserver) { boot(); return; }
-        new w.MutationObserver(function () {
-            if (!$('owRdsKpi')) { booted = false; return; }
-            boot();
-        }).observe(main, { childList: true, subtree: true });
+        new w.MutationObserver(boot).observe(main, { childList: true, subtree: true });
         boot();
     }
 

@@ -27,7 +27,6 @@
     var $ = function (id) { return d.getElementById(id); };
     var A = 'plugin_chat_scripts_admin_';
     var F = 'plugin_chat_scripts_';
-    var booted = false;
     var logLoaded = false;      // 发送记录懒加载：没点过那个页签就不打接口
 
     function esc(s) {
@@ -80,9 +79,23 @@
     /* ---------- 启动 ---------- */
 
     function guardBoot() {
-        if (booted) return;
-        if (!$('owCsPane-snip')) return;          // 不是本插件的后台页
-        booted = true;
+        /**
+         * ⚠️ 「已初始化」标记挂在被注入的容器上，**不能**存成模块变量（原来是
+         *    `var booted`）：后台是 SPA，点侧边栏同一个插件项会重新拉一次页面
+         *    HTML —— 空表格覆盖掉已渲染内容，而模块变量跨注入存活、永远不会
+         *    归位 → 二次进入时初始化被挡住，列表全空。标记随元素一起被替换，
+         *    新 HTML 没有标记 → 重跑。与 attachment-manager 的 data-am-inited
+         *    同一写法。
+         */
+        var pane = $('owCsPane-snip');
+        if (!pane || pane.getAttribute('data-cs-inited') === '1') return;   // 不是本插件的后台页 / 已初始化
+        pane.setAttribute('data-cs-inited', '1');
+
+        /* 页内状态归位到「服务端刚渲染出来的样子」：默认公共话术页、发送记录未加载。
+           不归位的话：二次进入时 CS.tab 还停在上次的「发送记录」，而 logLoaded 仍是
+           true → 再点「发送记录」被 `!logLoaded` 挡住，表格永远空白。 */
+        CS.tab = 'snip';
+        logLoaded = false;
 
         var tabs = d.querySelectorAll('.ow-cs-tab'), i;
         for (i = 0; i < tabs.length; i++) {
