@@ -63,12 +63,23 @@
        落在同一水平线上**（见文件末尾 v1.1.17 的桌面端对齐块）。
        改这个值只需改这一处，两侧同时跟随，不会各自漂移。 */
     --ow-topbar-h: 57px;
-    /* 顶部品牌条 .ow-brand 的高度带（与 --ow-topbar-h **不是同一个元素**：
-       那条是主区内 .ow-topbar 自己算出来的 57，这条是全宽品牌条）。
+    /* 顶部品牌条 .ow-brand 的高度带（**不是** .ow-topbar 那条 57）：
        实测 = padding 9+9 + 头像胶囊 28 + 下边框 1 = 47px。
        抽成变量是因为窄屏有三处 fixed 浮层要「让开品牌条」（.ow-mask / .ow-online /
-       .ow-sidebar 的 top），原先各写各的 57px，改高度必漏一处。 */
+       .ow-sidebar 的 top），原先各写各的 57px，改高度必漏一处。
+       v1.5.0：品牌条右侧的胶囊已挪进账号菜单，这个值现在只在窄屏（≤720px，
+       品牌条独占一行）还可能比 --ow-head-h 小；宽屏下品牌条被 flex stretch 拉到整带高。 */
     --ow-brand-h: 47px;
+    /* v1.5.0：顶部「一条带」的高度（品牌条 + 消息顶栏并排的那一行）。
+       宽屏 = 顶栏高 57（品牌条被 stretch 拉平，两条下边框才能落在同一像素行）；
+       窄屏（≤720px）两者上下堆叠，这条变量在文末响应式块里重定义为 品牌条 + 顶栏。
+       用途只有一个：三处 fixed 浮层（.ow-mask / .ow-online / .ow-sidebar）的 top
+       —— 它们必须让开整条带子，而不是只让开品牌条。 */
+    --ow-head-h: var(--ow-topbar-h);
+    /* v1.5.0：左侧两列的宽度真源。品牌条要精确等于「rail + 会话列表」的宽度
+       （右沿与侧栏右边框同一条竖线），所以这三次宽度只能有一处定义。 */
+    --ow-rail-w: 56px;
+    --ow-sidebar-w: 240px;
     /* v1.3.25：以下是**为了深/浅色切换**补的语义变量。
        原先这些位置写死 #FFFFFF / #F5F5F5，深色模式无法覆盖 —— 只能靠逐个
        选择器重写，既啰嗦又容易漏。收进变量后，深色只需在 [data-theme="dark"]
@@ -1046,9 +1057,8 @@ input[type=range] {
    ========================================================================== */
 .ow-chat-body { overflow: hidden; }
 .ow-layout {
-    /* v1.3.6：改为「上下两段」——顶部品牌条横跨全宽，下面才是 rail+侧栏+主区三栏。
-       此前三栏直接铺满 100vh，品牌条锁在侧栏内部，rail 的第一个图标顶在最上面，
-       与右侧的品牌名互相抢「谁是这一行的主角」。 */
+    /* v1.3.6：改为「上下两段」——顶部一条带，下面才是 rail+侧栏+主区三栏。
+       v1.5.0：上面那一段从「全宽品牌条」变成「品牌条 + 消息顶栏并排的一条带」，见 .ow-head。 */
     display: flex; display: -webkit-flex;
     flex-direction: column; -webkit-flex-direction: column;
     height: 100vh;
@@ -1061,6 +1071,29 @@ input[type=range] {
     overflow: hidden;        /* 任何情况下都不让页面整体横向/纵向滚动，滚动交给消息区 */
 }
 
+/* ---------- 顶部一条带（v1.5.0）----------
+   站方要求把「消息标题」（.ow-topbar，群名那一行）提到顶上，并让品牌条只显示到
+   .ow-sidebar 结束 —— 于是这一带 = 左边品牌条（rail + 侧栏宽）+ 右边整条顶栏。
+   布局后果：rail 与会话列表都从带子下方开始（.ow-body 是它的下一个 flex 子项），
+   主区 .ow-main 里已经**没有**顶栏了（DOM 上搬到了这里）。
+
+   ⚠️ 等高是硬约束：品牌条 47 + 顶栏 57 并排，下边框会差 10px（肉眼一眼看出两层）。
+      这里**不给 .ow-brand 定高**，靠默认的 align-items:stretch 把它拉到整带高，
+      55px 也好 60px 也好，日后只改 --ow-topbar-h 一处，两边自动跟随。
+   ⚠️ 宽度同理：.ow-brand 的宽度由 --ow-rail-w + --ow-sidebar-w 算出来，
+      不写 296 —— 侧栏宽度一变，品牌条的右沿必须跟着走，否则两条竖线错开 1~N px。
+   ⚠️ 窄屏（≤720px）这一带改回上下堆叠（品牌条一行、顶栏一行），见文末响应式块；
+      那里 .ow-brand 的 width 回到 auto。 */
+.ow-head {
+    display: flex; display: -webkit-flex;
+    align-items: stretch; -webkit-align-items: stretch;
+    /* ⚠️ 刻意**不写 height**：带高由内容里较高的那一半（顶栏 57）决定，
+       品牌条靠 stretch 被拉到同一高度。写成 height:var(--ow-head-h) 会让
+       插件改矮顶栏时（room-embed 嵌入态把 .ow-topbar 压到 44px）在下面留一条空带。
+       --ow-head-h 只用于窄屏三处 fixed 浮层的 top，不参与这里的排版。 */
+    flex-shrink: 0; -webkit-flex-shrink: 0;
+}
+
 /* 左侧栏 */
 /* ---------- 左侧一级导航条 rail（v1.3.4） ----------
    取代原先侧栏顶部的横向「消息 / 联系人」标签条：切换控件从顶部移到最左侧，
@@ -1070,7 +1103,8 @@ input[type=range] {
    ⚠️ 选中态复用主色实心（--ow-primary-strong），与 .ow-btn-primary / .ow-tab.is-active
    同一套「选中 = 主色」语言。 */
 .ow-rail {
-    width: 56px;
+    /* v1.5.0：宽度收进 --ow-rail-w —— 品牌条要精确等于 rail + 侧栏宽，见 .ow-head 注释 */
+    width: var(--ow-rail-w);
     flex-shrink: 0; -webkit-flex-shrink: 0;
     background: var(--ow-bg-chat);
     border-right: 1px solid var(--ow-border);
@@ -1109,7 +1143,8 @@ input[type=range] {
     align-items: center; -webkit-align-items: center;
     gap: 4px;
 }
-/* v1.3.142：rail 顶部的头像（.ow-rail-me）已移到品牌条右侧，见下面 .ow-brand-me。 */
+/* v1.3.142：rail 顶部的头像（.ow-rail-me）已移出 rail；v1.5.0 起它就在下面
+   rail 底部账号菜单的首行（.ow-ctx-me），rail 顶部不再有任何头像。 */
 
 /* v1.3.6：三栏主体容器 —— 品牌条之下的全部横向空间。
    min-height:0 与 .ow-main 的 min-height:0 是同一条链上的规矩：
@@ -1122,7 +1157,8 @@ input[type=range] {
 }
 
 .ow-sidebar {
-    width: 240px;
+    /* v1.5.0：宽度收进 --ow-sidebar-w（品牌条宽度 = --ow-rail-w + 这条） */
+    width: var(--ow-sidebar-w);
     border-right: 1px solid var(--ow-border);
     /* v1.3.9：顶部留白 12px —— 会话列表不再紧贴品牌条底边（两者底色相邻、视觉上像挤在一起）。
        ⚠️ 数值必须与 .ow-rail 的 padding-top 一致：这样 rail 的「消息」图标
@@ -1147,6 +1183,11 @@ input[type=range] {
     gap: 8px;
     padding: 9px 16px;
     border-bottom: 1px solid var(--ow-border);
+    /* v1.5.0：品牌条不再横跨全宽 —— 它只占「rail + 会话列表」两列，
+       右侧整条让给消息顶栏（见 .ow-head）。宽度由两个宽度变量算出来，
+       不许写 296：rail/侧栏任一改宽，品牌条的右沿必须跟着走。 */
+    width: calc(var(--ow-rail-w) + var(--ow-sidebar-w));
+    flex: 0 0 auto; -webkit-flex: 0 0 auto;
     font-size: 16px;
     /* v1.3.6：品牌条移到布局顶层后横跨全宽，防止被 flex 压缩；
        搜索按钮的负边距上限（-8px）在视口宽度下更是毫无压力。 */
@@ -1158,11 +1199,11 @@ input[type=range] {
     background: var(--ow-brand-bg);
     font-weight: 600;
     color: var(--ow-text-title);
-    /* 条高真源见文件头 --ow-brand-h。v1.3.48 搜索入口挪进侧栏后这条不再有 28px 子元素撑着，
-       当时用 min-height 钉住 57；v1.3.142 品牌条右侧补了头像胶囊（28px，flex:none），
-       于是自然高度重新成立 = 9+28+9+1 = 47。这里保留 min-height 只为止住内容异常时的塌陷，
-       它必须等于 --ow-brand-h，否则窄屏三处 top:var(--ow-brand-h) 的浮层会盖住品牌条。
-       v1.4.1：站方要求改矮，57 → 47（padding 14 → 9），胶囊仍是 28px 不动。 */
+    /* 条高真源见文件头 --ow-brand-h。
+       v1.5.0：宽屏下这条与 .ow-topbar 并排在同一条带子里，实际高度由 flex 的 stretch
+       拉到 --ow-head-h（= 顶栏 57）——品牌条**不再自己决定高度**，两条下边框才能齐平。
+       这里保留 min-height:47 只服务窄屏（≤720px）：那时品牌条独占一行，
+       高度 = padding 9×2 + 26px logo 行 + 1 = 47，窄屏浮层的 top 也引用同一个变量。 */
     min-height: var(--ow-brand-h);
 }
 /* v1.2.25：28px → 22px。品牌条总高 57px（14px 上下内边距 + 28px 内容），
@@ -1191,67 +1232,26 @@ input[type=range] {
    不会把品牌条顶高，
    顶栏与左侧栏的分隔线位置不受影响。
    光学补偿同步按公式重算：26 × 8.8% × 0.75 ≈ 1.7px（22px 时是 1.5px）。 */
-/* ⚠️ 必须用子选择器 `> img`：v1.3.142 起品牌条右侧多了一颗头像（.ow-brand-me 里的 <img>），
-   后代写法会把那条 26px + 光学下沉一起套到头像上，头像被撑大、还被往下推 1.7px。 */
+/* ⚠️ 保留子选择器 `> img`：v1.3.142~v1.4.x 期间品牌条右侧还有一颗头像 <img>，
+   后代写法会把 26px + 光学下沉一起套到头像上。v1.5.0 胶囊搬走后这里只剩 logo，
+   写法照旧 —— 将来再往品牌条里塞图片时不会又踩一次。 */
 .ow-brand > img { width: 26px; height: 26px; transform: translateY(1.7px); -webkit-transform: translateY(1.7px); }
 /* v1.3.142：站点名可以被压缩截断，头像 + 昵称那颗贴在右端（margin-left:auto）。 */
 .ow-brand-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* ---------- 品牌条右侧的「头像 + 昵称」（v1.3.142） ----------
-   样式参考本站 参考文献/forum 的顶栏 user-chip：整块就是「我的主页」入口、
-   胶囊形、窄屏不许被压缩（flex:none，否则头像被挤扁）、**不加 title 悬浮提示**
-   （气泡会挡住旁边的元素）。
-   ⚠️ 高度是承重的：这颗胶囊**就是**品牌条内容区的唯一支点 ——
-     条高 = padding 9×2 + 胶囊 28 + 下边框 1 = 47 = --ow-brand-h，
-     窄屏三处浮层（.ow-mask / .ow-online / .ow-sidebar）的 top 直接引用同一个变量。
-     胶囊 28px 一动整条就跟着动：头像 20(.ow-avatar-xs) + padding 3×2 + border 1×2 = 28。
-     （主区那条 .ow-topbar 的 57px 走 --ow-topbar-h，与这条无关，别顺手一起改。）
-   ⚠️ 常态**不填底色**：品牌条本身就是 #E4E4E4 那档灰，再涂一张白上去就像浮起来的纸
-     （项目里踩过同款）；hover 用 --ow-brand-hover(#D2D2D2) —— 比底色深一档，
-     通用 --ow-bg-chat-hover(#EBEBEB) 在这里会变成「越悬停越浅」。 */
-.ow-brand-me {
-    display: flex; display: -webkit-flex;
-    align-items: center; -webkit-align-items: center;
-    gap: 8px;
-    margin-left: auto;
-    flex: none; -webkit-flex: none;
-    height: 28px;
-    padding: 3px 10px 3px 3px;
-    border: 1px solid transparent;
-    border-radius: 999px;
-    background: none;
-    color: var(--ow-text-title);
-    font: inherit;
-    font-size: 14px;
-    cursor: pointer;
-    transition: background .15s;
-    -webkit-transition: background .15s;
-}
-.ow-brand-me:hover, .ow-brand-me:focus { background: var(--ow-brand-hover); outline: none; }
-/* v1.3.143：昵称上移 1px 的光学补偿 —— 站方反馈「头像和昵称不太对齐」。
-   几何上其实是对齐的（实测头像盒中心 28.17、昵称行盒中心 28.17），歪的是**墨迹**：
-   .ow-brand-me 的 align-items:center 按盒子居中，而这支字体栈的 font bounding box 是
-   ascent 15 / descent 4（14px 下，chrome measureText 实测）—— 行盒中心比基线高 5.5px，
-   字身（去掉降部的可见主体）中心却只在基线上方 aAscent/2，于是文字整体看着下沉。
-   按字身算各档需要补多少（实测 aAscent/aDescent）：
-     · 汉字 / 中英混排（哈哈哈、管理员、游客4f34b）11/1 → 需 -0.8px
-     · 首字母大写拉丁（Alpha）11/3 → 需 -0.3px
-     · 全小写带降部（oygs）8/4 → 需 -1.8px ← 站方自己这个账号，头像才 20px，最刺眼
-   取 -1px 落在中间：三档都收在 ±0.8px 内。补到 -2px 能把全小写压平，但占多数的汉字
-   昵称会反过来偏高 1.2px，等于换个方向歪；再往上的残差是降部（y/g 的尾巴）本身，CSS 改不动。
-   ⚠️ transform 不参与布局：胶囊仍 28px、品牌条仍由 --ow-brand-h 钉住（v1.4.1 起 47px），
-     窄屏三处浮层的 top 引用同一变量，都不受这两条 transform 影响。
-   ⚠️ 与 .ow-brand > img 的 translateY(1.7px) 同一套路，但方向相反 —— 那颗是图标下沉去追文字，
-      这里是文字追图标，两者不叠加（选择器互斥，一个 > img、一个 .ow-brand-me-n）。
-   长昵称截断，不把胶囊撑出屏幕（头像那侧的 padding 只有 3px，靠这里收）。 */
-.ow-brand-me-n { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    transform: translateY(-1px); -webkit-transform: translateY(-1px); }
+/* ---------- 「头像 + 昵称」胶囊（v1.3.142 建，v1.5.0 搬进账号菜单） ----------
+   站方要求：品牌条只显示到侧栏结束，右侧让给消息顶栏 —— 胶囊在 296px 宽的条子里
+   已经放不下（会挤掉站点名），所以整颗搬进 rail 底部账号菜单的**首行**
+   （选 .ow-ctx-menu 那套外壳，样式见下方「账号菜单首行」，类名 .ow-ctx-me）。
+   ⚠️ 这里不再保留 .ow-brand-me / .ow-brand-me-n：留着就是两条会被复制走的死样式，
+      而它们的高度（28px）当年是品牌条 47px 的支点，误改会连带改掉窄屏浮层位置。
+   历史参数（胶囊为何 28px、昵称为何 -1px 上移）→ 见 .ow-ctx-me 那一段。 */
 /* v1.2.31：站点名右侧的**搜索按钮**（原竖三点菜单已删除）。
    v1.2.32 位置修正：原来用 line-height 顶行 + 继承 .ow-icon-btn 的 padding，
    图标在 28px 方框里偏上、按钮也显得偏左。改为 flex 双向居中 + 加大右间距。
    ⚠️ 历史注：这个 28px 曾经是**品牌条高度的支点**（v1.3.48 之前搜索按钮还在这条上）。
-   搜索入口挪进 .ow-sidebar 之后，支点换成了下面的 .ow-brand-me 胶囊（同样 28px），
-   条高由 --ow-brand-h 单点定义（v1.4.1 起 47px）；窄屏浮层的 top 引用同一变量，
-   改高度只需改变量，别再回到「两处各写一个像素值」。 */
+   搜索入口挪进 .ow-sidebar 之后，支点换成了右侧那颗胶囊（同样 28px）；
+   v1.5.0 胶囊搬进账号菜单、品牌条改成与顶栏等高 —— 现在宽屏下条高由 --ow-head-h 决定，
+   窄屏独占一行时仍走 --ow-brand-h。改高度只需改变量，别再回到「两处各写一个像素值」。 */
 /* ---------- 侧栏顶部搜索框（v1.3.48）----------
    由品牌条上的搜索图标改造而来：位置从全宽顶栏挪进 .ow-sidebar 第一行，
    形态从「28px 图标按钮」变成「看着能输入的搜索框」。
@@ -1659,13 +1659,17 @@ input[type=range] {
     position: relative;
 }
 .ow-topbar {
+    /* v1.5.0：作为 .ow-head 的右半段（品牌条吃固定宽，它吃掉剩下的全部）——
+       所以这里既要 flex:1，也必须 min-width:0：群名一长，flex 项默认不会缩到
+       内容以下，会把整条带子顶出视口右沿。 */
+    flex: 1; -webkit-flex: 1;
+    min-width: 0;
     display: flex; display: -webkit-flex;
     align-items: center; -webkit-align-items: center;
     gap: 10px;
     flex-shrink: 0; -webkit-flex-shrink: 0;   /* 头部与输入栏不参与压缩 */
-    /* v1.1.17：显式高度并引用 --ow-topbar-h，供右侧栏首行对齐使用。
-       原先高度是「padding 10+10 + 图标钮 36 + 边框 1」算出来的 57px，
-       数值本身不变，只是把它变成**可被引用的真源**（见文件末尾对齐块）。 */
+    /* v1.1.17：显式高度并引用 --ow-topbar-h。v1.5.0 起它同时是 --ow-head-h 的真源
+       （品牌条靠 stretch 跟着它走），所以这个值现在是**整条顶部带**的高度。 */
     height: var(--ow-topbar-h);
     padding: 10px 16px;
     border-bottom: 1px solid var(--ow-border);
@@ -2019,10 +2023,33 @@ input[type=range] {
 .ow-ctx-item:hover .ow-ctx-ico { color: inherit; }
 .ow-ctx-menu a:hover { background: var(--ow-hover-bg); color: var(--ow-primary-dark); }
 
-/* ---------- v1.1.15 品牌区（站点名右侧竖三点）菜单 ----------
-   与右键菜单共用 .ow-ctx-menu 外壳，因此下面三条只覆盖差异部分。 */
-/* 首行「头像 + 昵称」：padding 压到 8px14px，让 28px 头像不显拥挤 */
+/* ---------- 菜单首行「头像 + 昵称」（v1.1.15 建，v1.5.0 起改挂账号菜单） ----------
+   与右键菜单共用 .ow-ctx-menu 外壳，因此下面几条只覆盖差异部分。
+   v1.5.0：品牌条只占 rail+侧栏宽之后，那颗 28px 胶囊放不进条子里了，整颗搬到这里 ——
+   rail 底部账号菜单的**首行**，下面接一条分隔线，再往下才是创建群聊 / 设置 / …
+   ⚠️ 胶囊在这里不再需要 28px 的固定高度+边框（那套是为「灰底条子上不涂白」定的）：
+      菜单是白面板，行高交给 a 的 padding（8+20+8=36），头像仍是最小档 xs=20px。
+   ⚠️ 昵称 -1px 的由来（v1.3.143 实测，别当 bug 删掉）：几何上头像盒中心与昵称行盒
+      中心完全一致，歪的是墨迹 —— 本字体栈 14px 下 font bounding box 是 ascent 15 /
+      descent 4，行盒中心比基线高 5.5px，而去掉降部的字身中心只在基线上方 aAscent/2。
+      三档实测（汉字 11/1 需 -0.8、首字母大写 11/3 需 -0.3、全小写带降部 8/4 需 -1.8）
+      取 -1px 落中间，各档残差 ≤0.8px。transform 不参与布局，行高不受影响。 */
 .ow-ctx-menu a.ow-ctx-head { padding: 8px 14px; }
+/* 整行就是「个人主页」入口：hover 只给底色，不把昵称染成主色（那看着像普通菜单项） */
+.ow-ctx-menu a.ow-ctx-head:hover,
+.ow-ctx-menu a.ow-ctx-head:focus { color: var(--ow-text-title); }
+.ow-ctx-me {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ow-text-title);
+}
+/* 长昵称截断，不把菜单撑出视口（菜单宽度是内容撑出来的，min-width 只有 136） */
+.ow-ctx-me-n { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    transform: translateY(-1px); -webkit-transform: translateY(-1px); }
+/* 兼容旧结构（v1.1.15 的 .ow-ctx-head-in / .ow-me-name）：时光机等插件仍可能拼这套类 */
 .ow-ctx-head-in { display: flex; display: -webkit-flex; align-items: center; -webkit-align-items: center; gap: 8px; }
 .ow-ctx-head-in .ow-me-name { font-size: 13px; }
 /* 分隔线：与「聊天」列表标题的层次感一致，不引额外变量 */
@@ -2277,42 +2304,20 @@ span.ow-panel-entry-ico.ow-avatar { width: 24px; height: 24px; line-height: 24px
 .ow-join-gate span { flex: 1; -webkit-flex: 1; min-width: 0; }
 .ow-input:disabled { background: var(--ow-bg-sub); color: var(--ow-text-sub); cursor: not-allowed; }
 
-/* ---------- v1.1.17：首行分隔线与顶栏下边框水平对齐（仅宽屏） ----------
-   现象（1440×900 实测）：右侧栏「群聊设置」下方的分隔线在 y=[60.39, 61.39]，
-   而 .ow-topbar 的下边框在 y=[56, 57] —— **差 4.39px**，肉眼可见两条线不在同一水平。
+/* ---------- v1.1.17 的「右侧栏首行与顶栏底线齐平」块（v1.5.0 起只剩空占位归零） ----------
+   当年的做法：把 .ow-panel-room 首行撑到 calc(--ow-topbar-h - 1px)=56px，
+   让「群聊设置」下方的分隔线与头顶 .ow-topbar 的下边框落在同一像素行
+   （-1px 是像素账：首行 H 与下一行的 border-top 要一起占满顶栏那 57px）。
 
-   根因：.ow-panel-room 顶部由三段累加而成，而它们的总高不是顶栏高度：
-     #owPanelTitle          20px（v1.1.16 删标题后残留的空占位，宽屏下纯浪费）
-     .ow-panel-entry 首行   40.39px（padding 9×2 + 图标行 22.39）
-     .ow-panel-entry-row    41.39px（首行 + 自己的 border-top 1px）
-     ───────────────────── 合计 60.39px = 分隔线的 y
-   而顶栏是 57px（10 + 36 + 10 + 1）。两者各自独立算高度，差值就固化成了 4.39px。
+   v1.5.0：顶栏从 .ow-main 提到了顶部带子（.ow-head），右侧栏不再「头顶顶栏」——
+   它和左侧栏一样从带子下方开始，首行就是 42px 的常规行高，不用再撑高。
+   所以这里**删掉了那条 min-height:56**；如果哪天顶栏又回到主区内，再把它加回来。
 
-   修法：**不让高度靠内容自然累加**，而是把顶部区块的总高钉死为 --ow-topbar-h，
-   多出来的高度给首行（min-height 撑开，flex 居中），少掉的高度从空占位里扣。
-
-   ⚠️ 这里的 -1px 不是凑数，是**像素账的必然结果**（第一版就漏了它，实测 delta=1）：
-     顶栏   内容 [0, 56] + border-bottom 1px = 线占 [56, 57]
-     侧栏   首行 [0, H]  + 下一行的 border-top 1px = 线占 [H, H+1]
-     要两条线**占同一像素行**，必须 H + 1 == 57，即 H = 56 = 57 - 1。
-     写 57 会让分隔线落到 [57, 58]，比顶栏整整低 1px —— 依然肉眼可见不齐。
-
-   于是分隔线落在 y=[56, 57]，与顶栏、左侧栏 .ow-brand 三线齐平。
-
-   ⚠️ 为什么必须限定 min-width:961px：
-     窄屏（≤960px）侧栏是 fixed 浮层（top:52px），此时 #owPanelTitle 是
-     .ow-online-close 的定位父级，min-height:20px **必须保留** ——
-     归零会让收起按钮彻底不可见（Playwright 判 hidden，点不到）。
-     窄屏下侧栏与顶栏本就不在同一坐标系，无需对齐。 */
+   ⚠️ 必须限定 min-width:961px：#owPanelTitle 是窄屏 .ow-online-close 的定位父级，
+      min-height:20px **必须保留** —— 归零会让收起按钮彻底不可见（Playwright 判 hidden）。 */
 @media (min-width: 961px) {
     /* 空占位归零：宽屏下 .ow-online-close 是 display:none，这里没有任何可见内容 */
     #owPanelTitle { min-height: 0; }
-    /* 首行（.ow-panel-entry）撑满顶部区块：区块总高 = 0 + 首行高 = 顶栏高度。
-       ⚠️ 用 min-height 而非 height：内容若换行变高，行会向下顶而不是被裁切。
-       ⚠️ 减 1px：让下一行的 border-top 正好落进顶栏 border-bottom 的那个像素行。
-       ⚠️ 群公告行（.ow-panel-entry-row）的 min-height **不要动** —— 它带
-         border-top，撑高会连带把它自己的下边框也推走，破坏下面那条线。 */
-    .ow-panel-room > .ow-panel-room-body > .ow-panel-entry { min-height: calc(var(--ow-topbar-h) - 1px); }
 }
 
 /* ---------- 弹层 ---------- */
@@ -2650,15 +2655,16 @@ span.ow-panel-entry-ico.ow-avatar { width: 24px; height: 24px; line-height: 24px
     .ow-mask {
         display: none;
         position: fixed;
-        left: 0; right: 0; top: var(--ow-brand-h); bottom: 0;
+        left: 0; right: 0; top: var(--ow-head-h); bottom: 0;
         background: rgba(0, 0, 0, .25);
         z-index: 85;
     }
     .ow-mask.show { display: block; }
     .ow-online {
         position: fixed;
-        /* 顶部留出品牌条高度，避免浮层盖住「群聊信息」按钮导致无法收起 */
-        right: -260px; top: var(--ow-brand-h); bottom: 0;
+        /* v1.5.0：让开的是**整条顶部带**（品牌条 + 顶栏），不是只有品牌条 ——
+           继续用 --ow-brand-h 会让浮层压住顶栏那 10px。 */
+        right: -260px; top: var(--ow-head-h); bottom: 0;
         z-index: 90;
         transition: right .2s;
         width: 240px;
@@ -2720,15 +2726,28 @@ span.ow-panel-entry-ico.ow-avatar { width: 24px; height: 24px; line-height: 24px
     .ow-only-mobile { display: block; }
     /* v1.3.9：撤回 v1.3.8 的「沉底标签栏」方案 —— 用户确认窄屏仍用左侧图标条。
        窄屏只收窄一档，把宽度让给列表与消息区（v1.3.4 的原方案）。 */
-    .ow-rail { width: 52px; }
+    /* v1.5.0：顶部带在窄屏改回**上下两行**（品牌条一整行、消息顶栏一整行）——
+       296px 的品牌条在手机上占掉大半屏，和顶栏并排根本放不下群名与两个按钮。
+       顺带把 --ow-head-h 重定义成两行之和：三处 fixed 浮层（遮罩 / 右侧栏 / 会话抽屉）
+       都要让开整条带子，否则会盖住顶栏里的汉堡按钮。
+       ⚠️ 宽度也在这里重定义（rail 52 / 抽屉 250）—— 品牌条在窄屏是 auto 宽，
+          这两个变量只服务 rail 与抽屉本身。 */
+    :root {
+        --ow-head-h: calc(var(--ow-brand-h) + var(--ow-topbar-h));
+        --ow-rail-w: 52px;
+        --ow-sidebar-w: 250px;
+    }
+    .ow-head { flex-direction: column; -webkit-flex-direction: column; height: auto; }
+    .ow-brand { width: auto; }
+    .ow-rail { width: var(--ow-rail-w); }
     .ow-rail-btn { width: 38px; height: 38px; }
     .ow-sidebar {
         position: fixed;
-        /* 顶部留出品牌条高度，避免侧栏盖住「菜单」按钮导致无法收起 */
-        left: -260px; top: var(--ow-brand-h); bottom: 0;
+        /* 顶部留出整条顶部带（品牌条 + 顶栏），避免抽屉盖住「菜单」按钮导致无法收起 */
+        left: -260px; top: var(--ow-head-h); bottom: 0;
         z-index: 90;
         transition: left .2s;
-        width: 250px;
+        width: var(--ow-sidebar-w);
     }
     /* 窄屏浮层（v1.0.121）：开出时的抽屉底色。
        v1.1.4：原先写死 #EBF2ED（草绿），与冷灰主题的聊天区完全跑偏，

@@ -1705,23 +1705,32 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
     echo '<body class="ow-chat-body" data-lang="' . ow_lang() . '">';
     echo '<div class="ow-layout">';
 
-    // ---------- 顶部品牌条（v1.3.6） ----------
-    // 从侧栏内部移到整个布局的顶部：logo + 站点名横跨全宽，
-    // rail 与会话列表从品牌条下方开始 —— rail 的「消息」图标与列表第一行天然对齐，
-    // 也符合「品牌在所有栏目之上」的常规聊天客户端版式。
-    // v1.3.48：搜索入口不再放这里（挪进 .ow-sidebar 顶部做成搜索框），
-    //          条高改由 .ow-brand 的 min-height 钉住，见 CSS 同条注释。
+    // ---------- 顶部一条带（v1.5.0）：品牌条 + 消息顶栏并排 ----------
+    // 站方要求：品牌条只占「rail + 会话列表」那一列宽（到 .ow-sidebar 结束），
+    // 右侧整条让给消息顶栏 .ow-topbar（群名那一行）—— 顶栏因此从 .ow-main 里提出来，
+    // 两者并成一条带子，rail 与会话列表都从带子下方开始。
+    // ⚠️ 两端必须等高：品牌条 47 + 顶栏 57 并排会在下边框上留 10px 台阶。
+    //   这里不给 .ow-brand 定高，交给 .ow-head 的 flex stretch 拉平（见 CSS）。
+    // v1.3.48：搜索入口在 .ow-sidebar 顶部；
+    // v1.5.0：用户胶囊（原 #owBrandMe）已挪进账号菜单首行，品牌条只剩 logo + 站点名。
+    echo '<div class="ow-head">';
     echo '<header class="ow-brand">'
        . '<img src="assets/img/logo.svg" alt="logo"><span class="ow-brand-name">' . Sec::e(DB::setting('site_name', 'Owlsgo-Chat')) . '</span>'
-       /* v1.3.142：当前用户头像 + 昵称（样式参考本站 参考文献/forum 的顶栏 user-chip：
-          整块就是「我的主页」入口，**不加 title 悬浮提示** —— 气泡会挡住旁边的元素）。
-          本体由前端 renderMe() 填：头像 URL 的三种来源（上传 / 生成式 / 回落）与昵称
-          都在 cfg 里，服务端再拼一遍就是第二份实现，迟早漂移。
-          它同时是游客的「登录 / 注册」入口（原先侧栏底部那两个按钮的位置）。 */
-       . '<button class="ow-brand-me" id="owBrandMe" type="button" aria-label="个人主页" onclick="OwChat.onBrandMe(event)"></button>'
        . '</header>';
 
-    // 三栏主体：rail + 侧栏 + 主区 + 右侧栏（品牌条不在其中，见上）
+    // 消息顶栏：v1.5.0 从 .ow-main 内提到顶部带子右侧（DOM 位置变了，id 一个没动）
+    echo '<header class="ow-topbar">'
+       . '<button class="ow-icon-btn ow-only-mobile" id="owToggleSide" aria-label="菜单">' . ow_icon('menu') . '</button>'
+       // v1.3.1：游客未进入任何群时标题给占位，避免顶着一个其实没进去的群名
+       . '<h2 class="ow-room-name" id="owRoomName">' . ($entered ? Sec::e($first['name']) : '请选择一个群聊') . '</h2>'
+       . '<span class="ow-tag ow-tag-green" id="owSpeakTag">可发言</span>'
+       . '<span class="ow-latency" id="owLatency"></span>'
+       // 右侧「竖三点」：打开群聊信息侧栏（v1.1.1 替代原在线成员人形图标）
+       . '<button class="ow-icon-btn" id="owTogglePanel" aria-label="群聊信息" title="群聊信息">' . ow_icon('more-v') . '</button>'
+       . '</header>';
+    echo '</div>';
+
+    // 三栏主体：rail + 侧栏 + 主区 + 右侧栏（整条都在顶部带子之下）
     echo '<div class="ow-body">';
 
     // ---------- 左侧一级导航条 rail（v1.3.4） ----------
@@ -1740,7 +1749,8 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
     $friendPending = ($actor['kind'] ?? '') === 'user' ? Chat::friendReqPending((int)($actor['id'] ?? 0)) : 0;
     echo '<nav class="ow-rail" id="owRail">'
        // v1.3.142：这里原本有一颗「当前用户头像」（v1.3.134 从侧栏底部搬上来的）。
-       // 站方要求把它移到顶部品牌条右侧、并带上昵称 —— 头像入口现在在 .ow-brand 里。
+       // v1.5.0：它现在在 rail 底部那颗账号按钮的菜单首行（头像 + 昵称胶囊），
+       //         rail 顶部与品牌条都不再放头像。
        . '<button class="ow-rail-btn is-active" data-tab="chat" type="button" title="消息" aria-label="消息">' . ow_icon('chat', 20) . '<span class="ow-rail-lb">消息</span></button>'
        . '<button class="ow-rail-btn" data-tab="friends" type="button" title="联系人"'
          . ' aria-label="联系人' . ($friendPending > 0 ? '（' . $friendPending . ' 个待处理好友请求）' : '') . '">'
@@ -1757,11 +1767,15 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
        . Plugin::collect('sidebar.rail')
        // v1.3.134：底部 ☰ = 账号菜单，装的就是原先点开侧栏个人栏的那四项
        // （创建群聊 / 设置 / 管理后台 / 退出登录）。.ow-rail-foot 的 margin-top:auto 负责沉底，
-       // 所以它排在插件入口之后也没关系。游客没有账号可管，整颗按钮不渲染。
+       // 所以它排在插件入口之后也没关系。
+       // v1.5.0：游客也要渲染这颗按钮 —— 用户胶囊从品牌条挪进账号菜单后，这里是游客唯一的
+       //   登录 / 注册入口（原先靠品牌条右上角那颗胶囊点开）。游客换成「人」图标 + 登录文案，
+       //   菜单内容由 toggleAccountMenu 按身份分流成两项。
+       . '<div class="ow-rail-foot"><button class="ow-rail-btn ow-rail-menu" id="owRailMenu" type="button"'
        . (($actor['kind'] ?? '') === 'user'
-           ? '<div class="ow-rail-foot"><button class="ow-rail-btn ow-rail-menu" id="owRailMenu" type="button"'
-             . ' title="账号菜单" aria-label="账号菜单">' . ow_icon('menu', 20) . '</button></div>'
-           : '')
+           ? ' title="账号菜单" aria-label="账号菜单">' . ow_icon('menu', 20)
+           : ' title="登录 / 注册" aria-label="登录 / 注册">' . ow_icon('user', 20))
+       . '</button></div>'
        . '</nav>';
 
     // 左侧栏
@@ -1787,21 +1801,14 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
        // 插件面板容器：由 OwChat 在切换时创建/复用，插件标签对应的内容挂这里
        . '<div class="ow-tab-panels" id="owSidePanels" style="display:none"></div>'
        // v1.3.134：侧栏底部的个人栏（#owMe：头像+昵称+ID，点开操作菜单）整块撤销 ——
-       // 头像上移到 rail 顶部（#owRailMe），操作菜单下移到 rail 底部（#owRailMenu），
+       // 操作菜单在 rail 底部（#owRailMenu）；v1.5.0 起「头像 + 昵称」胶囊也在那张菜单的首行，
+       // 侧栏底部与 rail 顶部都不再放个人栏。
        // 游客原先放在这里的「注册 / 登录」两个按钮一并撤掉，入口改走 rail 顶部头像。
        . '</aside>';
 
     // 主聊天区
     echo '<main class="ow-main">'
-       . '<header class="ow-topbar">'
-       . '<button class="ow-icon-btn ow-only-mobile" id="owToggleSide" aria-label="菜单">' . ow_icon('menu') . '</button>'
-       // v1.3.1：游客未进入任何群时标题给占位，避免顶着一个其实没进去的群名
-       . '<h2 class="ow-room-name" id="owRoomName">' . ($entered ? Sec::e($first['name']) : '请选择一个群聊') . '</h2>'
-       . '<span class="ow-tag ow-tag-green" id="owSpeakTag">可发言</span>'
-       . '<span class="ow-latency" id="owLatency"></span>'
-       // 右侧「竖三点」：打开群聊信息侧栏（v1.1.1 替代原在线成员人形图标）
-       . '<button class="ow-icon-btn" id="owTogglePanel" aria-label="群聊信息" title="群聊信息">' . ow_icon('more-v') . '</button>'
-       . '</header>'
+       // 顶栏（群名那一行）v1.5.0 已上移到 .ow-head，这里从消息区直接开始
        // v1.2.6：消息区初始为空，更早的消息靠向上滚动懒加载（不再有「加载更早消息…」入口）
        . '<div class="ow-messages" id="owMessages"></div>'
        // v1.3.22：「N 条未读 ↓」跳转按钮改为**放在输入栏内部**（.ow-inputbar 的第一个子元素）。
