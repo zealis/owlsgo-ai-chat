@@ -39,6 +39,12 @@ const OWLC_TTL_FAIL = 3600;
 /* ============================ 建表 ============================ */
 
 /** 懒建表：站点分享卡片 + 消息预览缓存（只在真正读写数据时执行） */
+/*
+ * ⚠️ DB::textCol() 返回的是**完整列定义**（含列名），所以前面不能再写一遍列名。
+ *   这里犯过一次：写成 `description  " . DB::textCol('description')` → 生成
+ *   `description  description TEXT ...`。SQLite 把它当成「列名 + 多词类型名」容忍了，
+ *   MySQL 直接 1064（线上后台就是这么报的）。长文本列一律照下表的写法。
+ */
 function owLCBoot(): void
 {
     static $done = false;
@@ -51,7 +57,7 @@ function owLCBoot(): void
         name         VARCHAR(64)  NOT NULL DEFAULT '',   -- 卡片备注名（后台识别用，不进 meta）
         url          VARCHAR(512) NOT NULL DEFAULT '',   -- og:url 规范链接（绝对地址）
         title        VARCHAR(255) NOT NULL DEFAULT '',   -- 四平台通用标题
-        description  " . DB::textCol('description') . ", -- 四平台通用描述（长文本列，方言由核心给）
+        " . DB::textCol('description') . ",              -- 四平台通用描述（长文本列，方言由核心给）
         image        VARCHAR(512) NOT NULL DEFAULT '',   -- og:image 封面图（https:// 绝对地址）
         og_type      VARCHAR(16)  NOT NULL DEFAULT 'website',         -- og:type：website / article
         tw_card      VARCHAR(24)  NOT NULL DEFAULT 'summary_large_image', -- twitter:card：summary / summary_large_image
@@ -83,7 +89,7 @@ function owLCPreviewBoot(): void
         url_hash    CHAR(32)     NOT NULL DEFAULT '',   -- md5(规范化后的 url)，唯一键
         url         VARCHAR(512) NOT NULL DEFAULT '',
         title       VARCHAR(255) NOT NULL DEFAULT '',
-        description " . DB::textCol('description') . ",
+        " . DB::textCol('description') . ",
         image       VARCHAR(512) NOT NULL DEFAULT '',
         site        VARCHAR(191) NOT NULL DEFAULT '',
         status      INTEGER NOT NULL DEFAULT 0,         -- 1 = 成功，0 = 失败（失败也缓存，短 TTL）
