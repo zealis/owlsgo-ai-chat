@@ -66,6 +66,8 @@ require $ROOT . '/core/upgrade.php';
 DB::init($CFG);
 DB::migrate();
 Upload::init($CFG);
+// CLI 下没有会话：预置匿名 cookie，避免 Sec::anonKey() 在已输出之后 setcookie 触发 header 警告
+$_COOKIE['owl_akey'] = str_repeat('a', 32);
 DB::insert('plugins', ['name' => 'time-machine', 'enabled' => 1, 'config' => '']);
 Plugin::init($CFG['plugin_dir'], $tmpCache);
 
@@ -156,17 +158,29 @@ check('评论列表 1 条', count($d['comments']) === 1 && (int)$d['comments'][0
 [$d, $c] = call('plugin_time_machine_comment_add', ['actor' => $actB, 'post' => ['post_id' => $pid, 'content' => str_repeat('长', 501)]]);
 check('超长评论被拒（400）', $c === 400);
 
-echo "\n== 流与计数 ==\n";
+echo "\n== 浏览去重（v1.1.0） ==\n";
 [$d] = call('plugin_time_machine_feed', ['actor' => $actGuest, 'post' => ['tab' => 'new', 'page' => 1]]);
 $p0 = $d['posts'][0] ?? [];
-check('feed 有 1 条，浏览已 +1', count($d['posts']) === 1 && $p0['views'] === 1);
+check('游客首次浏览计 1', count($d['posts']) === 1 && $p0['views'] === 1);
+[$d] = call('plugin_time_machine_feed', ['actor' => $actGuest, 'post' => ['tab' => 'new', 'page' => 1]]);
+check('同一游客刷新不重复计数（仍 1）', $d['posts'][0]['views'] === 1);
+[$d] = call('plugin_time_machine_feed', ['actor' => $actB, 'post' => ['tab' => 'new', 'page' => 1]]);
+check('另一个账号 B 浏览 → 2', $d['posts'][0]['views'] === 2);
+[$d] = call('plugin_time_machine_feed', ['actor' => $actB, 'post' => ['tab' => 'new', 'page' => 1]]);
+check('B 反复刷新仍 2', $d['posts'][0]['views'] === 2);
+[$d] = call('plugin_time_machine_feed', ['actor' => $actA, 'post' => ['tab' => 'new', 'page' => 1]]);
+check('作者看自己的波文不计（仍 2）', $d['posts'][0]['views'] === 2);
+check('浏览去重表正好 2 行（游客 + B，作者未入表）',
+    (int)DB::val('SELECT COUNT(*) FROM plugin_time_machine_view') === 2);
 check('未点赞/未收藏标记正确', $p0['liked'] === false && $p0['faved'] === false);
+
+echo "\n== 分栏 ==\n";
 [$d] = call('plugin_time_machine_feed', ['actor' => $actB, 'post' => ['tab' => 'fav', 'page' => 1]]);
-check('B 的收藏栏有这条', count($d['posts']) === 1 && $d['posts'][0]['liked'] === false);
+check('B 的收藏栏有这条', count($d['posts']) === 1 && $d['posts'][0]['faved'] === true);
+check('收藏栏浏览仍不涨（B 已计过）', $d['posts'][0]['views'] === 2);
 [$d] = call('plugin_time_machine_feed', ['actor' => $actA, 'post' => ['tab' => 'mine', 'page' => 1]]);
 check('我的栏 + stats', count($d['posts']) === 1 && $d['stats']['posts'] === 1);
-// 期望值说明：guest 的 new 栏已计 1 次，B 的 fav 栏又计 1 次（fav 也算浏览，只有 mine 不计）→ 库里 2
-check('mine 分栏不计浏览（累计 2）', $d['posts'][0]['views'] === 2);
+check('mine 分栏不计浏览（仍 2）', $d['posts'][0]['views'] === 2);
 [$d] = call('plugin_time_machine_feed', ['actor' => $actB, 'post' => ['tab' => 'new', 'page' => 1]]);
 check('B 视角 liked/faved 标记正确', $d['posts'][0]['liked'] === false && $d['posts'][0]['faved'] === true);
 [$d] = call('plugin_time_machine_like', ['actor' => $actB, 'post' => ['id' => $pid]]);
@@ -178,7 +192,7 @@ check('删除在敏感清单里', Plugin::isSensitive('plugin_time_machine_delet
 check('非作者非管理员删除被拒（403）', $c === 403);
 [$d, $c] = call('plugin_time_machine_delete', ['actor' => $actAdmin, 'post' => ['id' => $pid]]);
 check('管理员可删', $c === 200 && $d['ok'] === true);
-foreach (['plugin_time_machine_post', 'plugin_time_machine_comment', 'plugin_time_machine_like', 'plugin_time_machine_fav'] as $t) {
+foreach (['plugin_time_machine_post', 'plugin_time_machine_comment', 'plugin_time_machine_like', 'plugin_time_machine_fav', 'plugin_time_machine_view'] as $t) {
     check('  连带清空：' . $t, (int)DB::val("SELECT COUNT(*) FROM {$t}") === 0);
 }
 [$d, $c] = call('plugin_time_machine_delete', ['actor' => $actAdmin, 'post' => ['id' => $pid]]);

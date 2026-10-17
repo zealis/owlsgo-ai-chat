@@ -145,7 +145,8 @@
         skeleton: function () {
             return '<div class="ow-tm"><div class="ow-tm-head">'
                 + '<div class="ow-tm-tabs">' + this.tabBtns() + '</div>'
-                + '<button class="ow-tm-sendbtn" type="button" data-tm-act="compose">发波文</button>'
+                // 按钮直接复用核心 .ow-btn / .ow-btn-primary / .ow-btn-mini，不自造一套尺寸
+                + '<button class="ow-btn ow-btn-primary ow-btn-mini" type="button" data-tm-act="compose">发波文</button>'
                 + '</div><div class="ow-tm-list" id="owTmList">'
                 + '<div class="ow-tm-empty">加载中…</div></div>'
                 + '<div class="ow-tm-foot" id="owTmFoot"></div></div>';
@@ -183,7 +184,7 @@
                 self.paint(list, r.posts || [], reset);
                 if (foot) {
                     foot.innerHTML = self.hasMore
-                        ? '<button class="ow-btn ow-btn-ghost" type="button" data-tm-act="more">加载更多</button>' : '';
+                        ? '<button class="ow-btn ow-btn-ghost ow-btn-mini" type="button" data-tm-act="more">加载更多</button>' : '';
                 }
             });
         },
