@@ -172,7 +172,7 @@
         },
 
         skeleton: function () {
-            return '<div class="ow-tm"><div class="ow-tm-head">'
+            return '<div class="ow-tm"><div class="ow-list-head">'
                 + '<div class="ow-tm-tabs">' + this.tabBtns() + '</div>'
                 // 按钮直接复用核心 .ow-btn / .ow-btn-primary / .ow-btn-mini，不自造一套尺寸
                 + '<button class="ow-btn ow-btn-primary ow-btn-mini" type="button" data-tm-act="compose">发波文</button>'
@@ -328,9 +328,12 @@
             // 评论后追加本地行时也走这里：缓存里补一条，保持「等 N 人」这类汇总口径一致
             if (this.posts[p.id]) this.posts[p.id].comments = p.comments || cs;
             if (this.canPost) {
+                // 发送按钮与消息输入区那只**完全一致**：核心 ow-btn-primary + ow-send-round
+                // 圆形图标钮（纸飞机 18px / 40×40），不自造文字小按钮
                 h += '<div class="ow-tm-cmt-row">'
                     + '<input type="text" class="ow-input ow-tm-cmt-in" maxlength="500" placeholder="写评论，Enter 发送">'
-                    + '<button class="ow-btn ow-btn-primary ow-btn-mini" type="button" data-tm-act="cmtsend">发送</button>'
+                    + '<button class="ow-btn ow-btn-primary ow-send ow-send-round" type="button" data-tm-act="cmtsend"'
+                    + ' aria-label="发送" title="发送">' + ico('send', 18) + '</button>'
                     + '</div>';
             } else {
                 h += '<div class="ow-tm-cmt-load">登录后可评论</div>';
@@ -396,7 +399,7 @@
             this.tab = tab;
             var box = $('owMessages');
             if (box) {
-                var head = box.getElementsByClassName('ow-tm-head')[0];
+                var head = box.getElementsByClassName('ow-list-head')[0];
                 if (head) head.getElementsByClassName('ow-tm-tabs')[0].innerHTML = this.tabBtns();
             }
             this.load(true);
