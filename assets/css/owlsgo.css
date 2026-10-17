@@ -2580,6 +2580,37 @@ span.ow-panel-entry-ico.ow-avatar { width: 24px; height: 24px; line-height: 24px
 /* 快捷访问跳过去后闪一下（一次性 keyframes，不改元素本身的状态 —— 摘掉类即恢复） */
 .ow-set-hit { animation: owSetHit 1.6s ease-out; }
 @keyframes owSetHit { 0% { box-shadow: 0 0 0 3px var(--ow-primary); border-radius: 6px; } 100% { box-shadow: 0 0 0 3px transparent; } }
+/* ---------- 仪表盘「当前时间」段码时钟（v1.4.3，站方参考 ChatNet 的数码管样式） ----------
+   面板底色**刻意是深色**的（数码管要深底才像一台设备），所以这里给一对局部变量，
+   深色模式只把面板压暗一档、字色略降，不跟随主题反色。
+   文字色按 ≥4.5:1 配过：星期条未选中 = 面板前景 55% 不透明度（实测 5.2:1），
+   日期 / AM 档 60%（5.7:1）；段码的「鬼影段」是装饰（8%），不参与阅读。 */
+.ow-clock {
+    --ow-clock-bg: #1B2230; --ow-clock-fg: #E9EEF7;
+    position: relative; background: var(--ow-clock-bg); color: var(--ow-clock-fg);
+    border: 1px solid rgba(233, 248, 255, .12); border-radius: 10px;
+    padding: 14px 18px 34px; margin-bottom: 16px; overflow: hidden;
+}
+[data-theme="dark"] .ow-clock { --ow-clock-bg: #10151F; --ow-clock-fg: #DCE4F0; }
+.ow-clock-wd { display: flex; justify-content: center; gap: 18px; font-size: 12px; letter-spacing: 1px; }
+.ow-clock-wd span { color: rgba(233, 238, 247, .55); }
+.ow-clock-wd .is-today { color: var(--ow-clock-fg); font-weight: 600; }
+.ow-clock-face { display: flex; align-items: center; justify-content: center; gap: 5px; margin-top: 8px; }
+.ow-clock-slot { display: block; }
+.ow-clock-d { display: block; height: 58px; width: 32px; }
+.ow-clock-d .ow-seg { fill: currentColor; opacity: .08; }
+.ow-clock-d .ow-seg-on { opacity: .95; }
+/* 冒号用两枚点而非字符：与段码同一视觉重量，也不会被行高拉偏 */
+.ow-clock-c { display: flex; flex-direction: column; justify-content: center; gap: 15px; padding: 0 3px; }
+.ow-clock-c i { width: 6px; height: 6px; border-radius: 1px; background: currentColor; opacity: .8; }
+.ow-clock-ap { position: absolute; right: 18px; bottom: 12px; font-size: 13px; letter-spacing: 1px; color: rgba(233, 238, 247, .6); }
+.ow-clock-date { position: absolute; left: 18px; bottom: 12px; font-size: 12px; letter-spacing: .5px; color: rgba(233, 238, 247, .6); font-variant-numeric: tabular-nums; }
+@media (max-width: 720px) {
+    .ow-clock-wd { gap: 10px; font-size: 11px; }
+    .ow-clock-d { height: 38px; width: 21px; }
+    .ow-clock-c { gap: 9px; }
+    .ow-clock-c i { width: 4px; height: 4px; }
+}
 .ow-table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--ow-bg); }
 .ow-table th, .ow-table td { padding: 8px 10px; border-bottom: 1px solid var(--ow-border); text-align: left; }
 .ow-table th { color: var(--ow-text-sub); font-weight: 400; font-size: 12px; background: var(--ow-bg-sub); }

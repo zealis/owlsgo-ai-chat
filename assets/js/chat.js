@@ -7785,6 +7785,9 @@
         },
 
         page: function (name) {
+            // 段码时钟的秒表只属于仪表盘：切到任何页面（含插件页）先停掉，
+            // 否则离开首屏之后它还在每秒找 DOM（页面切来切去会攒出好几个定时器）。
+            OwAdmin.clockStop();
             var main = $('owAdminMain');
             var M = OwAdmin.pages[name];
             // 移动端适配：主区内任何表格自动套横滚容器（含异步渲染与插件页）
@@ -7810,6 +7813,81 @@
                 return;
             }
             if (M) M(main);
+        },
+
+        /* =====================================================================
+         * 仪表盘「当前时间」段码时钟（v1.4.3，站方参考 ChatNet 的数码管样式）
+         * ---------------------------------------------------------------------
+         * 零依赖：数字用内联 SVG 的七段斜角多边形画 —— 项目不引字体/图标库，
+         * 段码字体那条路走不通；SVG 吃 currentColor，深浅主题跟着令牌一起走。
+         * 每秒只重画「变了的那一位」（比 data-ch），整块 DOM 不重排；
+         * 定时器由上面的 page() 路由器统一停表，切页不留尾巴。
+         * =================================================================== */
+        _clockTimer: null,
+        /* 数码管惯用段名：A 顶、G 中、D 底，B/C 右上右下、F/E 左上左下（viewBox 44×80） */
+        _segShapes: {
+            A: '7,2 37,2 42,7 37,12 7,12 2,7',
+            B: '37,12 42,17 42,30 37,35 32,30 32,17',
+            C: '37,45 42,50 42,63 37,68 32,63 32,50',
+            D: '7,68 37,68 42,73 37,78 7,78 2,73',
+            E: '7,45 12,50 12,63 7,68 2,63 2,50',
+            F: '7,12 12,17 12,30 7,35 2,30 2,17',
+            G: '7,35 37,35 42,40 37,45 7,45 2,40'
+        },
+        _digitSegs: ['ABCDEF', 'BC', 'ABGED', 'ABGCD', 'FGBC', 'AFGCD', 'AFGECD', 'ABC', 'ABCDEFG', 'ABCDFG'],
+        _segSvg: function (ch) {
+            var lit = this._digitSegs[parseInt(ch, 10)] || '', h = '', k;
+            for (k in this._segShapes) {
+                if (!Object.prototype.hasOwnProperty.call(this._segShapes, k)) continue;
+                h += '<polygon class="ow-seg' + (lit.indexOf(k) >= 0 ? ' ow-seg-on' : '')
+                   + '" points="' + this._segShapes[k] + '"/>';
+            }
+            return '<svg class="ow-clock-d" viewBox="0 0 44 80" aria-hidden="true">' + h + '</svg>';
+        },
+        clockHtml: function () {
+            var wd = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'], i, strip = '';
+            for (i = 0; i < 7; i++) strip += '<span data-w="' + i + '">' + wd[i] + '</span>';
+            var face = '';
+            for (i = 0; i < 6; i++) {
+                face += '<span class="ow-clock-slot" data-i="' + i + '"></span>';
+                // 冒号是两枚点（不是字符）：与段码同一视觉重量，也不会被行高拉偏
+                if (i === 1 || i === 3) face += '<span class="ow-clock-c"><i></i><i></i></span>';
+            }
+            return '<div class="ow-clock"><div class="ow-clock-wd" id="owClockWd">' + strip + '</div>'
+                 + '<div class="ow-clock-face" id="owClockFace">' + face + '</div>'
+                 + '<div class="ow-clock-date" id="owClockDate"></div>'
+                 + '<div class="ow-clock-ap" id="owClockAp"></div></div>';
+        },
+        clockTick: function () {
+            var face = $('owClockFace');
+            if (!face) { OwAdmin.clockStop(); return; }   // 页面已被换掉：顺手停表
+            var d = new Date(), h = d.getHours(), h12 = h % 12, i, el;
+            if (h12 === 0) h12 = 12;
+            var txt = ('0' + h12).slice(-2) + ('0' + d.getMinutes()).slice(-2) + ('0' + d.getSeconds()).slice(-2);
+            var slots = face.getElementsByClassName('ow-clock-slot');
+            for (i = 0; i < slots.length; i++) {
+                el = slots[i];
+                if (el.getAttribute('data-ch') !== txt.charAt(i)) {
+                    el.setAttribute('data-ch', txt.charAt(i));
+                    el.innerHTML = OwAdmin._segSvg(txt.charAt(i));
+                }
+            }
+            var wd = $('owClockWd'), today = (d.getDay() + 6) % 7;   // 星期条按 MON 起排，getDay() 的 0 是周日
+            if (wd) for (i = 0; i < wd.children.length; i++) {
+                wd.children[i].className = i === today ? 'is-today' : '';
+            }
+            var ap = $('owClockAp'); if (ap) ap.textContent = h < 12 ? 'AM' : 'PM';
+            var date = $('owClockDate');
+            if (date) date.textContent = d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2)
+                + '-' + ('0' + d.getDate()).slice(-2);
+        },
+        clockStart: function () {
+            OwAdmin.clockStop();
+            OwAdmin.clockTick();
+            OwAdmin._clockTimer = setInterval(OwAdmin.clockTick, 1000);
+        },
+        clockStop: function () {
+            if (OwAdmin._clockTimer) { clearInterval(OwAdmin._clockTimer); OwAdmin._clockTimer = null; }
         },
 
         pages: {
@@ -7872,6 +7950,7 @@
                     }
                     var env = d.env || {};
                     main.innerHTML = '<h2>仪表盘</h2><p class="ow-admin-desc">站点概况与常用入口。数字实时统计，刷新即最新。</p>'
+                        + OwAdmin.clockHtml()
                         + '<div class="ow-dash-grid">'
                         + stat('用户总数', d.users, todayOf(d.users_today))
                         + stat('群聊总数', d.rooms, todayOf(d.rooms_today))
@@ -7892,6 +7971,8 @@
                         + '<div class="ow-quick-wrap">' + chips + '</div></div>'
                         + '<p class="ow-dash-env">Owlsgo ' + esc(env.version || '') + ' · PHP ' + esc(env.php || '')
                         + ' · ' + esc(env.driver || '') + ' · ' + esc(env.now || '') + '</p>';
+                    // 时钟在 HTML 落地后起步：先画一帧（不等下一秒），再交给秒表走
+                    OwAdmin.clockStart();
                 });
             },
             plugins: function (main) {
