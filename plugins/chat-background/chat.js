@@ -92,6 +92,14 @@
         //      又被背景图盖住（z-index:0 的定位伪元素按绘制顺序排在普通流内容之上）——
         //      用户看到的是「群公告条变透明」，其实是它整条被背景图压住了。
         //   负 z-index 方案不依赖任何名单，子级增删都不必再维护。
+        // 昵称配色变量：12 个色相（每 30° 一个）共享一个亮度旋钮 --ow-cb-nick-l。
+        // 挂在 body.ow-chat-body 上而不是 :root；[data-theme="dark"] 在 <html> 上、能后置覆盖。
+        // 与 main.php 的 page.head 注入同一串（那边用 for 循环生成）。
+        var nickVars = 'body.ow-chat-body{--ow-cb-nick-l:42%;';
+        for (var ns = 0; ns < 12; ns++) {
+            nickVars += '--ow-cb-nick-' + ns + ':hsl(' + (ns * 30) + ',68%,var(--ow-cb-nick-l));';
+        }
+        nickVars += '}[data-theme="dark"] body.ow-chat-body{--ow-cb-nick-l:68%;}';
         return 'body.ow-chat-body .ow-main{position:relative;z-index:0;' + (hasImg ? 'background-color:transparent;' : '') + '}'
             + (hasImg ? 'body.ow-chat-body .ow-main::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;' + bgCss + '}' : '')
             + (ovr !== 'none' ? 'body.ow-chat-body .ow-main::after{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;background:' + ovr + ';opacity:' + op + ';}' : '')
@@ -104,14 +112,9 @@
             // 即「没有背景图在下面」，效果是朝页面底色略提亮。
             + 'body.ow-chat-body .ow-rail,'
             + 'body.ow-chat-body .ow-sidebar{background-color:color-mix(in srgb, var(--ow-bg-chat) 78%, transparent);}'
-            // 昵称字色：默认是核心写死的灰 #8E8EA0（核心自己也是固定色），压在任意
-            // 背景图 / 渐变遮罩上对比度不稳（浅色遮罩下尤其糊）。按用户要求改成
-            // 纯黑（深色模式纯白）—— 这是「用户指定的可读性例外」，
-            // 属项目「样式零硬编码」规范里就地注明的例外项。
-            // 只作用在 .ow-main 内：侧栏「系统通知」那一行在 .ow-sidebar 里，不受影响。
-            // [data-theme="dark"] 挂在 <html> 上，故这条能正确后置覆盖上一条（特异性也更高）。
-            + 'body.ow-chat-body .ow-main .ow-msg-meta .ow-msg-nick{color:#000;}'
-            + '[data-theme="dark"] body.ow-chat-body .ow-main .ow-msg-meta .ow-msg-nick{color:#FFF;}';
+            // 昵称彩色化：颜色值以 CSS 变量下发，具体取哪个由下面的 paintNick 按昵称哈希决定
+            // （CSS 无法按元素文本做哈希，所以「每人一色」只能靠 JS）。
+            + nickVars;
     }
 
     /* ---------- 写入 <style id="ow-cb-style">（存在则复用，不存在才建） ---------- */
@@ -125,12 +128,76 @@
         el.textContent = css;
     }
 
+    /* ---------- 昵称彩色化 ----------
+       为什么用 JS 而不是纯 CSS：CSS 无法按元素文本做哈希，做不出「每人一种颜色」。
+       为什么按「昵称哈希」而不是 Math.random()：同一个人必须每次渲染都是同一色，
+       否则刷新一下自己昵称就换色，观感很差；哈希取值对用户而言同样是「随机」的。
+       为什么一定「非白非黑非灰」：调色板色相每 30° 一个、饱和度固定 68%，
+       亮度只分深浅两档（见 buildCss 下发的 --ow-cb-nick-l），永远不会落到灰调上。 */
+    var NICK_SLOTS = 12;
+    var nickObs = null;
+
+    function nickHash(s) {
+        var h = 0;
+        for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) & 0x7fffffff;
+        return h;
+    }
+
+    function paintNick(el) {
+        if (!el || el.getAttribute('data-cb-nick') === '1') return;
+        // 「系统通知」那一行不是用户昵称，别给它上色
+        if (el.classList && el.classList.contains('ow-notice-nick')) return;
+        el.style.color = 'var(--ow-cb-nick-' + (nickHash(String(el.textContent || '')) % NICK_SLOTS) + ')';
+        el.setAttribute('data-cb-nick', '1');
+    }
+
+    /* 对一段新插入的 DOM 上色（含其内部的昵称节点） */
+    function paintNickIn(node) {
+        if (!node || node.nodeType !== 1) return;
+        if (node.classList && node.classList.contains('ow-msg-nick')) paintNick(node);
+        var subs = node.querySelectorAll ? node.querySelectorAll('.ow-msg-nick') : [];
+        for (var i = 0; i < subs.length; i++) paintNick(subs[i]);
+    }
+
+    /* 仅在插件注入了背景样式时启用；消息是长轮询增量插入的，
+       所以必须挂 MutationObserver 给后续新消息补色，不能只跑一次。 */
+    function startNickPainter() {
+        var box = $('owMessages');
+        if (!box) return;
+        var nicks = box.querySelectorAll('.ow-msg-nick');
+        for (var i = 0; i < nicks.length; i++) paintNick(nicks[i]);
+        if (nickObs || typeof MutationObserver === 'undefined') return;   // 老内核：只对已有消息上色
+        nickObs = new MutationObserver(function (muts) {
+            for (var i = 0; i < muts.length; i++) {
+                var added = muts[i].addedNodes;
+                for (var j = 0; j < added.length; j++) paintNickIn(added[j]);
+            }
+        });
+        nickObs.observe(box, { childList: true, subtree: true });
+    }
+
+    function stopNickPainter() {
+        if (nickObs) { nickObs.disconnect(); nickObs = null; }
+        var nicks = d.querySelectorAll('.ow-messages .ow-msg-nick[data-cb-nick]');
+        for (var i = 0; i < nicks.length; i++) {
+            nicks[i].style.color = '';
+            nicks[i].removeAttribute('data-cb-nick');
+        }
+    }
+
+    /* 让观察器的开关与「有没有注入背景样式」保持一致 */
+    function syncNickPainter() {
+        if (d.getElementById('ow-cb-style')) startNickPainter();
+        else stopNickPainter();
+    }
+
     /* ---------- 前端兜底：仅当服务端 page.head 没注入时才补一次（首屏） ---------- */
     function applyBg() {
-        if (d.getElementById('ow-cb-style')) return;   // 服务端已注入
-        var css = buildCss();
-        if (!css) return;
-        injectStyle(css);
+        if (!d.getElementById('ow-cb-style')) {   // 服务端已注入则不动
+            var css = buildCss();
+            if (css) injectStyle(css);
+        }
+        syncNickPainter();
     }
 
     /* ---------- 保存后强制刷新 ----------
@@ -142,9 +209,10 @@
         if (!css) {
             var el = d.getElementById('ow-cb-style');
             if (el && el.parentNode) el.parentNode.removeChild(el);
-            return;
+        } else {
+            injectStyle(css);
         }
-        injectStyle(css);
+        syncNickPainter();
     }
 
     /* ---------- 在「个人设置」弹窗里追加背景区块 ----------

@@ -2,7 +2,7 @@
  * 星光殿堂 —— 前台（侧栏 rail 面板 + 资料卡等级行）
  *
  * 入口：左侧一级导航条的「星光殿堂」按钮由服务端 Plugin::collect('sidebar.rail')
- *       产出（桂冠图标），面板内容在这里用 OwChat.onRail({ id:'hall', onShow }) 填充。
+ *       产出（日历打卡图标），面板内容在这里用 OwChat.onRail({ id:'hall', onShow }) 填充。
  *
  * 数据只有一个接口：plugin_starlight_hall_panel。
  *   合并前这里是三个接口（签到的 info / 等级的 mine / 荣誉榜 rank），前台要连打三次、
@@ -175,11 +175,12 @@
             + '<path d="M12 3.6l2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z"/></svg>';
     }
     /**
-     * 桂冠（等级天数奖励用）。**不在这里复制一遍 path** —— PLUGIN.md 要求插件自有字形
-     * 只存在于 main.php 一处，所以直接克隆服务端已经渲染好的 rail 入口里的那枚 SVG。
+     * 等级天数奖励用的小图标 = 克隆 rail 入口那枚（日历打卡）。
+     * **不在这里复制一遍 path** —— PLUGIN.md 要求插件自有字形只存在于 main.php 一处，
+     * 所以直接克隆服务端已经渲染好的 SVG，换尺寸与颜色即可。
      * rail 不在的页面（嵌入页等）退化成五角星，颜色口径不变。
      */
-    function svgLaurel(size, color) {
+    function svgReward(size, color) {
         var src = d.querySelector('#owRail button[data-tab="hall"] svg');
         if (src && src.cloneNode) {
             var c = src.cloneNode(true);
@@ -209,7 +210,7 @@
         }
         // v1.1.0：签到的等级天数奖励 —— 与积分/大奖并列，签到与等级不再「两张皮」
         if (dd.lvDays > 0) {
-            h += '<span class="ow-sh-pop-r">' + svgLaurel(22, 'var(--ow-primary-strong)')
+            h += '<span class="ow-sh-pop-r">' + svgReward(22, 'var(--ow-primary-strong)')
                 + '<b>+' + dd.lvDays + '</b><i>等级天数</i></span>';
         }
         h += '</div>'
