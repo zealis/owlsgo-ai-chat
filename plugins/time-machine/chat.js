@@ -290,7 +290,6 @@
                 + '<div class="ow-tm-card-top">'
                 + '<span class="ow-tm-nick" onclick="OwChat.userCard(' + p.uid + ',' + jsAttr(p.nickname) + ')">' + esc(p.nickname) + '</span>'
                 + visTag
-                + '<span class="ow-tm-time">' + esc(fmtTime(p.created_at)) + '</span>'
                 + '<button class="ow-tm-more" type="button" title="更多" aria-label="更多" data-tm-act="menu">'
                 + ico('more', 16) + '</button>'
                 + '</div>'
@@ -298,12 +297,16 @@
                 + (ih ? '<div class="ow-tm-imgs' + g + '">' + ih + '</div>' : '')
                 + (fh ? '<div class="ow-tm-files">' + fh + '</div>' : '')
                 + this.likersRow(p)
+                // 动作条：左边时间、右边点赞 / 评论 / 阅读量（时间从顶部挪下来，与互动信息同一行）
                 + '<div class="ow-tm-acts">'
+                + '<span class="ow-tm-time ow-tm-time-act">' + esc(fmtTime(p.created_at)) + '</span>'
+                + '<span class="ow-tm-actbtns">'
                 + '<button type="button" class="ow-tm-act' + (p.liked ? ' is-on' : '') + '" data-tm-act="like" title="点赞">'
                 + ico(p.liked ? 'heart-fill' : 'heart', 16) + '<i>' + (p.likes | 0) + '</i></button>'
                 + '<button type="button" class="ow-tm-act" data-tm-act="cmt" title="评论">'
                 + ico('bubble', 16) + '<i>' + (p.comment_cnt | 0) + '</i></button>'
                 + '<span class="ow-tm-act ow-tm-plain" title="浏览">' + ico('eye', 16) + '<i>' + (p.views | 0) + '</i></span>'
+                + '</span>'
                 + '</div>'
                 + this.cmtsBox(p)
                 + '</div></article>';
