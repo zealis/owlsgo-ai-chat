@@ -1,5 +1,5 @@
 /* ==========================================================================
-   chat-scripts · 群聊自动化（v1.2.3）— 前台话术面板 / 群聊设置·自动化 / 后台管理页共用样式
+   chat-scripts · 群聊自动化（v1.2.4）— 前台话术面板 / 群聊设置·自动化 / 后台管理页共用样式
    --------------------------------------------------------------------------
    颜色纪律：本文件不出现任何写死色值，一律引用核心 --ow-* 变量。
      全站深浅两套主题只靠重定义这些变量切换，插件写死颜色 = 深色模式下露亮斑。
@@ -41,17 +41,21 @@
 .ow-cs-q { flex: 1; -webkit-flex: 1; min-width: 0; padding: 6px 10px; font-size: 13px; }
 /* v1.1.0：头部右侧的 ✕ 关闭按钮已撤（用户要求），.ow-cs-x 一并删掉 —— 留着就是死规则。 */
 
-/* 分组页签（公共 / 群聊 / 我的）——几何对齐时光机 ow-tm-head 里那组分栏（.ow-tm-tabs）：
-   灰槽轨道（--ow-bg-sub + 9px 圆角 + 3px 内边距）+ 2px 标签间距 + 6px 标签圆角，
-   13px 字号、line-height:1；选中 = 主色实心（--ow-primary-strong + --ow-on-accent），
-   刻意不加粗（13px 中文加粗会撑宽、切换时两颗标签重排）。与核心 .ow-tabs / .ow-tab 同一套数值。
+/* 分组页签（公共 / 群聊 / 我的）——与时光机 ow-tm-head 里那组分栏（.ow-tm-tabs）同几何：
+   灰槽 inline-flex 贴内容（--ow-bg-sub + 9px 圆角 + 3px 内边距）、2px 标签间距、
+   标签 flex:0 0 auto 自适应文字宽（6px 10px 内边距 + 6px 圆角 + 13px/line-height:1）、
+   选中 = 主色实心（--ow-primary-strong + --ow-on-accent）、刻意不加粗（13px 中文加粗
+   会撑宽、切换时标签重排）。与核心 .ow-tabs / .ow-tab 同一套数值。
+   ⚠️ align-self:flex-start 不能删：前台 .ow-cs-panel 是 flex 列容器，默认 stretch
+      会把灰槽拉成整行宽 —— pills 挤左边、右边一条死灰，「按钮宽」就是这么来的。
+      后台 .ow-admin-main 与弹窗 .ow-modal 都是普通块容器，inline-flex 自然贴内容。
    ⚠️ 未选中的页签必须 transparent —— 让轨道的颜色透上来，
       否则哪天改了轨道色，页签会留下一块跟不上的死色。
-   与时光机的唯一差异：本插件的页签独占一行（右侧没有按钮），所以标签 flex:1 均分撑满
-   轨道，读起来是一组完整的 segmented control；时光机那组靠左（inline-flex），因为右边
-   挂着「发波文」。轨道带 overflow-x 横向滚动兜底，窄屏也不折行。 */
+   轨道 overflow-x 横向滚动 + 隐藏滚动条兜底窄屏，不折行。 */
 .ow-cs-tabs {
-    display: flex; display: -webkit-flex;
+    display: inline-flex; display: -webkit-inline-flex;
+    align-self: flex-start;
+    align-items: center; -webkit-align-items: center;
     gap: 2px;
     background: var(--ow-bg-sub);
     border-radius: 9px;
@@ -65,8 +69,7 @@
 /* 话术面板里那一条：左右各让出 8px，与搜索框落在同一条内边距线上 */
 .ow-cs-tabs-in { margin: 8px 8px 10px; }
 .ow-cs-tab {
-    flex: 1 1 0; -webkit-flex: 1 1 0;
-    min-width: 0;
+    flex: 0 0 auto; -webkit-flex: 0 0 auto;
     border: none;
     background: transparent;
     color: var(--ow-text-sub);
@@ -77,8 +80,6 @@
     cursor: pointer;
     font-family: inherit;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;    /* 兜底：极端窄屏截断而不是撑破轨道 */
     transition: background-color .15s, color .15s;
     -webkit-transition: background-color .15s, color .15s;
 }
