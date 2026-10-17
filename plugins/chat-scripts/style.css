@@ -1,5 +1,5 @@
 /* ==========================================================================
-   chat-scripts · 群聊自动化（v1.2.5）— 前台话术面板 / 群聊设置·自动化 / 后台管理页共用样式
+   chat-scripts · 群聊自动化（v1.2.6）— 前台话术面板 / 群聊设置·自动化 / 后台管理页共用样式
    --------------------------------------------------------------------------
    颜色纪律：本文件不出现任何写死色值，一律引用核心 --ow-* 变量。
      全站深浅两套主题只靠重定义这些变量切换，插件写死颜色 = 深色模式下露亮斑。
@@ -90,20 +90,28 @@
     color: var(--ow-on-accent);
 }
 
-/* 后台页签的白色衬底（v1.2.5）：管理后台页面底色是 --ow-bg-sub（#F5F5F5，body 全局
-   底色），与灰槽同色 —— 不衬白底，整条灰槽「消失」在页面里。白块用 --ow-bg + 1px
-   --ow-border + 8px 圆角，与 .ow-card 同一语言；灰槽坐进去才被「展示出来」，
-   与时光机里灰槽坐在 .ow-tm-head 白面上同一机制。前台面板（.ow-cs-panel 白底）与
-   弹窗（.ow-modal 白底）不需要这块衬底，故只给后台用。 */
+/* 后台页签的白色衬底（v1.2.5 起；v1.2.6 与 starlight-hall .ow-sh-tabs-bar 逐字同规）：
+   管理后台页面底色是 --ow-bg-sub（#F5F5F5，body 全局底色），与灰槽同色 —— 不衬白底，
+   整条灰槽「消失」在页面里。白块用 --ow-bg + 1px --ow-border + 8px 圆角，与 .ow-card
+   同一语言；灰槽坐进去才被「展示出来」，与时光机 .ow-tm-head 白面同一机制。
+   前台面板（.ow-cs-panel 白底）与弹窗（.ow-modal 白底）不需要这块衬底，故只给后台用。
+   ⚠️ 本规格已在两个插件各收敛出一份完全相同的实现（本类与 .ow-sh-tabs-bar），
+   下一步由站方提升为核心通用类 .ow-tabs-bar（落 assets/css/owlsgo.css，轮子进核心、
+   不搞插件互相引用），两插件再改为调用核心类并删掉各自的私有类。 */
 .ow-cs-tabs-bar {
     background: var(--ow-bg);
     border: 1px solid var(--ow-border);
     border-radius: 8px;
     padding: 8px 12px;
-    margin-bottom: 16px;
+    margin-bottom: 14px;
 }
-/* 衬底内部：轨道的 16px 下间距由白块统一给，别再叠一层 */
-.ow-cs-tabs-bar .ow-cs-tabs { margin-bottom: 0; }
+/* 衬底内部：页签条自己的下间距 / 下边距 / 下划线全收掉 —— 白块自带边框充当分隔，
+   再留一条就是双重线；间距由白块统一给。 */
+.ow-cs-tabs-bar .ow-cs-tabs {
+    margin: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+}
 
 /* 列表区 */
 .ow-cs-body {
