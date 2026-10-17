@@ -72,11 +72,12 @@ check('page.head（插件 CSS 必须自己挂 link）', has($hooks, 'page.head')
 echo "\n== 路由（全部带前缀） ==\n";
 foreach ([
     'plugin_time_machine_feed', 'plugin_time_machine_post',
-    'plugin_time_machine_upload', 'plugin_time_machine_like',
+    'plugin_time_machine_download', 'plugin_time_machine_like',
     'plugin_time_machine_fav', 'plugin_time_machine_comments',
     'plugin_time_machine_comment_add', 'plugin_time_machine_delete',
 ] as $act) check('  ' . $act, has($routes, $act));
 check('路由条数正好 8（循环注册的两个开关路由也算数）', count($routes), 8);
+check('没有自己的上传路由（附件完全依赖附件上传插件）', has($routes, 'plugin_time_machine_upload'), false);
 
 echo "\n== 敏感操作 ==\n";
 check('删除波文需一次性票据', has($sens, 'plugin_time_machine_delete'));

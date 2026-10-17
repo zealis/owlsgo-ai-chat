@@ -1,13 +1,27 @@
 <?php
 /**
- * 时光机插件（time-machine v1.1.1）
+ * 时光机插件（time-machine v1.2.0）
  *
  * ── 做什么 ────────────────────────────────────────────────────
  * 类似朋友圈的动态广场。入口是 rail 上的一枚「时光机」按钮（sidebar.rail 钩子，
  * 站方指定的纸飞机字形，path 只在本文件出现一次），点开后：
  *   · 侧栏面板：简介 + 「发波文」按钮；
  *   · 主区（接管 #owMessages，与系统通知同一套接管手法）：波文时间流。
- * 一条动态叫一条「波文」：文字（≤2000 字）+ 最多 9 张图。
+ * 一条动态叫一条「波文」：文字（≤2000 字）+ 最多 9 个附件（图片 / 文件）。
+ *
+ * ── 附件（v1.2.0 定案） ────────────────────────────────────────
+ * 本插件**没有任何上传路由**，图片与文件全部由「附件上传」插件处理：
+ *   · 图片 → plugin_attachment_manager_upload（插件内部走 Upload::handle，
+ *     装了压缩开关就转 WebP，与聊天里的图片同一待遇）；
+ *   · 文件 → plugin_attachment_manager_upload_file（真实 MIME 白名单 / 体积 / 配额）。
+ * 没装或没启用该插件：服务端下发 attach.on=false 与安装提示，前端不给上传入口
+ * （点了提示「请先安装并启用附件上传插件」）。下载走本插件自己的
+ * plugin_time_machine_download：签名 + **再判一次可见性**（签名只证明请求来自站内，
+ * 不证明这个人能看这条波文）。
+ *
+ * ── 可见性（v1.2.0） ──────────────────────────────────────────
+ * public 所有人 / friends 作者的好友 / private 仅作者（管理员例外，便于管理）。
+ * 过滤在 SQL 侧完成（分页不会数错），评论与附件下载各自再判一次。
  *
  * ── 能力 ──────────────────────────────────────────────────────
  *   · 分栏：最新（时间序）/ 热门（点赞序）/ 我的 / 收藏；每页 10 条，「加载更多」翻页；
@@ -89,6 +103,17 @@ function owTmDdl(): array
     ];
 }
 
+/** 列是否存在（三驱动通用）：核心的 DB::hasColumn 是 private，插件只能自己探 */
+function owTmHasColumn(string $table, string $col): bool
+{
+    try {
+        DB::val("SELECT {$col} FROM {$table} LIMIT 1");
+        return true;
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
 /** 建表 + 建索引（只在真正读写时执行） */
 function owTmBoot(): void
 {
@@ -98,6 +123,13 @@ function owTmBoot(): void
 
     $ddl = owTmDdl();
     DB::run($ddl['plugin_time_machine_post']);
+    // v1.2.0 可见性列（public / friends / private）：老库升级时补一列，默认公开。
+    // 核心的 DB::hasColumn / addColumn 是 private，插件够不着 → 自己探：
+    // 「SELECT 该列 LIMIT 1」报错就是没有，这条写法三种驱动通用；
+    // `ALTER TABLE … ADD COLUMN … NOT NULL DEFAULT 'public'` 在 SQLite / MySQL / PG 上同形。
+    if (!owTmHasColumn('plugin_time_machine_post', 'visibility')) {
+        DB::run("ALTER TABLE plugin_time_machine_post ADD COLUMN visibility VARCHAR(10) NOT NULL DEFAULT 'public'");
+    }
     DB::createIndex('idx_otm_post_time', 'plugin_time_machine_post', 'created_at', false);
     DB::createIndex('idx_otm_post_uid', 'plugin_time_machine_post', 'uid', false);
 
@@ -141,15 +173,34 @@ function owTmViewerKey(array $actor): string
  */
 function owTmOut(array $r): array
 {
-    $imgs = [];
+    $media = [];
     $raw = json_decode((string)($r['images'] ?? ''), true);
     if (is_array($raw)) {
-        foreach ($raw as $u) {
-            $u = (string)$u;
-            if ($u !== '' && Upload::mediaRel($u) !== null) $imgs[] = $u;
-            if (count($imgs) >= 9) break;
+        foreach ($raw as $it) {
+            // 旧形态（v1.1.x）：元素是纯图片 URL 字符串；新形态：附件对象 {k,url|path,name,size,ext}
+            if (is_string($it)) {
+                $u = $it;
+                if ($u !== '' && Upload::mediaRel($u) !== null) $media[] = ['k' => 'image', 'url' => $u];
+            } elseif (is_array($it) && (string)($it['k'] ?? '') === 'file') {
+                $p = (string)($it['path'] ?? '');
+                if (Upload::fileAbs($p) === null) continue;      // 文件必须真实落在 uploads/file 下
+                $media[] = [
+                    'k' => 'file',
+                    'path' => $p,
+                    'name' => mb_substr((string)($it['name'] ?? 'file'), 0, 120),
+                    'size' => (int)($it['size'] ?? 0),
+                    'ext' => strtolower((string)($it['ext'] ?? '')),
+                ];
+            } elseif (is_array($it)) {
+                $u = (string)($it['url'] ?? '');
+                if ($u === '' || Upload::mediaRel($u) === null) continue;
+                $media[] = ['k' => 'image', 'url' => $u];
+            }
+            if (count($media) >= 9) break;
         }
     }
+    $vis = (string)($r['visibility'] ?? '');
+    if (!in_array($vis, ['public', 'friends', 'private'], true)) $vis = 'public';
     return [
         'id' => (int)$r['id'],
         'uid' => (int)$r['uid'],
@@ -157,11 +208,86 @@ function owTmOut(array $r): array
         'avatar' => (string)$r['avatar'],
         'role' => (string)$r['role'],
         'content' => (string)$r['content'],
-        'images' => $imgs,
+        'media' => $media,
+        'visibility' => $vis,
         'views' => (int)$r['views'],
         'likes' => (int)$r['likes'],
         'comments' => (int)$r['comments'],
         'created_at' => (int)$r['created_at'],
+    ];
+}
+
+/* ---------- 可见性（v1.2.0） ----------
+   一条波文谁能看：public 所有人 / friends 作者的好友 / private 仅作者（管理员例外，用于管理）。
+   判定只在服务端做：前端拿不到「能不能看」以外的任何信息，私密波文不会下发。             */
+
+/** 访问者能否看这条波文（行已取到时用） */
+function owTmVisOk(array $r, int $uid, bool $isAdmin): bool
+{
+    $vis = (string)($r['visibility'] ?? 'public');
+    if ($vis === '' || $vis === 'public') return true;
+    if ((int)$r['uid'] === $uid || $isAdmin) return true;
+    if ($uid <= 0 || $vis === 'private') return false;
+    return (int)DB::val(
+        'SELECT COUNT(*) FROM friends WHERE (user_id=? AND friend_id=?) OR (user_id=? AND friend_id=?)',
+        [$uid, (int)$r['uid'], (int)$r['uid'], $uid]
+    ) > 0;
+}
+
+/**
+ * 列表查询用的可见性条件（不带前缀的列名用 p. 引用）。
+ * 参数按出现顺序追加进 $params。管理员不加限制（要能管），游客只看公开。
+ */
+function owTmVisCond(int $uid, bool $isAdmin, array &$params): string
+{
+    if ($isAdmin) return '1=1';
+    $sql = "(p.visibility IS NULL OR p.visibility='' OR p.visibility='public'";
+    if ($uid > 0) {
+        $params[] = $uid;                                   // p.uid=?
+        $params[] = $uid;                                   // f.friend_id=?
+        $params[] = $uid;                                   // f.user_id=?
+        $sql .= " OR p.uid=? OR (p.visibility='friends' AND EXISTS ("
+              . 'SELECT 1 FROM friends f WHERE (f.user_id=p.uid AND f.friend_id=?)'
+              . ' OR (f.user_id=? AND f.friend_id=p.uid)))';
+    }
+    return $sql . ')';
+}
+
+/* ---------- 附件能力（v1.2.0） ----------
+   波文的图与文件**完全依赖附件上传插件**（attachment-manager）：
+     · 图片走 plugin_attachment_manager_upload   → 插件在 Upload::handle 内压缩（WebP）
+     · 文件走 plugin_attachment_manager_upload_file → 插件做 MIME 白名单 / 体积 / 配额校验
+   本插件自己不再有任何上传路由：没装/没启用就明确告诉用户，并不给上传入口。 */
+
+/** 附件上传插件是否可用（装了且后台启用） */
+function owTmAttachOn(): bool
+{
+    return function_exists('owATEnabled') && owATEnabled();
+}
+
+/** 给前端的附件能力描述（能不能传、上限、允许的扩展名、提示文案） */
+function owTmAttachInfo(): array
+{
+    if (!owTmAttachOn()) {
+        return [
+            'on' => false,
+            'hint' => '未安装或未启用「附件上传」插件，暂时不能上传图片与文件。',
+            'accept' => '',
+            'max_mb' => 0,
+        ];
+    }
+    $exts = function_exists('owATExts') ? owATExts() : [];
+    $imgExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'];
+    $all = array_values(array_unique(array_merge($imgExts, $exts)));
+    $maxMb = function_exists('owATMaxBytes') ? (int)round(owATMaxBytes() / 1048576) : 0;
+    $accept = implode(',', array_map(fn($e) => '.' . $e, $all));
+    return [
+        'on' => true,
+        'hint' => '图片与文件均由「附件上传」插件处理'
+            . ($maxMb > 0 ? '，单个不超过 ' . $maxMb . ' MB' : '') . '，最多 9 个。',
+        'accept' => $accept,
+        'max_mb' => $maxMb,
+        'image_exts' => $imgExts,
     ];
 }
 
@@ -280,22 +406,27 @@ owTmRoute('plugin_time_machine_feed', function (array $ctx): void {
     $isAdmin = ($actor['role'] ?? '') === 'admin';
 
     $params = [];
+    $vis = owTmVisCond($uid, $isAdmin, $params);   // 可见性条件（占位符参数已按顺序入 $params）
     switch ($tab) {
         case 'hot':
-            $sql = 'SELECT * FROM plugin_time_machine_post ORDER BY likes DESC, comments DESC, id DESC LIMIT ' . ($per + 1) . " OFFSET {$off}";
+            $sql = 'SELECT * FROM plugin_time_machine_post p WHERE ' . $vis
+                 . ' ORDER BY likes DESC, comments DESC, p.id DESC LIMIT ' . ($per + 1) . " OFFSET {$off}";
             break;
         case 'mine':
-            $sql = 'SELECT * FROM plugin_time_machine_post WHERE uid=? ORDER BY id DESC LIMIT ' . ($per + 1) . " OFFSET {$off}";
-            $params[] = $uid;
+            $sql = 'SELECT * FROM plugin_time_machine_post p WHERE uid=? AND ' . $vis
+                 . ' ORDER BY p.id DESC LIMIT ' . ($per + 1) . " OFFSET {$off}";
+            array_unshift($params, $uid);   // uid=? 排在最前
             break;
         case 'fav':
             $sql = 'SELECT p.* FROM plugin_time_machine_post p'
                  . ' INNER JOIN plugin_time_machine_fav f ON f.post_id = p.id AND f.uid=?'
+                 . ' WHERE ' . $vis
                  . ' ORDER BY f.created_at DESC LIMIT ' . ($per + 1) . " OFFSET {$off}";
-            $params[] = $uid;
+            array_unshift($params, $uid);
             break;
         default:
-            $sql = 'SELECT * FROM plugin_time_machine_post ORDER BY id DESC LIMIT ' . ($per + 1) . " OFFSET {$off}";
+            $sql = 'SELECT * FROM plugin_time_machine_post p WHERE ' . $vis
+                 . ' ORDER BY p.id DESC LIMIT ' . ($per + 1) . " OFFSET {$off}";
     }
     $rows = $isUser || $tab === 'new' || $tab === 'hot' ? DB::all($sql, $params) : [];
     if (!$isUser && ($tab === 'mine' || $tab === 'fav')) $rows = [];   // 游客没有「我的/收藏」
@@ -359,6 +490,7 @@ owTmRoute('plugin_time_machine_feed', function (array $ctx): void {
         'is_admin' => $isAdmin,
         'me' => $uid,
         'stats' => $stats,
+        'attach' => owTmAttachInfo(),   // 附件能力（能不能传 / 上限 / 扩展名 / 提示）
     ]);
 });
 
@@ -376,19 +508,39 @@ owTmRoute('plugin_time_machine_post', function (array $ctx): void {
     $content = trim((string)($p['content'] ?? ''));
     if (mb_strlen($content) > 2000) Api::json(['ok' => false, 'msg' => '波文最多 2000 字'], 400);
 
-    // 图片：前端给 JSON 数组；逐张过 Upload::mediaRel（只认本站 uploads/ 且文件真实存在）
-    $images = [];
-    $raw = json_decode((string)($p['images'] ?? ''), true);
+    // 可见性：公开 / 好友 / 私密（v1.2.0）
+    $vis = strtolower(trim((string)($p['visibility'] ?? 'public')));
+    if (!in_array($vis, ['public', 'friends', 'private'], true)) $vis = 'public';
+
+    /* 附件（v1.2.0）：由附件上传插件上传后把产物回传，这里只做**复核**。
+       · image：url 必须过 Upload::mediaRel（本站 uploads/ 且文件真实存在）
+       · file ：path 必须过 Upload::fileAbs（本站 uploads/file 下且真实存在）
+       两者都只认本站产物 —— 伪造 / 外链地址一律静默丢弃，不占名额。 */
+    $media = [];
+    $raw = json_decode((string)($p['media'] ?? ''), true);
     if (is_array($raw)) {
-        foreach ($raw as $u) {
-            $u = trim((string)$u);
-            if ($u === '') continue;
-            if (Upload::mediaRel($u) === null) continue;   // 伪造/外链地址：静默丢弃
-            if (!in_array($u, $images, true)) $images[] = $u;
-            if (count($images) >= 9) break;
+        foreach ($raw as $it) {
+            if (!is_array($it)) continue;
+            $k = (string)($it['k'] ?? '');
+            if ($k === 'file') {
+                $path = trim((string)($it['path'] ?? ''));
+                if ($path === '' || Upload::fileAbs($path) === null) continue;
+                $media[] = [
+                    'k' => 'file',
+                    'path' => $path,
+                    'name' => mb_substr(trim((string)($it['name'] ?? 'file')), 0, 120),
+                    'size' => max(0, (int)($it['size'] ?? 0)),
+                    'ext' => strtolower(preg_replace('/[^a-z0-9]/i', '', (string)($it['ext'] ?? '')) ?: ''),
+                ];
+            } else {
+                $url = trim((string)($it['url'] ?? ''));
+                if ($url === '' || Upload::mediaRel($url) === null) continue;
+                $media[] = ['k' => 'image', 'url' => $url];
+            }
+            if (count($media) >= 9) break;
         }
     }
-    if ($content === '' && !$images) Api::json(['ok' => false, 'msg' => '写点什么，或者配张图吧'], 400);
+    if ($content === '' && !$media) Api::json(['ok' => false, 'msg' => '写点什么，或者配张图吧'], 400);
 
     // 内容安全：与消息正文同一道闸门（敏感词打码 + 否决），scene 用 message
     Chat::filterText($content, 'message', $actor);
@@ -407,25 +559,47 @@ owTmRoute('plugin_time_machine_post', function (array $ctx): void {
         'avatar' => Auth::avatarUrlFor($u),
         'role' => (string)$u['role'],
         'content' => $content,
-        'images' => (string)json_encode($images, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        'images' => (string)json_encode($media, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        'visibility' => $vis,
         'created_at' => $now,
     ]);
-    Sec::log('time_machine_post', (string)$actor['id'], ['post' => $pid, 'imgs' => count($images)]);
+    $files = 0;
+    foreach ($media as $m) if ($m['k'] === 'file') $files++;
+    Sec::log('time_machine_post', (string)$actor['id'], ['post' => $pid, 'media' => count($media), 'files' => $files, 'vis' => $vis]);
     Api::json(['ok' => true, 'id' => $pid, 'msg' => '波文已发布']);
 });
 
-/* ============================ API：图片上传 ============================ */
+/* ============================ API：附件下载 ============================ */
 
-/** 波文配图：走核心 Upload::handle（kind=image，附件插件的 WebP 压缩钩子照常生效） */
-owTmRoute('plugin_time_machine_upload', function (array $ctx): void {
+/**
+ * 下载波文里的文件附件（GET + 签名，与核心 file_download 同一手法）。
+ * 可见性在这里**再判一次**：私密 / 好友可见的波文不能因为拿到链接就被下载
+ * —— 签名只证明「这个请求来自站内」，不证明「这个人能看这条波文」。
+ */
+owTmRoute('plugin_time_machine_download', function (array $ctx): void {
     $actor = $ctx['actor'] ?? [];
-    if (($actor['kind'] ?? '') !== 'user') Api::json(['ok' => false, 'msg' => '请先登录后再上传'], 403);
-    if (empty($_FILES['file'])) Api::json(['ok' => false, 'msg' => '未接收到文件']);
-    if (!Sec::rateLimit('otm_upload', (string)$actor['id'], 60, 12)) {
-        Api::json(['ok' => false, 'msg' => '上传过于频繁，请稍后再试'], 429);
+    $pid = (int)($_GET['id'] ?? 0);
+    $idx = (int)($_GET['i'] ?? 0);
+    owTmBoot();
+    $r = DB::one('SELECT * FROM plugin_time_machine_post WHERE id=?', [$pid]);
+    if (!$r) Api::json(['ok' => false, 'msg' => '文件不存在'], 404);
+    $uid = ($actor['kind'] ?? '') === 'user' ? (int)$actor['id'] : 0;
+    if (!owTmVisOk($r, $uid, ($actor['role'] ?? '') === 'admin')) {
+        Api::json(['ok' => false, 'msg' => '无权访问'], 403);
     }
-    [$ok, $urlOrMsg] = Upload::handle($_FILES['file'], 'image');
-    Api::json($ok ? ['ok' => true, 'url' => $urlOrMsg] : ['ok' => false, 'msg' => $urlOrMsg]);
+    $raw = json_decode((string)($r['images'] ?? ''), true);
+    $list = is_array($raw) ? array_values($raw) : [];
+    $it = $list[$idx] ?? null;
+    if (!is_array($it) || (string)($it['k'] ?? '') !== 'file') Api::json(['ok' => false, 'msg' => '文件不存在'], 404);
+    $abs = Upload::fileAbs((string)($it['path'] ?? ''));
+    if (!$abs) Api::json(['ok' => false, 'msg' => '文件不存在'], 404);
+    $name = preg_replace('/[\r\n"]/', '', (string)($it['name'] ?? 'file')) ?: 'file';
+    header('Content-Type: application/octet-stream');
+    header('Content-Length: ' . filesize($abs));
+    header('Content-Disposition: attachment; filename="' . $name . '"; filename*=UTF-8\'\'' . rawurlencode($name));
+    header('X-Content-Type-Options: nosniff');
+    readfile($abs);
+    exit;
 });
 
 /* ============================ API：点赞 / 收藏 ============================ */
@@ -472,8 +646,13 @@ owTmRoute('plugin_time_machine_comments', function (array $ctx): void {
         Api::json(['ok' => false, 'msg' => '读取过于频繁，请稍后再试'], 429);
     }
     $pid = (int)($ctx['post']['post_id'] ?? 0);
-    $post = DB::one('SELECT id FROM plugin_time_machine_post WHERE id=?', [$pid]);
+    $post = DB::one('SELECT * FROM plugin_time_machine_post WHERE id=?', [$pid]);
     if (!$post) Api::json(['ok' => false, 'msg' => '这条波文已不存在'], 404);
+    // 可见性：看不到的波文，评论也不该读得到（列表接口不会给入口，这里是直接调用的兜底）
+    $uidC = ($ctx['actor']['kind'] ?? '') === 'user' ? (int)$ctx['actor']['id'] : 0;
+    if (!owTmVisOk($post, $uidC, ($ctx['actor']['role'] ?? '') === 'admin')) {
+        Api::json(['ok' => false, 'msg' => '这条波文已不存在'], 404);
+    }
     $rows = DB::all(
         'SELECT id, uid, nickname, avatar, role, content, created_at FROM plugin_time_machine_comment'
         . ' WHERE post_id=? ORDER BY id ASC LIMIT 200',
@@ -490,8 +669,12 @@ owTmRoute('plugin_time_machine_comment_add', function (array $ctx): void {
         Api::json(['ok' => false, 'msg' => '评论太快啦，休息一下'], 429);
     }
     $pid = (int)($ctx['post']['post_id'] ?? 0);
-    $post = DB::one('SELECT id, comments FROM plugin_time_machine_post WHERE id=?', [$pid]);
+    $post = DB::one('SELECT * FROM plugin_time_machine_post WHERE id=?', [$pid]);
     if (!$post) Api::json(['ok' => false, 'msg' => '这条波文已不存在'], 404);
+    // 同上：看不到的波文也不能评论（否则凭 post_id 就能往私密波文里灌评论）
+    if (!owTmVisOk($post, (int)$actor['id'], ($actor['role'] ?? '') === 'admin')) {
+        Api::json(['ok' => false, 'msg' => '这条波文已不存在'], 404);
+    }
 
     $content = trim((string)($ctx['post']['content'] ?? ''));
     if ($content === '') Api::json(['ok' => false, 'msg' => '说点什么吧'], 400);

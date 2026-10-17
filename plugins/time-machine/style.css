@@ -161,6 +161,24 @@
 }
 .ow-tm-imgs.g2 .ow-tm-img { width: 48%; height: 124px; }
 
+/* ---------- 可见性徽标（好友可见 / 私密；公开是默认，不占位置） ----------
+   与核心 .ow-tag 同一档：12px 字、6px 圆角、次级文字色；私密给一条边框强调 */
+.ow-tm-vis {
+    flex-shrink: 0; -webkit-flex-shrink: 0;
+    padding: 1px 6px;
+    border-radius: 6px;
+    background: var(--ow-bg-sub);
+    color: var(--ow-text-sub);
+    font-size: 11.5px;
+    line-height: 1.6;
+}
+.ow-tm-vis[data-vis="private"] { border: 1px solid var(--ow-border-control); }
+
+/* ---------- 文件附件行：直接复用核心 .ow-file-card 那套（消息里的文件卡同款） ---------- */
+.ow-tm-files { margin-top: 8px; }
+.ow-tm-files .ow-file-card { margin-bottom: 6px; }
+.ow-tm-files .ow-file-card:last-child { margin-bottom: 0; }
+
 /* ---------- 动作条（文字 + 16px 线性图标，方角小热区，不做胶囊） ---------- */
 .ow-tm-acts {
     display: flex; display: -webkit-flex;
@@ -212,7 +230,98 @@
 
 /* ---------- 发波文编辑器（弹窗内） ---------- */
 .ow-tm-ta { width: 100%; resize: vertical; min-height: 96px; line-height: 1.7; }
-.ow-tm-cmp-meta { text-align: right; font-size: 12px; color: var(--ow-text-sub); margin-top: 4px; }
+
+/* 工具条（表情 / 附件 / 字数）：与输入区同一档高度，图标钮 28px 方角，悬停灰底 */
+.ow-tm-cmp-bar {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    gap: 2px;
+    margin-top: 6px;
+}
+.ow-tm-cmp-btn {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    justify-content: center; -webkit-justify-content: center;
+    width: 28px; height: 28px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: none;
+    color: var(--ow-text-sub);
+    cursor: pointer;
+}
+.ow-tm-cmp-btn:hover { background: var(--ow-hover-bg); color: var(--ow-text); }
+/* 附件不可用（没装/没启用附件上传插件）：仍可点，点了给提示，但视觉上退一档 */
+.ow-tm-cmp-btn.is-off { opacity: .45; }
+.ow-tm-cmp-cnt { margin-left: auto; font-size: 12px; color: var(--ow-text-sub); }
+
+/* 表情面板：复用核心 .ow-emoji-item，落点是这里的 textarea（不是聊天输入框） */
+.ow-tm-emoji {
+    margin-top: 8px;
+    max-height: 168px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 8px;
+    background: var(--ow-bg-sub);
+    border-radius: 6px;
+}
+.ow-tm-emoji .ow-emoji-item { cursor: pointer; }
+
+/* 附件列表：图片缩略图 + 文件 chip 混排 */
+.ow-tm-cmp-media { display: flex; display: -webkit-flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+/* 文件 chip：与核心文件卡同语言（图标 + 名称 + 体积），做成可移除的一块 */
+.ow-tm-chip {
+    position: relative;
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    gap: 6px;
+    max-width: 220px;
+    padding: 6px 26px 6px 8px;
+    background: var(--ow-bg-sub);
+    border-radius: 6px;
+}
+.ow-tm-chip-ic { display: flex; display: -webkit-flex; color: var(--ow-text-sub); }
+.ow-tm-chip-n {
+    font-size: 12.5px;
+    color: var(--ow-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.ow-tm-chip-s { flex-shrink: 0; -webkit-flex-shrink: 0; font-size: 11.5px; color: var(--ow-text-sub); }
+
+/* 可见性三选：与 .ow-tm-tabs 同一几何（灰槽 + 6px 标签 + 主色实心选中） */
+.ow-tm-vis-row {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    gap: 10px;
+    margin-top: 12px;
+}
+.ow-tm-vis-lb { font-size: 13px; color: var(--ow-text-sub); flex-shrink: 0; -webkit-flex-shrink: 0; }
+.ow-tm-vis-tabs {
+    display: inline-flex;
+    display: -webkit-inline-flex;
+    gap: 2px;
+    padding: 3px;
+    background: var(--ow-bg-sub);
+    border-radius: 9px;
+}
+.ow-tm-vtab {
+    padding: 6px 10px;
+    border: none;
+    background: transparent;
+    border-radius: 6px;
+    font-size: 13px;
+    line-height: 1;
+    color: var(--ow-text-sub);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background-color .15s, color .15s;
+    -webkit-transition: background-color .15s, color .15s;
+}
+.ow-tm-vtab:hover { color: var(--ow-text-title); }
+.ow-tm-vtab.is-on { background: var(--ow-primary-strong); color: var(--ow-on-accent); }
+
 .ow-tm-cmp-imgs { display: flex; display: -webkit-flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .ow-tm-thumb {
     position: relative;

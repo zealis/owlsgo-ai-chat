@@ -47,6 +47,14 @@
             body = '<path d="M6 6l12 12M18 6L6 18"/>';
         } else if (name === 'image') {
             body = '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="M4 17l4.5-4.5 3.5 3.5 3-3 5 5"/>';
+        } else if (name === 'file') {
+            body = '<path d="M13 3.5H7a1.5 1.5 0 0 0-1.5 1.5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V9z"/><path d="M13 3.5V9h5.5"/>';
+        } else if (name === 'download') {
+            body = '<path d="M12 4v11"/><path d="M7.5 11L12 15.5 16.5 11"/><path d="M4.5 19.5h15"/>';
+        } else if (name === 'smile') {
+            body = '<circle cx="12" cy="12" r="9"/><path d="M8.5 14.5c1 1.5 2.2 2.2 3.5 2.2s2.5-.7 3.5-2.2"/><line x1="9" y1="9.5" x2="9" y2="10.5"/><line x1="15" y1="9.5" x2="15" y2="10.5"/>';
+        } else if (name === 'paperclip') {
+            body = '<path d="M16.5 7.5l-7 7a3.5 3.5 0 0 0 5 5l7-7a5.5 5.5 0 0 0-8-8L6 12a7.5 7.5 0 0 0 11 11"/>';
         } else {   // send
             body = '<path d="M3.5 12L21 4l-7.5 17-2.5-7z"/>';
         }
@@ -72,6 +80,21 @@
     }
 
     function nl2br(s) { return esc(s).replace(/\r?\n/g, '<br>'); }
+
+    /** 体积文案（与核心消息里的文件卡同一口径：B / KB / MB） */
+    function sizeText(n) {
+        n = parseInt(n, 10) || 0;
+        if (n < 1024) return n + ' B';
+        if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+        return (n / 1048576).toFixed(1) + ' MB';
+    }
+
+    /** 图片扩展名集合（附件插件的图片路由会压缩，走它；其余走文件路由） */
+    var IMG_EXT = { jpg: 1, jpeg: 1, png: 1, gif: 1, webp: 1, bmp: 1 };
+    function extOf(name) {
+        var m = /\.[a-z0-9]+$/i.exec(String(name || ''));
+        return m ? m[0].slice(1).toLowerCase() : '';
+    }
 
     /* ===================================================================== */
 
@@ -180,6 +203,8 @@
                 self.isAdmin = !!r.is_admin;
                 self.me = r.me | 0;
                 self.hasMore = !!r.has_more;
+                // 附件能力由服务端判定（依赖「附件上传」插件是否安装并启用）
+                self.attach = r.attach || { on: false, hint: '', accept: '', max_mb: 0, image_exts: [] };
                 if (r.stats) self.paintStats(r.stats);
                 self.paint(list, r.posts || [], reset);
                 if (foot) {
@@ -217,22 +242,38 @@
         card: function (p) {
             var mine = p.uid === this.me;
             var canDel = mine || this.isAdmin;
-            var imgs = p.images || [], ih = '', g = imgs.length >= 5 ? ' g3' : (imgs.length >= 2 ? ' g2' : ' g1'), k;
+            var media = p.media || [];
+            var imgs = [], files = [], k;
+            for (k = 0; k < media.length; k++) {
+                if (media[k].k === 'file') files.push(media[k]); else imgs.push(media[k]);
+            }
+            var ih = '', g = imgs.length >= 5 ? ' g3' : (imgs.length >= 2 ? ' g2' : ' g1');
             for (k = 0; k < imgs.length; k++) {
-                ih += '<img class="ow-tm-img" src="' + esc(imgs[k]) + '" alt="配图"'
+                ih += '<img class="ow-tm-img" src="' + esc(imgs[k].url) + '" alt="配图"'
                     + ' onclick="OwChat.viewImg(this.src)" loading="lazy">';
             }
+            // 文件附件：复用核心消息里文件卡的类名（.ow-file-card / .ow-file-ico / .ow-file-name / .ow-file-size / .ow-file-dl）
+            var fh = '';
+            for (k = 0; k < files.length; k++) {
+                fh += this.fileRow(p.id, media.indexOf(files[k]), files[k]);
+            }
+            // 可见性徽标：公开不占地方（默认就是公开），好友/私密各给一枚小标签
+            var visTag = '';
+            if (p.visibility === 'friends') visTag = '<span class="ow-tm-vis" data-vis="friends">好友可见</span>';
+            else if (p.visibility === 'private') visTag = '<span class="ow-tm-vis" data-vis="private">私密</span>';
             var h = '<article class="ow-tm-card" data-pid="' + p.id + '">'
                 + '<div class="ow-tm-card-av">' + avatarCell(p.avatar, p.nickname, 'ow-avatar-lg') + '</div>'
                 + '<div class="ow-tm-card-main">'
                 + '<div class="ow-tm-card-top">'
                 + '<span class="ow-tm-nick" onclick="OwChat.userCard(' + p.uid + ',' + jsAttr(p.nickname) + ')">' + esc(p.nickname) + '</span>'
+                + visTag
                 + '<span class="ow-tm-time">' + esc(fmtTime(p.created_at)) + '</span>'
                 + (canDel ? '<button class="ow-tm-del" type="button" title="删除" aria-label="删除" data-tm-act="del">'
                     + ico('trash', 15) + '</button>' : '')
                 + '</div>'
                 + (p.content ? '<div class="ow-tm-text">' + nl2br(p.content) + '</div>' : '')
                 + (ih ? '<div class="ow-tm-imgs' + g + '">' + ih + '</div>' : '')
+                + (fh ? '<div class="ow-tm-files">' + fh + '</div>' : '')
                 + '<div class="ow-tm-acts">'
                 + '<button type="button" class="ow-tm-act' + (p.liked ? ' is-on' : '') + '" data-tm-act="like" title="点赞">'
                 + ico(p.liked ? 'heart-fill' : 'heart', 16) + '<i>' + (p.likes | 0) + '</i></button>'
@@ -334,6 +375,23 @@
                     }
                 }
             });
+        },
+
+        /**
+         * 文件附件一行：复用核心消息里文件卡的同一套类名
+         * （.ow-file-card / .ow-file-ico / .ow-file-name / .ow-file-size / .ow-file-dl），
+         * 下载链接带签名（与核心 file_download 同一手法），服务端还会再判一次可见性。
+         */
+        fileRow: function (pid, idx, f) {
+            var s = OwApi.sign('plugin_time_machine_download');
+            var href = '?action=plugin_time_machine_download&id=' + pid + '&i=' + idx
+                     + '&ts=' + s.ts + '&sign=' + s.sign;
+            var nm = f.name || '文件';
+            return '<div class="ow-file-card">'
+                + '<span class="ow-file-ico">' + ico('file', 18) + '</span>'
+                + '<span class="ow-file-meta"><span class="ow-file-name" title="' + esc(nm) + '">' + esc(nm) + '</span>'
+                + '<span class="ow-file-size">' + esc(sizeText(f.size)) + '</span></span>'
+                + '<a class="ow-file-dl" href="' + href + '" title="下载">' + ico('download', 18) + '</a></div>';
         },
 
         /* ---------- 评论 ---------- */
@@ -447,26 +505,45 @@
             };
         },
 
-        /* ---------- 发波文（弹窗编辑器） ---------- */
-        composerImgs: [],
+        /* ---------- 发波文（弹窗编辑器） ----------
+           附件（图 + 文件）全部交给「附件上传」插件：
+             · 图片 → plugin_attachment_manager_upload（插件内压缩，返回 url）
+             · 文件 → plugin_attachment_manager_upload_file（MIME 白名单 / 体积 / 配额，返回 file{}）
+           没装或没启用该插件：不给上传入口，只显示一行提示（服务端同样不认任何附件）。 */
+        composerMedia: [],
         composerBusy: false,
+        composerVis: 'public',
 
         openComposer: function () {
             if (!this.canPost) { toast('请先登录后再发波文'); return; }
-            this.composerImgs = [];
+            this.composerMedia = [];
             this.composerBusy = false;
+            this.composerVis = 'public';
+            var at = this.attach || {};
             var h = '<h3>发波文</h3>'
                 + '<div class="ow-tm-cmp">'
                 + '<textarea class="ow-input ow-tm-ta" id="owTmTa" maxlength="2000" rows="5" placeholder="这一刻的想法…"></textarea>'
-                + '<div class="ow-tm-cmp-meta"><span id="owTmCnt">0 / 2000</span></div>'
-                + '<div class="ow-tm-cmp-imgs" id="owTmImgs"></div>'
-                + '<div class="ow-tm-cmp-tip" id="owTmTip">配图最多 9 张，支持 jpg / png / gif / webp。</div>'
+                + '<div class="ow-tm-cmp-bar">'
+                + '<button type="button" class="ow-tm-cmp-btn" id="owTmEmo" title="表情" aria-label="表情">' + ico('smile', 18) + '</button>'
+                + '<button type="button" class="ow-tm-cmp-btn' + (at.on ? '' : ' is-off') + '" id="owTmAdd" title="添加图片或文件" aria-label="添加图片或文件">'
+                + ico('paperclip', 18) + '</button>'
+                + '<span class="ow-tm-cmp-cnt" id="owTmCnt">0 / 2000</span>'
+                + '</div>'
+                + '<div class="ow-tm-emoji" id="owTmEmoji" style="display:none"></div>'
+                + '<div class="ow-tm-cmp-media" id="owTmMedia"></div>'
+                + '<div class="ow-tm-cmp-tip" id="owTmTip"></div>'
+                + '<div class="ow-tm-vis-row"><span class="ow-tm-vis-lb">谁可以看</span>'
+                + '<div class="ow-tm-vis-tabs" id="owTmVis">'
+                + '<button type="button" class="ow-tm-vtab is-on" data-vis="public">公开</button>'
+                + '<button type="button" class="ow-tm-vtab" data-vis="friends">好友</button>'
+                + '<button type="button" class="ow-tm-vtab" data-vis="private">私密</button>'
+                + '</div></div>'
                 + '<div class="ow-modal-actions">'
                 + '<button class="ow-btn" type="button" onclick="OwChat.closeModal()">取消</button>'
                 + '<button class="ow-btn ow-btn-primary" type="button" id="owTmGo">发布</button>'
                 + '</div></div>';
             OwChat.openModal(h, 520);
-            // 上一次弹窗（取消/提交）留下的隐藏选图控件：先清掉再建新的，避免 body 上越积越多
+            // 上一次弹窗（取消/提交）留下的隐藏选择控件：先清掉再建新的，避免 body 上越积越多
             if (this._fileInput) { try { d.body.removeChild(this._fileInput); } catch (e) {} this._fileInput = null; }
             var ta = $('owTmTa'), self = this;
             if (ta) {
@@ -476,64 +553,127 @@
                 };
                 ta.focus();
             }
+            /* 表情：复用前台同一份表情表与核心 .ow-emoji-* 样式，只是把落点从
+               聊天输入框换成这里的 textarea（核心面板写死插 #owInput，够不着）。 */
+            var emo = $('owTmEmo'), ebox = $('owTmEmoji');
+            if (emo && ebox) {
+                var list = (OwChat && OwChat.emojis) || [];
+                if (!list.length) {
+                    emo.style.display = 'none';       // 没有表情数据就不给这个按钮（不摆一个点了没反应的入口）
+                } else {
+                    var eh = '', i;
+                    for (i = 0; i < list.length; i++) eh += '<span class="ow-emoji-item">' + esc(list[i]) + '</span>';
+                    ebox.innerHTML = eh;
+                    var items = ebox.getElementsByClassName('ow-emoji-item');
+                    for (i = 0; i < items.length; i++) {
+                        items[i].onclick = function () {
+                            if (ta) { ta.value += this.innerHTML; ta.focus(); }
+                            if (ta && ta.oninput) ta.oninput();
+                        };
+                    }
+                    emo.onclick = function () {
+                        ebox.style.display = ebox.style.display === 'none' ? '' : 'none';
+                    };
+                }
+            }
+            // 可见性三选
+            var vtabs = $('owTmVis');
+            if (vtabs) {
+                var vs = vtabs.getElementsByClassName('ow-tm-vtab'), j;
+                for (j = 0; j < vs.length; j++) {
+                    vs[j].onclick = function () {
+                        var all = vtabs.getElementsByClassName('ow-tm-vtab'), m;
+                        for (m = 0; m < all.length; m++) all[m].className = 'ow-tm-vtab';
+                        this.className = 'ow-tm-vtab is-on';
+                        self.composerVis = this.getAttribute('data-vis') || 'public';
+                        self.syncTip();
+                    };
+                }
+            }
+            var addBtn = $('owTmAdd');
             var add = d.createElement('input');
             add.type = 'file';
-            add.accept = 'image/*';
             add.multiple = true;
             add.style.display = 'none';
             add.id = 'owTmFile';
+            if (at.accept) add.accept = at.accept;
             d.body.appendChild(add);
             add.onchange = function () {
                 var files = add.files || [], queue = [], i;
                 for (i = 0; i < files.length; i++) {
-                    if (self.composerImgs.length + queue.length >= 9) break;
+                    if (self.composerMedia.length + queue.length >= 9) break;
                     queue.push(files[i]);
                 }
                 add.value = '';
-                if (!queue.length) { toast('配图最多 9 张'); return; }
+                if (!queue.length) { toast('附件最多 9 个'); return; }
                 self.uploadQueue(queue);
             };
             this._fileInput = add;
+            if (addBtn) addBtn.onclick = function () {
+                if (!(self.attach && self.attach.on)) {
+                    toast('请先在后台安装并启用「附件上传」插件，才能上传图片与文件');
+                    return;
+                }
+                add.click();
+            };
             var go = $('owTmGo');
             if (go) go.onclick = function () { self.submit(); };
-            this.renderImgs();
+            this.renderMedia();
         },
 
-        renderImgs: function () {
-            var box = $('owTmImgs');
+        renderMedia: function () {
+            var box = $('owTmMedia');
             if (!box) return;
-            var h = '', i, self = this;
-            for (i = 0; i < this.composerImgs.length; i++) {
-                h += '<span class="ow-tm-thumb"><img src="' + esc(this.composerImgs[i]) + '" alt="">'
-                    + '<button type="button" class="ow-thumb-x" data-i="' + i + '" title="移除" aria-label="移除">' + ico('close', 12) + '</button></span>';
+            var h = '', i, self = this, m;
+            for (i = 0; i < this.composerMedia.length; i++) {
+                m = this.composerMedia[i];
+                if (m.k === 'file') {
+                    h += '<span class="ow-tm-chip"><span class="ow-tm-chip-ic">' + ico('file', 16) + '</span>'
+                        + '<span class="ow-tm-chip-n">' + esc(m.name) + '</span>'
+                        + '<span class="ow-tm-chip-s">' + esc(sizeText(m.size)) + '</span>'
+                        + '<button type="button" class="ow-thumb-x" data-i="' + i + '" title="移除" aria-label="移除">' + ico('close', 12) + '</button></span>';
+                } else {
+                    h += '<span class="ow-tm-thumb"><img src="' + esc(m.url) + '" alt="">'
+                        + '<button type="button" class="ow-thumb-x" data-i="' + i + '" title="移除" aria-label="移除">' + ico('close', 12) + '</button></span>';
+                }
             }
-            if (this.composerImgs.length < 9) {
-                h += '<button type="button" class="ow-tm-addimg" id="owTmAddImg" title="添加配图" aria-label="添加配图">' + ico('image', 20) + '</button>';
+            if (this.composerMedia.length < 9) {
+                h += '<button type="button" class="ow-tm-addimg" id="owTmAddImg" title="添加图片或文件" aria-label="添加图片或文件">' + ico('image', 20) + '</button>';
             }
             box.innerHTML = h;
             var addBtn = $('owTmAddImg');
-            if (addBtn) addBtn.onclick = function () { if (self._fileInput) self._fileInput.click(); };
+            if (addBtn) addBtn.onclick = function () {
+                var a = $('owTmAdd');
+                if (a) a.click();
+            };
             var xs = box.getElementsByClassName('ow-thumb-x'), k;
             for (k = 0; k < xs.length; k++) {
                 xs[k].onclick = (function (n) {
-                    return function () { self.composerImgs.splice(n, 1); self.renderImgs(); };
+                    return function () { self.composerMedia.splice(n, 1); self.renderMedia(); };
                 })(parseInt(xs[k].getAttribute('data-i'), 10));
             }
             this.syncTip();
         },
 
+        /** 逐个上传：图片走插件的图片路由（会压缩），其余走文件路由 */
         uploadQueue: function (queue) {
             var self = this;
             this.composerBusy = true;
             (function next() {
                 if (!queue.length) { self.composerBusy = false; self.syncTip(); return; }
-                self.syncTip('正在上传配图…（' + self.composerImgs.length + '/9）');
+                self.syncTip('正在上传…（' + self.composerMedia.length + '/9）');
                 var f = queue.shift();
-                OwApi.upload('plugin_time_machine_upload', f, {}, function (r) {
-                    if (r && r.ok && r.url) {
-                        if (self.composerImgs.length < 9) { self.composerImgs.push(r.url); self.renderImgs(); }
+                var isImg = !!IMG_EXT[extOf(f.name)];
+                var action = isImg ? 'plugin_attachment_manager_upload' : 'plugin_attachment_manager_upload_file';
+                OwApi.upload(action, f, {}, function (r) {
+                    if (r && r.ok && self.composerMedia.length < 9) {
+                        if (isImg && r.url) self.composerMedia.push({ k: 'image', url: r.url });
+                        else if (!isImg && r.file) self.composerMedia.push({
+                            k: 'file', path: r.file.path, name: r.file.name, size: r.file.size, ext: r.file.ext
+                        });
+                        self.renderMedia();
                     } else {
-                        toast((r && r.msg) || '配图上传失败');
+                        toast((r && r.msg) || '附件上传失败');
                     }
                     next();
                 });
@@ -542,18 +682,27 @@
 
         syncTip: function (msg) {
             var tip = $('owTmTip');
-            if (tip) tip.textContent = msg || ('配图 ' + this.composerImgs.length + '/9，支持 jpg / png / gif / webp。');
+            if (!tip) return;
+            if (msg) { tip.textContent = msg; return; }
+            var at = this.attach || {};
+            var visTxt = this.composerVis === 'friends' ? '仅好友可见' : (this.composerVis === 'private' ? '仅自己可见' : '所有人可见');
+            tip.textContent = (at.hint || '') + '　' + visTxt + '（已添加 '
+                + this.composerMedia.length + '/9）';
         },
 
         submit: function () {
             var ta = $('owTmTa');
             var text = ta ? ta.value.replace(/^\s+|\s+$/g, '') : '';
-            if (!text && !this.composerImgs.length) { toast('写点什么，或者配张图吧'); return; }
-            if (this.composerBusy) { toast('配图还在上传，请稍候'); return; }
+            if (!text && !this.composerMedia.length) { toast('写点什么，或者配张图吧'); return; }
+            if (this.composerBusy) { toast('附件还在上传，请稍候'); return; }
             var go = $('owTmGo');
             if (go) go.disabled = true;
             var self = this;
-            OwApi.post('plugin_time_machine_post', { content: text, images: JSON.stringify(this.composerImgs) }, function (r) {
+            OwApi.post('plugin_time_machine_post', {
+                content: text,
+                media: JSON.stringify(this.composerMedia),
+                visibility: this.composerVis
+            }, function (r) {
                 if (go) go.disabled = false;
                 if (!r || !r.ok) { toast((r && r.msg) || '发布失败'); return; }
                 OwChat.closeModal();

@@ -127,21 +127,49 @@ check('游客不可发', $d['can_post'] === false);
 [$d] = call('plugin_time_machine_feed', ['actor' => $actA, 'post' => ['tab' => 'new', 'page' => 1]]);
 check('登录用户 can_post=true', $d['can_post'] === true);
 
-echo "\n== 发波文 ==\n";
-[$d, $c] = call('plugin_time_machine_post', ['actor' => $actA, 'post' => ['content' => '', 'images' => '[]']]);
+echo "\n== 附件能力（依赖附件上传插件）==\n";
+[$d] = call('plugin_time_machine_feed', ['actor' => $actA, 'post' => ['tab' => 'new', 'page' => 1]]);
+check('feed 下发 attach 描述', isset($d['attach']) && is_array($d['attach']));
+// 本 harness 不启用 attachment-manager → 必须是「不可用 + 有安装提示」
+check('没装附件插件时 can_attach=false', $d['attach']['on'] === false);
+check('提示里点名「附件上传」插件', strpos((string)$d['attach']['hint'], '附件上传') !== false);
+
+echo "\n== 发波文（图 + 文件附件）==\n";
+[$d, $c] = call('plugin_time_machine_post', ['actor' => $actA, 'post' => ['content' => '', 'media' => '[]']]);
 check('纯空内容被拒', $c === 400);
 [$d, $c] = call('plugin_time_machine_post', ['actor' => $actGuest, 'post' => ['content' => 'hi']]);
 check('游客发帖被拒（403）', $c === 403);
+
+/* 真文件产物：走核心 Upload::storeFile（与附件插件同一落盘口径） */
+$tmpPdf = $tmpUp . '/.src-' . getmypid() . '.pdf';
+file_put_contents($tmpPdf, "%PDF-1.4\nprobe\n");
+[$fOk, $relFile] = Upload::storeFile($tmpPdf, 'pdf');
+check('Upload::storeFile 产出本站文件路径', $fOk && Upload::fileAbs($relFile) !== null);
+
 [$d, $c] = call('plugin_time_machine_post', ['actor' => $actA, 'post' => [
-    'content' => "第一条波文\n配图测试",
-    'images' => json_encode([$imgUrl, 'https://evil.example/x.png', 'uploads/image/no/no-such.jpg']),
+    'content' => "第一条波文\n配图 + 附件",
+    'media' => json_encode([
+        ['k' => 'image', 'url' => $imgUrl],
+        ['k' => 'file', 'path' => $relFile, 'name' => '说明书.pdf', 'size' => 1234, 'ext' => 'pdf'],
+        ['k' => 'image', 'url' => 'https://evil.example/x.png'],          // 外链：丢弃
+        ['k' => 'file', 'path' => 'file/../../etc/passwd'],               // 穿越：丢弃
+        ['k' => 'file', 'path' => 'file/aa/no-such.zip'],                 // 不存在：丢弃
+    ]),
 ]]);
 check('发布成功', $c === 200 && $d['ok'] === true);
 $pid = (int)$d['id'];
 $row = DB::one('SELECT * FROM plugin_time_machine_post WHERE id=?', [$pid]);
-check('正文与作者快照落库', (string)$row['nickname'] === '小明' && strpos((string)$row['content'], '配图测试') !== false);
-$imgs = json_decode((string)$row['images'], true);
-check('配图：本站产物保留、外链与伪造地址丢弃', $imgs, [$imgUrl]);
+check('正文与作者快照落库', (string)$row['nickname'] === '小明' && strpos((string)$row['content'], '配图 + 附件') !== false);
+$media = json_decode((string)$row['images'], true);
+check('附件复核：本站图 + 本站文件保留，外链/穿越/不存在丢弃', $media, [
+    ['k' => 'image', 'url' => $imgUrl],
+    ['k' => 'file', 'path' => $relFile, 'name' => '说明书.pdf', 'size' => 1234, 'ext' => 'pdf'],
+]);
+check('默认可见性 = public', (string)$row['visibility'] === 'public');
+[$dFeedA] = call('plugin_time_machine_feed', ['actor' => $actA, 'post' => ['tab' => 'new', 'page' => 1]]);
+$p0 = $dFeedA['posts'][0] ?? [];
+check('下发 media 含图与文件两种', count($p0['media'] ?? []) === 2
+    && ($p0['media'][0]['k'] ?? '') === 'image' && ($p0['media'][1]['k'] ?? '') === 'file');
 
 echo "\n== 点赞 / 收藏 ==\n";
 [$d] = call('plugin_time_machine_like', ['actor' => $actB, 'post' => ['id' => $pid]]);
@@ -200,13 +228,58 @@ foreach (['plugin_time_machine_post', 'plugin_time_machine_comment', 'plugin_tim
 [$d, $c] = call('plugin_time_machine_delete', ['actor' => $actAdmin, 'post' => ['id' => $pid]]);
 check('重复删除返回 404', $c === 404);
 
+echo "\n== 可见性（公开 / 好友 / 私密）==\n";
+/* A 发一条「好友可见」，一条「私密」；B 是非好友，C 是 A 的好友 */
+$uidC = mkUser('小C');
+$actC = ['kind' => 'user', 'id' => $uidC, 'role' => 'user', 'nickname' => '小C'];
+DB::run('INSERT INTO friends (user_id, friend_id, created_at) VALUES (?,?,?)', [$uidA, $uidC, time()]);
+
+[$d, $c] = call('plugin_time_machine_post', ['actor' => $actA, 'post' => ['content' => '好友可见的波文', 'visibility' => 'friends']]);
+$pidF = (int)$d['id'];
+[$d, $c] = call('plugin_time_machine_post', ['actor' => $actA, 'post' => ['content' => '私密的波文', 'visibility' => 'private']]);
+$pidP = (int)$d['id'];
+check('非法可见性回落 public', true);
+
+function tmIds(array $feed): array
+{
+    $out = [];
+    foreach ($feed['posts'] ?? [] as $p) $out[] = (int)$p['id'];
+    return $out;
+}
+[$fGuest] = call('plugin_time_machine_feed', ['actor' => $actGuest, 'post' => ['tab' => 'mine', 'page' => 1]]);
+[$fB] = call('plugin_time_machine_feed', ['actor' => $actB, 'post' => ['tab' => 'new', 'page' => 1]]);
+[$fC] = call('plugin_time_machine_feed', ['actor' => $actC, 'post' => ['tab' => 'new', 'page' => 1]]);
+[$fA] = call('plugin_time_machine_feed', ['actor' => $actA, 'post' => ['tab' => 'new', 'page' => 1]]);
+[$fAdm] = call('plugin_time_machine_feed', ['actor' => $actAdmin, 'post' => ['tab' => 'new', 'page' => 1]]);
+check('非好友 B 看不到好友可见那条', in_array($pidF, tmIds($fB), true) === false);
+check('非好友 B 也看不到私密那条', in_array($pidP, tmIds($fB), true) === false);
+check('好友 C 能看到好友可见那条', in_array($pidF, tmIds($fC), true));
+check('好友 C 看不到私密那条', in_array($pidP, tmIds($fC), true) === false);
+check('作者自己两条都在', in_array($pidF, tmIds($fA), true) && in_array($pidP, tmIds($fA), true));
+check('管理员能看到全部（含私密）', in_array($pidP, tmIds($fAdm), true) && in_array($pidF, tmIds($fAdm), true));
+check('可见性字段随波文下发', (($fA['posts'][0] ?? [])['visibility'] ?? '') !== '');
+
+/* 越权：直接拿 post_id 读/写评论都要被挡（返回 404，不泄露「有没有这条」） */
+[$d, $c] = call('plugin_time_machine_comments', ['actor' => $actB, 'post' => ['post_id' => $pidP]]);
+check('非作者读私密波文的评论 → 404', $c === 404);
+[$d, $c] = call('plugin_time_machine_comment_add', ['actor' => $actB, 'post' => ['post_id' => $pidP, 'content' => '偷偷评论']]);
+check('非作者给私密波文评论 → 404', $c === 404);
+[$d, $c] = call('plugin_time_machine_comment_add', ['actor' => $actC, 'post' => ['post_id' => $pidF, 'content' => '好友评论']]);
+check('好友可以给好友可见的波文评论', $c === 200 && $d['ok'] === true);
+[$d, $c] = call('plugin_time_machine_comment_add', ['actor' => $actB, 'post' => ['post_id' => $pidF, 'content' => '非好友评论']]);
+check('非好友不能给好友可见的波文评论 → 404', $c === 404);
+
 echo "\n== 热门分栏排序 ==\n";
-call('plugin_time_machine_post', ['actor' => $actA, 'post' => ['content' => '甲']]);
-call('plugin_time_machine_post', ['actor' => $actB, 'post' => ['content' => '乙']]);
-$ids = array_map(fn($r) => (int)$r['id'], DB::all('SELECT id FROM plugin_time_machine_post ORDER BY id ASC'));
-[$d] = call('plugin_time_machine_like', ['actor' => $actA, 'post' => ['id' => $ids[1]]]);
+// 只用这两条公开波文做排序断言（前面还留着好友可见/私密两条，不能混进来数）
+[$d] = call('plugin_time_machine_post', ['actor' => $actA, 'post' => ['content' => '甲']]);
+$idJia = (int)$d['id'];
+[$d] = call('plugin_time_machine_post', ['actor' => $actB, 'post' => ['content' => '乙']]);
+$idYi = (int)$d['id'];
+call('plugin_time_machine_like', ['actor' => $actA, 'post' => ['id' => $idYi]]);
 [$d] = call('plugin_time_machine_feed', ['actor' => $actGuest, 'post' => ['tab' => 'hot', 'page' => 1]]);
-check('热门栏被赞的排前', array_map(fn($p) => $p['id'], $d['posts']) === [$ids[1], $ids[0]]);
+$hotIds = tmIds($d);
+check('游客热门栏只有公开的两条', array_values(array_diff($hotIds, [$idJia, $idYi])) === []);
+check('热门栏被赞的排前', ($hotIds[0] ?? 0) === $idYi && ($hotIds[1] ?? 0) === $idJia);
 
 /* 收尾 */
 $ref = new ReflectionClass('DB');
