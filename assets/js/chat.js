@@ -1201,12 +1201,30 @@
         '群文件操作': 'file', '创建群聊': 'plus', '设置': 'gear', '管理后台': 'monitor',
         '退出登录': 'logout'
     };
+    /**
+     * 菜单条目 → HTML。四种形态：
+     *   · 普通行  { t:'设置', icon:'gear', run:fn }
+     *   · 首行    { head:true, html:'…', run:fn }  —— 「头像 + 昵称」胶囊那类非纯文字内容
+     *   · 分隔线  { sep:true }
+     *   · 禁用行  { t:'…', dis:true, tip:'…' }
+     * ⚠️ data-i 记的是**数组下标**（含 sep/head），点击委托靠它反查 _ctxItems；
+     *    sep 没有 <a>、不会被点到，head 的 <a> 里套了 span，所以委托那边要向上找最近的 <a>。
+     * v1.5.0：head/sep 是给账号菜单首行（用户胶囊）加的，其余四处菜单的调用方式不变。
+     */
     function ctxItemsHtml(items) {
-        var h = '', i, ic;
+        var h = '', i, ic, it;
         for (i = 0; i < items.length; i++) {
-            ic = items[i].icon || OW_CTX_ICONS[items[i].t] || '';
+            it = items[i] || {};
+            if (it.sep) { h += '<div class="ow-ctx-sep"></div>'; continue; }
+            if (it.head) {
+                h += '<a class="ow-ctx-item ow-ctx-head" href="javascript:;" data-i="' + i + '"'
+                   + ' aria-label="' + esc(it.aria || '个人主页') + '">'
+                   + '<span class="ow-ctx-me" id="owBrandMe">' + (it.html || '') + '</span></a>';
+                continue;
+            }
+            ic = it.icon || OW_CTX_ICONS[it.t] || '';
             h += '<a class="ow-ctx-item" href="javascript:;" data-i="' + i + '">'
-               + (ic ? owIco(ic, 14, 'ow-ctx-ico') : '') + esc(items[i].t) + '</a>';
+               + (ic ? owIco(ic, 14, 'ow-ctx-ico') : '') + esc(it.t) + '</a>';
         }
         return h;
     }
@@ -1654,6 +1672,12 @@
                         self.passRemember(self.room, j.ttl);
                     }
                     if (self.dm) return;   // 等待期间用户已切到私聊
+                    /* 进群即拉「所有成员」—— 与 switchRoom 里 v1.2.27 那句同一调用。
+                       不补这一句，首屏进群 / 刷新页要等首次 poll 返回（Chat::poll 的
+                       while 循环最长阻塞 20 秒，members 只在循环结束后下发）才有成员，
+                       表现为「必须再点一次这个群才显示成员」。此处已过 room_join 的
+                       密码 / 权限闸，密码房调用安全（提前调用会撞 canEnter 403）。 */
+                    self.loadMembers();
                     OwApi.post('history', { room_id: self.room, before: 0 }, function (r) {
                         if (self.dm) return;
                         if (r.ok) {
@@ -2098,8 +2122,8 @@
             $('owCtxMenu').onclick = function (e) {
                 e = e || w.event;
                 var t = e.target || e.srcElement;
-                // ⚠️ 必须**向上找最近的 <a>**：品牌区菜单首行是「头像+昵称」，
-                // 点的往往是内部的 span/div，直接判 t.tagName==='A' 会点了没反应。
+                // ⚠️ 必须**向上找最近的 <a>**：账号菜单首行是「头像+昵称」胶囊，
+                // 点的往往是里面的 span/span，直接判 t.tagName==='A' 会点了没反应。
                 var a = null;
                 while (t && t !== this) {
                     if ((t.tagName || '').toUpperCase() === 'A') { a = t; break; }
@@ -2548,8 +2572,9 @@
                 self.switchTab(tab);
             };
             /* v1.3.134：rail 底部沉下去的 ☰ **不是切面板的入口**，没有 data-tab，
-               上面的委托对它是空转，所以单独绑一次。它只对注册用户渲染，游客取不到。
-               （v1.3.142：原先这里还绑了 rail 顶部的头像，那颗已移到品牌条、改走内联 onclick。） */
+               上面的委托对它是空转，所以单独绑一次。
+               v1.5.0：这颗按钮现在**游客也有**（用户胶囊搬进菜单后，它是游客唯一的
+               登录 / 注册入口），菜单内容由 toggleAccountMenu 按身份分流。 */
             var menuBtn = $('owRailMenu');
             if (menuBtn) menuBtn.onclick = function (e) {
                 e = e || w.event;
@@ -5248,12 +5273,10 @@
          * （同一个 entryRow + .ow-panel-entry-row）。
          *
          * ⚠️ 结构不能拍平：分隔线画在 .ow-panel-entry-row 的 border-top 上，
-         * 且宽屏有 `@media (min-width:961px)` 把**首行**撑到 --ow-topbar-h - 1px
-         * 来让这条线与顶栏（聊天名称下方那条）落在同一像素行。
          * 所以第一个入口必须是 .ow-panel-room-body 的**直接子元素**，
-         * 其余三个放进紧随其后的 .ow-panel-entry-row —— 拍平成同级会同时丢掉：
-         *   ① 顶部分隔线（第一条横线会消失/错位）
-         *   ② 与顶栏横线的平行关系
+         * 其余三个放进紧随其后的 .ow-panel-entry-row —— 拍平成同级会丢掉顶部分隔线。
+         * （v1.5.0：顶栏已上移到 .ow-head，右侧栏不再需要把首行撑到 --ow-topbar-h - 1px
+         *   去跟顶栏底线对齐，那条规则一并撤掉了；这两个 DOM 层级仍然要按上面那样摆。）
          */
         dmPanelHtml: function () {
             var d = this.dm || {};
@@ -5591,34 +5614,27 @@
 
         /* ---------- 我的面板 / 设置 ---------- */
         /**
-         * 画品牌条右侧的「头像 + 昵称」（v1.3.142 从 rail 顶部搬来，更早是侧栏底部的个人栏）。
-         * 整块就是「我的主页」入口。
-         * ⚠️ 不加 title：悬浮气泡会挡住旁边的元素（参考实现同一取舍）；
-         *    读屏要的信息放 aria-label，且这里是 JS 事后写属性，i18n 的 MutationObserver
-         *    只看新增节点、看不到属性变化，所以必须手动过 owTr。
-         * 仍被 init / 进私聊 / 切群三处调用：头像不变，但角色描边与昵称可能跟着 cfg.me 刷新。
+         * 「头像 + 昵称」胶囊的内层 HTML（v1.3.142 建，v1.5.0 搬进账号菜单首行）。
+         * 头像 URL 的三种来源（上传 / 生成式 / 回落）与昵称都在 cfg 里，服务端再拼一遍
+         * 就是第二份实现，迟早漂移 —— 所以只有这一处实现。
+         */
+        meChipHtml: function () {
+            var me = this.cfg.me, actor = this.cfg.actor || {};
+            var nick = me ? me.nickname : (actor.nickname || '');
+            return avatarHtml(me ? me.avatar : actor.avatar, nick, 'xs', me ? me.role : 'guest')
+                + '<span class="ow-ctx-me-n">' + esc(nick) + '</span>';
+        },
+
+        /**
+         * 刷新胶囊（init / 进私聊 / 切群 / 改昵称后调用）。
+         * v1.5.0：胶囊现在长在账号菜单里，而菜单每次打开都由 toggleAccountMenu 重拼，
+         * 所以「没开着菜单」时这里什么都不用做 —— 保留函数是为了不惊动那 6 个调用点。
          */
         renderMe: function () {
             var el = $('owBrandMe');
             if (!el) return;
-            var me = this.cfg.me, actor = this.cfg.actor || {};
-            var nick = me ? me.nickname : (actor.nickname || '');
-            el.innerHTML = avatarHtml(me ? me.avatar : actor.avatar, nick, 'xs', me ? me.role : 'guest')
-                + '<span class="ow-brand-me-n">' + esc(nick) + '</span>';
-            el.setAttribute('aria-label', owTr(me ? '个人主页' : '登录'));
-        },
-
-        /**
-         * 品牌条那块头像被点：注册用户 → 自己的资料卡（与别人点你头像同一张卡，
-         * 点头像进头像设置弹窗、底部有「编辑资料」）；游客 → 登录 / 注册菜单。
-         */
-        onBrandMe: function (e) {
-            e = e || w.event;
-            // 阻止冒泡：否则 document 级「点菜单外关闭」会立刻把刚打开的菜单关掉
-            if (e && e.stopPropagation) e.stopPropagation(); else if (e) e.cancelBubble = true;
-            var me = this.cfg.me;
-            if (me && me.id) { this.userCard(me.id, me.nickname); return; }
-            this.toggleAuthMenu();
+            el.innerHTML = this.meChipHtml();
+            el.setAttribute('aria-label', owTr('个人主页'));
         },
 
 
@@ -5626,7 +5642,7 @@
            v1.2.31 之前这里是 onBrandMenu 扩展点 + toggleBrandMenu（头像+昵称/联系人/插件项）。
            用户要求删除并改成搜索：**默认搜「当前聊天」**，下方可切换搜索范围。
            ⚠️ onBrandMenu 扩展点一并删除（全项目零引用，plugins/ 下无任何调用）；
-              打开自己资料卡的入口 —— v1.3.134 起是 rail 顶部头像（onRailMe）。 */
+              打开自己资料卡的入口 —— v1.5.0 起是 rail 底部账号菜单的首行胶囊。 */
 
         /**
          * 搜索范围（v1.2.32 调整顺序：找人/群 挪到最后）。
@@ -6064,19 +6080,15 @@
 
         /**
          * 把菜单开在某个触发按钮的旁边。
-         * 横向默认开在按钮**右侧**（rail 贴最左，只能往右）；触发点在右半边时自动翻过去，
-         * 品牌条那颗头像就是这种（v1.3.142）—— 不翻的话整张菜单会掉出视口右沿。
+         * 横向默认开在按钮**右侧**（rail 贴最左，只能往右）；触发点在右半边时自动翻过去
+         * —— 不翻的话整张菜单会掉出视口右沿。
          * ⚠️ 翻过去时取「菜单右沿 = 触发点右沿」，不是「菜单摆在触发点左边留 8px 缝」：
-         *   后者实测把 136px 宽的菜单推到胶囊左沿之外（胶囊 left 1275、菜单 right 1267），
+         *   后者实测把 136px 宽的菜单推到触发点左沿之外（触发点 left 1275、菜单 right 1267），
          *   整张菜单离它的触发点 120px 远，看着像从聊天区标题里长出来的（v1.3.145 站方截图）。
-         *   右沿对齐才是下拉菜单的常规接法，且天然不会掉出视口（触发点右沿本就在 16px 内边距里）。
-         * 竖向：align='bottom' 给沉底的 ☰，菜单往上长、底边与按钮底边齐平；
-         * align='top' 给品牌条那颗胶囊，菜单往下长、顶边离胶囊下沿 4px（v1.3.147）。
-         * ⚠️ 这里**不再**把菜单压到品牌条下面（v1.3.142 起那条 `bar.bottom + 8` 已删）：
-         *   胶囊在 57px 的条里居中，条自身在它下面还留 14.3px，再叠 8px = 菜单离触发点 23px，
-         *   站方两次指出「离头像昵称那么远」。而且 rail 那张 ☰ 菜单本来就是与按钮齐平的接法，
-         *   两张菜单贴触发点的方式不该一套一个样。盖住的是品牌条底部那条空白带与 1px 分隔线
-         *   （#E0E4E8 压在 #E4E4E4 上本就几乎看不见），菜单 z-index 400 浮在上面，是常规下拉观感。
+         *   右沿对齐才是下拉菜单的常规接法，且天然不会掉出视口。
+         * 竖向：align='bottom'（rail 底部那颗 ☰，也是目前唯一的调用）菜单往上长、
+         * 底边与按钮底边齐平；align='top' 是「从触发点往下长」的接法，留给将来
+         * 顶栏/品牌条上的入口用（v1.5.0 起没有调用点，品牌条那颗胶囊已搬进账号菜单）。
          */
         _ctxOpenAt: function (items, from, anchor, align) {
             var menu = $('owCtxMenu');
@@ -6102,38 +6114,49 @@
             menu.style.top = top + 'px';
         },
 
-        /** 游客点 rail 顶部头像：只有「登录 / 注册」两项（原先是侧栏底部那两个按钮） */
-        toggleAuthMenu: function () {
-            var menu = $('owCtxMenu');
-            if (!menu) return;
-            if (menu.style.display !== 'none' && menu._from === 'auth') { this.hideCtxMenu(); return; }
-            this._ctxOpenAt([
-                { t: '登录', icon: 'user', run: function () { location.href = '?page=login'; } },
-                { t: '注册', icon: 'plus', run: function () { location.href = '?page=register'; } },
-            ], 'auth', $('owBrandMe'), 'top');
-        },
-
         /**
-         * rail 底部 ☰ 的账号菜单：复用消息右键菜单（owCtxMenu）那套展示 / 委托点击 /
-         * 点外部与 Esc 关闭。四项与原先点开侧栏个人栏完全一致，只是入口挪了位置。
+         * rail 底部那颗账号按钮的菜单（v1.3.134 建，v1.5.0 重做首行）。
+         *
+         * 首行 = 用户胶囊（头像 + 昵称，点开自己的资料卡）—— 站方要求把品牌条右上角
+         * 那颗胶囊搬到这里；下一条分隔线把它和操作项隔开，再往下才是
+         * 创建群聊 / 设置 / 管理后台 / 退出登录。
+         *
+         * 游客也走这里（v1.5.0）：他们没有任何账号项，菜单里只有「登录 / 注册」两项
+         * ——胶囊从品牌条搬走后，这就是游客唯一的登录入口。
+         * ⚠️ 首行不做 hover 变色（见 CSS .ow-ctx-head），但**必须留 data-i**：
+         *    点击委托靠下标反查 _ctxItems，sep 也要占一位，所以下面用 push 的顺序建数组。
          */
         toggleAccountMenu: function () {
             var self = this, me = this.cfg.me, menu = $('owCtxMenu');
-            if (!me || !menu) return;
+            if (!menu) return;
             // 再次点击同一个按钮 = 收起
             if (menu.style.display !== 'none' && menu._from === 'account') { this.hideCtxMenu(); return; }
-            var items = [
-                { t: '创建群聊', run: function () { self.roomCreateModal(); } },
-                { t: '设置', run: function () { self.openSettings(); } },
-            ];
-            if (this.cfg.actor.role === 'admin') items.push({ t: '管理后台', run: function () { location.href = '?page=admin'; } });
-            items.push({ t: '退出登录', run: function () {
-                self.confirmModal('确定退出登录吗？', function () {
-                    OwApi.secure('logout', {}, function () { location.href = '?page=login'; });
+            var items = [];
+            if (me && me.id) {
+                items.push({
+                    head: true,
+                    aria: '个人主页',
+                    html: this.meChipHtml(),
+                    run: function () { self.userCard(me.id, me.nickname); }
                 });
-            } });
+                items.push({ sep: true });
+                items.push({ t: '创建群聊', run: function () { self.roomCreateModal(); } });
+                items.push({ t: '设置', run: function () { self.openSettings(); } });
+                if (this.cfg.actor.role === 'admin') items.push({ t: '管理后台', run: function () { location.href = '?page=admin'; } });
+                items.push({ t: '退出登录', run: function () {
+                    self.confirmModal('确定退出登录吗？', function () {
+                        OwApi.secure('logout', {}, function () { location.href = '?page=login'; });
+                    });
+                } });
+            } else {
+                items.push({ t: '登录', icon: 'user', run: function () { location.href = '?page=login'; } });
+                items.push({ t: '注册', icon: 'plus', run: function () { location.href = '?page=register'; } });
+            }
             this._ctxOpenAt(items, 'account', $('owRailMenu'), 'bottom');
         },
+
+        /** @deprecated v1.5.0 起游客的登录 / 注册并入 toggleAccountMenu，保留别名给旧调用 */
+        toggleAuthMenu: function () { this.toggleAccountMenu(); },
 
         /* ---------- 日夜模式（v1.3.25） ---------- */
         /**
@@ -7836,6 +7859,17 @@
         },
         _digitSegs: ['ABCDEF', 'BC', 'ABGED', 'ABGCD', 'FGBC', 'AFGCD', 'AFGECD', 'ABC', 'ABCDEFG', 'ABCDFG'],
         _segSvg: function (ch) {
+            /* 数字 1 只有右侧两笔（B/C）：照其余数字那样画，笔尖贴着格子右缘、左边空出一大块，
+               站方判它不好看。两笔之间那 10 单位的段码间隙留着也不像「1」—— 实测和冒号一个样。
+               所以这里把 B/C 并成一根竖笔（端点仍是段码的斜角），并整体居中：
+               笔身 x 32..42 → 平移 -15 后 17..27，正好落在 viewBox 中心 22。
+               这一格不画鬼影段（没有那圈灰框，读起来才是一支完整的「1」）；
+               格宽不变（32px 由 CSS 定），所以「1」出现/消失时整排字不会左右抖。 */
+            if (ch === '1') {
+                return '<svg class="ow-clock-d" viewBox="0 0 44 80" aria-hidden="true">'
+                     + '<polygon class="ow-seg ow-seg-on" transform="translate(-15 0)" points="37,12 42,17 42,63 37,68 32,63 32,17"/>'
+                     + '</svg>';
+            }
             var lit = this._digitSegs[parseInt(ch, 10)] || '', h = '', k;
             for (k in this._segShapes) {
                 if (!Object.prototype.hasOwnProperty.call(this._segShapes, k)) continue;
@@ -8065,8 +8099,26 @@
                     // 下沿一条分割线接住下面的表格（原先是 h3 + 行内样式，分页器孤零零在表底下）。
                     + '<div class="ow-list-head"><b class="ow-list-head-t">审核回收站</b>'
                     + '<div id="owTrashPager"></div></div>'
+                    // v1.4.5：回收站记录只增不减，处置一多就翻不动 —— 加筛选（群名/群聊ID 关键词 +
+                    // 处置类型 + 是否已撤销）与批量撤销。筛选行放在顶栏与表格之间，与上方主表同构。
+                    + '<div class="ow-form-row">'
+                    + '<div class="ow-form-item" style="min-width:160px;flex:1 1 160px"><label>群名 / 群聊ID</label>'
+                    + '<input class="ow-input" id="owRVTrashKw" type="text" autocomplete="off" placeholder="输入群名，或直接填数字ID"'
+                    + ' onkeydown="if(event.key===\'Enter\')OwAdmin.roomTrashLoad(1)"></div>'
+                    + '<div class="ow-form-item" style="min-width:120px"><label>处置类型</label>'
+                    + '<select class="ow-input" id="owRVTrashAct" onchange="OwAdmin.roomTrashLoad(1)">'
+                    + '<option value="">全部</option><option value="reset_name">重置名称</option>'
+                    + '<option value="reset_avatar">重置头像</option><option value="toggle_status">封禁/解封</option>'
+                    + '<option value="delete">删除</option></select></div>'
+                    + '<div class="ow-form-item" style="min-width:110px"><label>状态</label>'
+                    + '<select class="ow-input" id="owRVTrashUndone" onchange="OwAdmin.roomTrashLoad(1)">'
+                    + '<option value="">全部</option><option value="0">未撤销</option><option value="1">已撤销</option></select></div>'
+                    + '<button class="ow-btn ow-btn-primary" onclick="OwAdmin.roomTrashLoad(1)">搜索</button>'
+                    + '<button class="ow-btn ow-btn-ghost" onclick="OwAdmin.roomTrashResetFilter()">重置</button>'
+                    + '</div>'
+                    + '<div id="owTrashBatch"></div>'
                     + '<div class="ow-table-wrap"><table class="ow-table" id="owRoomTrash"></table></div>'
-                    + '<p style="font-size:12px;color:var(--ow-text-sub);margin:8px 0 0">撤销有顺序依赖：群聊被删除后，需先撤销「删除」才能恢复其之前的名称 / 头像 / 封禁状态。</p></div>';
+                    + '<p style="font-size:12px;color:var(--ow-text-sub);margin:8px 0 0">撤销有顺序依赖：群聊被删除后，需先撤销「删除」才能恢复其之前的名称 / 头像 / 封禁状态。批量撤销会自动按这个顺序处理。</p></div>';
                 // 批量操作改下拉（v1.2.60）：原先平铺 4 个按钮，窄屏会折成两行并挤掉统计位
                 OwAdmin.uiBatchBar({
                     id: 'owRVBatch',
@@ -8079,6 +8131,15 @@
                         { key: 'delete',        label: '批量删除', danger: true }
                     ],
                     onExec: function (act, ids) { OwAdmin.roomBatch(act, ids); }
+                });
+                // v1.4.5：回收站只有「撤销」一个动作，但复用同一个批量条轮子 ——
+                // 勾选统计、执行按钮禁用态、危险态配色都不用再写一遍。
+                OwAdmin.uiBatchBar({
+                    id: 'owTrashBatch',
+                    chkCls: 'owRVTrashChk',
+                    statBase: '共 0 条',
+                    actions: [{ key: 'undo', label: '批量撤销', danger: true }],
+                    onExec: function (act, ids) { OwAdmin.roomTrashBatch(act, ids); }
                 });
                 OwAdmin.roomLoad(1);
                 OwAdmin.roomTrashLoad(1);
@@ -8382,30 +8443,7 @@
         /* ---------- 用户管理动作已随 v1.0.44 剥离为插件（OwUM，plugins/user-manager/） ---------- */
 
         /* ---------- 房间动作 ---------- */
-        /** 群聊审核动作：重置名称 / 恢复默认头像 / 封禁解封 */
-        /** 审核回收站：列出最近处置，可撤销 */
-        roomTrash: function () {
-            OwApi.post('admin_room_trash_list', {}, function (r) {
-                var el = document.getElementById('owRoomTrash');
-                if (!el) return;
-                var ACT = { reset_name: '重置名称', reset_avatar: '重置头像', toggle_status: '封禁/解封', delete: '删除' };
-                if (!r.data.length) { el.innerHTML = '<span style="font-size:13px;color:var(--ow-text-sub)">暂无审核记录</span>'; return; }
-                var h = '<table class="ow-table"><tr><th>时间</th><th>群聊</th><th>操作</th><th>操作前</th><th>状态</th><th></th></tr>';
-                for (var i = 0; i < r.data.length; i++) {
-                    var d = r.data[i];
-                    var before = d.before_data && d.before_data.row ? '（整条群聊记录）'
-                        : (d.before_data && typeof d.before_data === 'object' ? esc(Object.keys(d.before_data).map(function (k) { return k + '=' + d.before_data[k]; }).join('，')) : '-');
-                    h += '<tr><td>' + new Date(d.created_at * 1000).toLocaleString() + '</td>'
-                       + '<td>' + esc(d.room_name) + '（' + esc(fmtUid(d.room_id)) + '）</td>'
-                       + '<td>' + esc(ACT[d.action] || d.action) + '</td>'
-                       + '<td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + before + '</td>'
-                       + '<td>' + (d.undone == 1 ? '<span style="color:var(--ow-text-sub)">已撤销</span>' : '-') + '</td>'
-                       + '<td>' + (d.undone == 1 ? '' : '<a href="javascript:;" onclick="OwAdmin.roomTrashUndo(' + d.id + ')">撤销</a>') + '</td></tr>';
-                }
-                el.innerHTML = h + '</table>'
-                    + '<p style="font-size:12px;color:var(--ow-text-sub);margin:8px 0 0">撤销有顺序依赖：群聊被删除后，需先撤销「删除」才能恢复其之前的名称 / 头像 / 封禁状态。</p>';
-            });
-        },
+        /** 审核回收站：单条撤销（批量见 roomTrashBatch） */
         roomTrashUndo: function (id) {
             OwAdmin.confirm('确定撤销该审核操作？', function () {
                 OwApi.secure('admin_room_trash_undo', { id: id }, function (r) {
@@ -8488,32 +8526,80 @@
             });
         },
 
-        /** 审核回收站：服务端分页列出最近处置，可撤销 */
+        /** 审核回收站：服务端分页 + 筛选（关键词 / 处置类型 / 是否已撤销），可单条或批量撤销 */
         roomTrashLoad: function (page) {
             this._roomTrashPage = page || this._roomTrashPage || 1;
             var self = this;
-            OwApi.post('admin_room_trash_list', { page: this._roomTrashPage, size: 20 }, function (r) {
+            OwApi.post('admin_room_trash_list', {
+                page: this._roomTrashPage, size: 20,
+                kw: (($('owRVTrashKw') || {}).value || '').trim(),
+                act: ($('owRVTrashAct') || {}).value || '',
+                undone: ($('owRVTrashUndone') || {}).value || ''
+            }, function (r) {
                 var el = document.getElementById('owRoomTrash');
                 if (!el || !r.ok) return;
                 var d = r.data;
                 var ACT = { reset_name: '重置名称', reset_avatar: '重置头像', toggle_status: '封禁/解封', delete: '删除' };
-                if (!d.list.length) { el.innerHTML = '<tr><td colspan="6" style="color:var(--ow-text-sub)">暂无审核记录</td></tr>'; }
-                else {
-                    var h = '';
-                    for (var i = 0; i < d.list.length; i++) {
-                        var t = d.list[i];
-                        var before = t.before_data && t.before_data.row ? '（整条群聊记录）'
-                            : (t.before_data && typeof t.before_data === 'object' ? esc(Object.keys(t.before_data).map(function (k) { return k + '=' + t.before_data[k]; }).join('，')) : '-');
-                        h += '<tr><td>' + new Date(t.created_at * 1000).toLocaleString() + '</td>'
-                           + '<td>' + esc(t.room_name) + '（' + esc(fmtUid(t.room_id)) + '）</td>'
-                           + '<td>' + esc(ACT[t.action] || t.action) + '</td>'
-                           + '<td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + before + '</td>'
-                           + '<td>' + (t.undone == 1 ? '<span style="color:var(--ow-text-sub)">已撤销</span>' : '-') + '</td>'
-                           + '<td>' + (t.undone == 1 ? '' : '<a href="javascript:;" onclick="OwAdmin.roomTrashUndo(' + t.id + ')">撤销</a>') + '</td></tr>';
-                    }
-                    el.innerHTML = h;
+                // 表头带全选框（v1.4.5 批量撤销需要），这张表原先没有表头，一并补上
+                var h = '<tr><th style="width:32px"><input type="checkbox" id="owRVTrashCheckAll"'
+                    + ' onchange="OwAdmin.roomTrashToggleAll(this)"></th>'
+                    + '<th>时间</th><th>群聊</th><th>操作</th><th>操作前</th><th>状态</th><th></th></tr>';
+                if (!d.list.length) { h += '<tr><td colspan="7" style="color:var(--ow-text-sub)">暂无审核记录</td></tr>'; }
+                for (var i = 0; i < d.list.length; i++) {
+                    var t = d.list[i];
+                    var before = t.before_data && t.before_data.row ? '（整条群聊记录）'
+                        : (t.before_data && typeof t.before_data === 'object' ? esc(Object.keys(t.before_data).map(function (k) { return k + '=' + t.before_data[k]; }).join('，')) : '-');
+                    // 已撤销的行不给勾选框：再撤销必然失败（服务端回「该记录已撤销过」），
+                    // 让人勾上一条注定失败的不如根本勾不到
+                    h += '<tr><td>' + (t.undone == 1 ? ''
+                            : '<input type="checkbox" class="owRVTrashChk" value="' + t.id + '" onchange="OwAdmin.roomTrashSyncBatch()">') + '</td>'
+                       + '<td>' + new Date(t.created_at * 1000).toLocaleString() + '</td>'
+                       + '<td>' + esc(t.room_name) + '（' + esc(fmtUid(t.room_id)) + '）</td>'
+                       + '<td>' + esc(ACT[t.action] || t.action) + '</td>'
+                       + '<td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + before + '</td>'
+                       + '<td>' + (t.undone == 1 ? '<span style="color:var(--ow-text-sub)">已撤销</span>' : '-') + '</td>'
+                       + '<td>' + (t.undone == 1 ? '' : '<a href="javascript:;" onclick="OwAdmin.roomTrashUndo(' + t.id + ')">撤销</a>') + '</td></tr>';
                 }
+                el.innerHTML = h;
+                self._roomTrashRows = d.list.length;
                 self.uiPager('owTrashPager', d.page, d.total, d.size, function (pg) { self.roomTrashLoad(pg); });
+                self.roomTrashSyncBatch();
+            });
+        },
+
+        roomTrashResetFilter: function () {
+            var k = $('owRVTrashKw'), a = $('owRVTrashAct'), u = $('owRVTrashUndone');
+            if (k) k.value = '';
+            if (a) a.value = '';
+            if (u) u.value = '';
+            this.roomTrashLoad(1);
+        },
+
+        roomTrashToggleAll: function (cb) {
+            var boxes = document.getElementsByClassName('owRVTrashChk');
+            for (var i = 0; i < boxes.length; i++) boxes[i].checked = cb.checked;
+            this.roomTrashSyncBatch();
+        },
+
+        roomTrashSyncBatch: function () {
+            this.batchSync('owRVTrashChk', 'owTrashBatch', '共 ' + ((this._roomTrashRows || 0)) + ' 条');
+        },
+
+        /**
+         * 批量撤销（v1.4.5）：ids 由 uiBatchBar 收集，服务端按「删除优先、各自 id 升序」处理，
+         * 所以这里不用管勾选顺序 —— 同一群的「删除 + 改名称」一起勾上也能全部还原。
+         */
+        roomTrashBatch: function (act, ids) {
+            if (act !== 'undo' || !ids || !ids.length) { toast('请先勾选要撤销的记录'); return; }
+            var self = this;
+            this.confirm('确定撤销选中的 ' + ids.length + ' 条处置？被删除的群聊会先恢复，再还原则之后的名称 / 头像 / 状态。', function () {
+                OwApi.secure('admin_room_trash_batch', { act: 'undo', ids: ids.join(',') }, function (r) {
+                    toast(r.msg);
+                    if (r.ok) {
+                        self.roomTrashLoad(self._roomTrashPage || 1);
+                        self.roomLoad(self._roomPage || 1);
+                    }
+                });
             });
         },
 
