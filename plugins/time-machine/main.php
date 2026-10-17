@@ -1,6 +1,6 @@
 <?php
 /**
- * 时光机插件（time-machine v1.3.0）
+ * 时光机插件（time-machine v1.4.0）
  *
  * ── 做什么 ────────────────────────────────────────────────────
  * 类似朋友圈的动态广场。入口是 rail 上的一枚「时光机」按钮（sidebar.rail 钩子，
@@ -83,6 +83,7 @@ function owTmDdl(): array
         " . DB::textCol('avatar') . ",
         role       VARCHAR(20)  NOT NULL DEFAULT '',
         content    VARCHAR(500) NOT NULL DEFAULT '',
+        " . DB::textCol('media') . ",                 -- v1.4.0 评论附件：JSON 数组（图/文件，与波文同格式）
         created_at INTEGER      NOT NULL DEFAULT 0
     )",
         'plugin_time_machine_like' => "CREATE TABLE IF NOT EXISTS plugin_time_machine_like (
@@ -134,6 +135,11 @@ function owTmBoot(): void
     DB::createIndex('idx_otm_post_uid', 'plugin_time_machine_post', 'uid', false);
 
     DB::run($ddl['plugin_time_machine_comment']);
+    // v1.4.0：评论附件列（老库升级补一列）。列定义走 DB::textCol —— 它对 MySQL 退化成
+    // 「TEXT NULL」（MySQL 的 TEXT 不许带 DEFAULT，会 1101），其余驱动给默认空串。
+    if (!owTmHasColumn('plugin_time_machine_comment', 'media')) {
+        DB::run('ALTER TABLE plugin_time_machine_comment ADD COLUMN ' . DB::textCol('media'));
+    }
     DB::createIndex('idx_otm_cmt_post', 'plugin_time_machine_comment', 'post_id', false);
 
     DB::run($ddl['plugin_time_machine_like']);
@@ -167,38 +173,80 @@ function owTmViewerKey(array $actor): string
 
 /* ============================ 行组装 ============================ */
 
+/* ---------- 附件：清洗（入）与输出（出），波文与评论共用 ---------- */
+
+/**
+ * 清洗前端传来的附件 JSON（波文与评论同一套口径）：
+ *   · image：url 必须过 Upload::mediaRel（本站 uploads/ 且文件真实存在）
+ *   · file ：path 必须过 Upload::fileAbs（本站 uploads/file 下且真实存在）
+ * 伪造 / 外链 / 穿越地址一律静默丢弃；上限 9 个。
+ */
+function owTmCleanMedia(string $json): array
+{
+    $media = [];
+    $raw = json_decode($json, true);
+    if (!is_array($raw)) return $media;
+    foreach ($raw as $it) {
+        if (!is_array($it)) continue;
+        if ((string)($it['k'] ?? '') === 'file') {
+            $path = trim((string)($it['path'] ?? ''));
+            if ($path === '' || Upload::fileAbs($path) === null) continue;
+            $media[] = [
+                'k' => 'file',
+                'path' => $path,
+                'name' => mb_substr(trim((string)($it['name'] ?? 'file')), 0, 120),
+                'size' => max(0, (int)($it['size'] ?? 0)),
+                'ext' => strtolower(preg_replace('/[^a-z0-9]/i', '', (string)($it['ext'] ?? '')) ?: ''),
+            ];
+        } else {
+            $url = trim((string)($it['url'] ?? ''));
+            if ($url === '' || Upload::mediaRel($url) === null) continue;
+            $media[] = ['k' => 'image', 'url' => $url];
+        }
+        if (count($media) >= 9) break;
+    }
+    return $media;
+}
+
+/** 库里取出的附件 JSON → 下发结构（同样逐项复核，死链静默丢弃） */
+function owTmMediaOut(string $json): array
+{
+    $media = [];
+    $raw = json_decode($json, true);
+    if (!is_array($raw)) return $media;
+    foreach ($raw as $it) {
+        if (!is_array($it)) continue;
+        if ((string)($it['k'] ?? '') === 'file') {
+            $p = (string)($it['path'] ?? '');
+            if (Upload::fileAbs($p) === null) continue;
+            $media[] = [
+                'k' => 'file',
+                'path' => $p,
+                'name' => mb_substr((string)($it['name'] ?? 'file'), 0, 120),
+                'size' => (int)($it['size'] ?? 0),
+                'ext' => strtolower((string)($it['ext'] ?? '')),
+            ];
+        } elseif ((string)($it['k'] ?? '') === 'image') {
+            $u = (string)($it['url'] ?? '');
+            if ($u === '' || Upload::mediaRel($u) === null) continue;
+            $media[] = ['k' => 'image', 'url' => $u];
+        } else {
+            // 旧形态（v1.1.x）：元素是纯图片 URL 字符串
+            $u = is_string($it) ? $it : '';
+            if ($u !== '' && Upload::mediaRel($u) !== null) $media[] = ['k' => 'image', 'url' => $u];
+        }
+        if (count($media) >= 9) break;
+    }
+    return $media;
+}
+
 /**
  * post 行 → 下发结构。图片字段存的是 JSON 数组，这里解码 + 逐张复核
  * （只认本站 uploads/ 且文件确实存在；旧数据里的死链静默丢弃，不占名额）。
  */
 function owTmOut(array $r): array
 {
-    $media = [];
-    $raw = json_decode((string)($r['images'] ?? ''), true);
-    if (is_array($raw)) {
-        foreach ($raw as $it) {
-            // 旧形态（v1.1.x）：元素是纯图片 URL 字符串；新形态：附件对象 {k,url|path,name,size,ext}
-            if (is_string($it)) {
-                $u = $it;
-                if ($u !== '' && Upload::mediaRel($u) !== null) $media[] = ['k' => 'image', 'url' => $u];
-            } elseif (is_array($it) && (string)($it['k'] ?? '') === 'file') {
-                $p = (string)($it['path'] ?? '');
-                if (Upload::fileAbs($p) === null) continue;      // 文件必须真实落在 uploads/file 下
-                $media[] = [
-                    'k' => 'file',
-                    'path' => $p,
-                    'name' => mb_substr((string)($it['name'] ?? 'file'), 0, 120),
-                    'size' => (int)($it['size'] ?? 0),
-                    'ext' => strtolower((string)($it['ext'] ?? '')),
-                ];
-            } elseif (is_array($it)) {
-                $u = (string)($it['url'] ?? '');
-                if ($u === '' || Upload::mediaRel($u) === null) continue;
-                $media[] = ['k' => 'image', 'url' => $u];
-            }
-            if (count($media) >= 9) break;
-        }
-    }
+    $media = owTmMediaOut((string)($r['images'] ?? ''));
     $vis = (string)($r['visibility'] ?? '');
     if (!in_array($vis, ['public', 'friends', 'private'], true)) $vis = 'public';
     return [
@@ -349,10 +397,12 @@ function owTmCommentsOf(array $ids): array
     $out = [];
     foreach ($ids as $pid) {
         $rows = DB::all(
-            'SELECT id, uid, nickname, avatar, role, content, created_at FROM plugin_time_machine_comment'
+            'SELECT id, uid, nickname, avatar, role, content, media, created_at FROM plugin_time_machine_comment'
             . ' WHERE post_id=? ORDER BY id ASC LIMIT 50',
             [(int)$pid]
         );
+        foreach ($rows as &$rc) $rc['media'] = owTmMediaOut((string)($rc['media'] ?? ''));
+        unset($rc);
         $out[(int)$pid] = $rows;
     }
     return $out;
@@ -602,34 +652,9 @@ owTmRoute('plugin_time_machine_post', function (array $ctx): void {
     $vis = strtolower(trim((string)($p['visibility'] ?? 'public')));
     if (!in_array($vis, ['public', 'friends', 'private'], true)) $vis = 'public';
 
-    /* 附件（v1.2.0）：由附件上传插件上传后把产物回传，这里只做**复核**。
-       · image：url 必须过 Upload::mediaRel（本站 uploads/ 且文件真实存在）
-       · file ：path 必须过 Upload::fileAbs（本站 uploads/file 下且真实存在）
-       两者都只认本站产物 —— 伪造 / 外链地址一律静默丢弃，不占名额。 */
-    $media = [];
-    $raw = json_decode((string)($p['media'] ?? ''), true);
-    if (is_array($raw)) {
-        foreach ($raw as $it) {
-            if (!is_array($it)) continue;
-            $k = (string)($it['k'] ?? '');
-            if ($k === 'file') {
-                $path = trim((string)($it['path'] ?? ''));
-                if ($path === '' || Upload::fileAbs($path) === null) continue;
-                $media[] = [
-                    'k' => 'file',
-                    'path' => $path,
-                    'name' => mb_substr(trim((string)($it['name'] ?? 'file')), 0, 120),
-                    'size' => max(0, (int)($it['size'] ?? 0)),
-                    'ext' => strtolower(preg_replace('/[^a-z0-9]/i', '', (string)($it['ext'] ?? '')) ?: ''),
-                ];
-            } else {
-                $url = trim((string)($it['url'] ?? ''));
-                if ($url === '' || Upload::mediaRel($url) === null) continue;
-                $media[] = ['k' => 'image', 'url' => $url];
-            }
-            if (count($media) >= 9) break;
-        }
-    }
+    /* 附件（v1.2.0）：由附件上传插件上传后把产物回传，这里只做**复核**
+       （owTmCleanMedia：图片过 mediaRel、文件过 fileAbs，伪造/外链一律丢弃）。 */
+    $media = owTmCleanMedia((string)($p['media'] ?? ''));
     if ($content === '' && !$media) Api::json(['ok' => false, 'msg' => '写点什么，或者配张图吧'], 400);
 
     // 内容安全：与消息正文同一道闸门（敏感词打码 + 否决），scene 用 message
@@ -662,22 +687,34 @@ owTmRoute('plugin_time_machine_post', function (array $ctx): void {
 /* ============================ API：附件下载 ============================ */
 
 /**
- * 下载波文里的文件附件（GET + 签名，与核心 file_download 同一手法）。
+ * 下载波文 / 评论里的文件附件（GET + 签名，与核心 file_download 同一手法）。
+ * 入参：id=<波文 id>（波文附件）或 cid=<评论 id>（评论附件），i=附件下标。
  * 可见性在这里**再判一次**：私密 / 好友可见的波文不能因为拿到链接就被下载
  * —— 签名只证明「这个请求来自站内」，不证明「这个人能看这条波文」。
  */
 owTmRoute('plugin_time_machine_download', function (array $ctx): void {
     $actor = $ctx['actor'] ?? [];
     $pid = (int)($_GET['id'] ?? 0);
+    $cid = (int)($_GET['cid'] ?? 0);
     $idx = (int)($_GET['i'] ?? 0);
     owTmBoot();
-    $r = DB::one('SELECT * FROM plugin_time_machine_post WHERE id=?', [$pid]);
-    if (!$r) Api::json(['ok' => false, 'msg' => '文件不存在'], 404);
+    if ($cid > 0) {
+        // 评论附件：先取评论，再取它所属的波文做可见性判定
+        $c = DB::one('SELECT * FROM plugin_time_machine_comment WHERE id=?', [$cid]);
+        if (!$c) Api::json(['ok' => false, 'msg' => '文件不存在'], 404);
+        $r = DB::one('SELECT * FROM plugin_time_machine_post WHERE id=?', [(int)$c['post_id']]);
+        if (!$r) Api::json(['ok' => false, 'msg' => '文件不存在'], 404);
+        $json = (string)($c['media'] ?? '');
+    } else {
+        $r = DB::one('SELECT * FROM plugin_time_machine_post WHERE id=?', [$pid]);
+        if (!$r) Api::json(['ok' => false, 'msg' => '文件不存在'], 404);
+        $json = (string)($r['images'] ?? '');
+    }
     $uid = ($actor['kind'] ?? '') === 'user' ? (int)$actor['id'] : 0;
     if (!owTmVisOk($r, $uid, ($actor['role'] ?? '') === 'admin')) {
         Api::json(['ok' => false, 'msg' => '无权访问'], 403);
     }
-    $raw = json_decode((string)($r['images'] ?? ''), true);
+    $raw = json_decode($json, true);
     $list = is_array($raw) ? array_values($raw) : [];
     $it = $list[$idx] ?? null;
     if (!is_array($it) || (string)($it['k'] ?? '') !== 'file') Api::json(['ok' => false, 'msg' => '文件不存在'], 404);
@@ -744,10 +781,12 @@ owTmRoute('plugin_time_machine_comments', function (array $ctx): void {
         Api::json(['ok' => false, 'msg' => '这条波文已不存在'], 404);
     }
     $rows = DB::all(
-        'SELECT id, uid, nickname, avatar, role, content, created_at FROM plugin_time_machine_comment'
+        'SELECT id, uid, nickname, avatar, role, content, media, created_at FROM plugin_time_machine_comment'
         . ' WHERE post_id=? ORDER BY id ASC LIMIT 200',
         [$pid]
     );
+    foreach ($rows as &$rc) $rc['media'] = owTmMediaOut((string)($rc['media'] ?? ''));
+    unset($rc);
     Api::json(['ok' => true, 'comments' => $rows]);
 });
 
@@ -767,8 +806,10 @@ owTmRoute('plugin_time_machine_comment_add', function (array $ctx): void {
     }
 
     $content = trim((string)($ctx['post']['content'] ?? ''));
-    if ($content === '') Api::json(['ok' => false, 'msg' => '说点什么吧'], 400);
     if (mb_strlen($content) > 500) Api::json(['ok' => false, 'msg' => '评论最多 500 字'], 400);
+    // v1.4.0：评论也能带附件（图/文件，与波文同一套清洗）
+    $media = owTmCleanMedia((string)($ctx['post']['media'] ?? ''));
+    if ($content === '' && !$media) Api::json(['ok' => false, 'msg' => '说点什么吧'], 400);
     Chat::filterText($content, 'message', $actor);
     if (($why = Chat::checkText($content, 'message', $actor)) !== null) {
         Api::json(['ok' => false, 'msg' => $why], 400);
@@ -777,6 +818,7 @@ owTmRoute('plugin_time_machine_comment_add', function (array $ctx): void {
     $u = DB::one('SELECT nickname, avatar, avatar_type, avatar_style, avatar_seed, role FROM users WHERE id=?', [(int)$actor['id']]);
     if (!$u) Api::json(['ok' => false, 'msg' => '账号状态异常，请重新登录'], 403);
 
+    $now = time();
     $cid = (int)DB::insert('plugin_time_machine_comment', [
         'post_id' => $pid,
         'uid' => (int)$actor['id'],
@@ -784,7 +826,8 @@ owTmRoute('plugin_time_machine_comment_add', function (array $ctx): void {
         'avatar' => Auth::avatarUrlFor($u),
         'role' => (string)$u['role'],
         'content' => $content,
-        'created_at' => time(),
+        'media' => (string)json_encode($media, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        'created_at' => $now,
     ]);
     DB::run('UPDATE plugin_time_machine_post SET comments=comments+1 WHERE id=?', [$pid]);
     Api::json([
@@ -796,10 +839,41 @@ owTmRoute('plugin_time_machine_comment_add', function (array $ctx): void {
             'avatar' => Auth::avatarUrlFor($u),
             'role' => (string)$u['role'],
             'content' => $content,
-            'created_at' => time(),
+            'media' => $media,
+            'created_at' => $now,
         ],
         'comments' => (int)$post['comments'] + 1,
     ]);
+});
+
+/* ============================ API：修改可见性（v1.4.0） ============================ */
+
+/**
+ * 改「谁可以看」：只允许作者本人或管理员。
+ * 为什么不复用发波文路由：那是「新建」，这里只动一列，还要允许把一条老波文
+ * 从公开收窄成私密（收窄是安全方向，不需要二次确认；放宽回公开倒要谨慎，
+ * 所以前端在「放回公开」时自己加一句提示）。
+ */
+owTmRoute('plugin_time_machine_set_vis', function (array $ctx): void {
+    $actor = $ctx['actor'] ?? [];
+    if (($actor['kind'] ?? '') !== 'user') Api::json(['ok' => false, 'msg' => '请先登录'], 403);
+    owTmBoot();
+    if (!Sec::rateLimit('otm_vis', (string)$actor['id'], 60, 30)) {
+        Api::json(['ok' => false, 'msg' => '操作过于频繁，请稍后再试'], 429);
+    }
+    $pid = (int)($ctx['post']['id'] ?? 0);
+    $vis = strtolower(trim((string)($ctx['post']['visibility'] ?? '')));
+    if (!in_array($vis, ['public', 'friends', 'private'], true)) {
+        Api::json(['ok' => false, 'msg' => '可见范围不正确'], 400);
+    }
+    $r = DB::one('SELECT id, uid FROM plugin_time_machine_post WHERE id=?', [$pid]);
+    if (!$r) Api::json(['ok' => false, 'msg' => '这条波文已不存在'], 404);
+    if ((int)$r['uid'] !== (int)$actor['id'] && ($actor['role'] ?? '') !== 'admin') {
+        Api::json(['ok' => false, 'msg' => '只能修改自己的波文'], 403);
+    }
+    DB::run('UPDATE plugin_time_machine_post SET visibility=? WHERE id=?', [$vis, $pid]);
+    Sec::log('time_machine_set_vis', (string)$actor['id'], ['post' => $pid, 'vis' => $vis]);
+    Api::json(['ok' => true, 'visibility' => $vis, 'msg' => '已更新可见范围']);
 });
 
 /* ============================ API：删除（敏感） ============================ */

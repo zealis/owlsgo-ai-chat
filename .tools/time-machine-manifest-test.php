@@ -75,8 +75,9 @@ foreach ([
     'plugin_time_machine_download', 'plugin_time_machine_like',
     'plugin_time_machine_fav', 'plugin_time_machine_comments',
     'plugin_time_machine_comment_add', 'plugin_time_machine_delete',
+    'plugin_time_machine_set_vis',
 ] as $act) check('  ' . $act, has($routes, $act));
-check('路由条数正好 8（循环注册的两个开关路由也算数）', count($routes), 8);
+check('路由条数正好 9（循环注册的两个开关路由也算数）', count($routes), 9);
 check('没有自己的上传路由（附件完全依赖附件上传插件）', has($routes, 'plugin_time_machine_upload'), false);
 
 echo "\n== 敏感操作 ==\n";

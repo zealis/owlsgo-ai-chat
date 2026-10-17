@@ -292,8 +292,51 @@ check('好友可以给好友可见的波文评论', $c === 200 && $d['ok'] === t
 [$d, $c] = call('plugin_time_machine_comment_add', ['actor' => $actB, 'post' => ['post_id' => $pidF, 'content' => '非好友评论']]);
 check('非好友不能给好友可见的波文评论 → 404', $c === 404);
 
+echo "\n== 评论带附件（v1.4.0） ==\n";
+// 前面那条 $pid 已在「删除权限」里删掉了 → 这里新建一条专门测评论附件与可见性修改
+[$d] = call('plugin_time_machine_post', ['actor' => $actA, 'post' => ['content' => '评论附件与可见性测试']]);
+$pidX = (int)$d['id'];
+[$d, $c] = call('plugin_time_machine_comment_add', ['actor' => $actB, 'post' => [
+    'post_id' => $pidX, 'content' => '带图评论',
+    'media' => json_encode([['k' => 'image', 'url' => $imgUrl]]),
+]]);
+check('评论可带图片附件', $c === 200 && count($d['comment']['media'] ?? []) === 1);
+[$d, $c] = call('plugin_time_machine_comment_add', ['actor' => $actB, 'post' => [
+    'post_id' => $pidX, 'content' => '外链评论',
+    'media' => json_encode([['k' => 'image', 'url' => 'https://evil.example/x.png']]),
+]]);
+check('评论附件也做本站复核（外链被丢弃）', $c === 200 && ($d['comment']['media'] ?? null) === []);
+[$d, $c] = call('plugin_time_machine_comment_add', ['actor' => $actB, 'post' => ['post_id' => $pidX, 'content' => '', 'media' => '[]']]);
+check('空文字 + 空附件被拒（400）', $c === 400);
+[$d] = call('plugin_time_machine_feed', ['actor' => $actA, 'post' => ['tab' => 'new', 'page' => 1]]);
+$withImg = 0;
+foreach (($d['posts'] ?? []) as $one) {
+    if ((int)$one['id'] !== $pidX) continue;
+    foreach (($one['comments'] ?? []) as $cc) if (!empty($cc['media'])) $withImg++;
+}
+check('feed 下发的评论里带 media 数组', $withImg >= 1);
+
+echo "\n== 修改可见性（v1.4.0） ==\n";
+[$d, $c] = call('plugin_time_machine_set_vis', ['actor' => $actB, 'post' => ['id' => $pidX, 'visibility' => 'private']]);
+check('非作者不能改可见性（403）', $c === 403);
+[$d, $c] = call('plugin_time_machine_set_vis', ['actor' => $actA, 'post' => ['id' => $pidX, 'visibility' => 'bogus']]);
+check('非法可见性被拒（400）', $c === 400);
+[$d, $c] = call('plugin_time_machine_set_vis', ['actor' => $actA, 'post' => ['id' => $pidX, 'visibility' => 'friends']]);
+check('作者可改为好友可见', $c === 200 && $d['visibility'] === 'friends');
+check('库里已落库', (string)DB::val('SELECT visibility FROM plugin_time_machine_post WHERE id=?', [$pidX]) === 'friends');
+[$d] = call('plugin_time_machine_feed', ['actor' => $actB, 'post' => ['tab' => 'new', 'page' => 1]]);
+check('改完后非好友立刻看不到', in_array($pidX, tmIds($d), true) === false);
+[$d, $c] = call('plugin_time_machine_set_vis', ['actor' => $actAdmin, 'post' => ['id' => $pidX, 'visibility' => 'public']]);
+check('管理员也能改（改回公开）', $c === 200);
+[$d] = call('plugin_time_machine_feed', ['actor' => $actB, 'post' => ['tab' => 'new', 'page' => 1]]);
+check('公开后非好友又能看到', in_array($pidX, tmIds($d), true));
+// 收尾设为私密：免得它混进后面「游客热门栏只有公开两条」的断言
+call('plugin_time_machine_set_vis', ['actor' => $actA, 'post' => ['id' => $pidX, 'visibility' => 'private']]);
+
 echo "\n== 热门分栏排序 ==\n";
 // 只用这两条公开波文做排序断言（前面还留着好友可见/私密两条，不能混进来数）
+// 本节前的多个小节已把「发波文」频控（5 条/10 分钟）打满 → 先清计数，否则新帖会被 429 挡掉
+DB::run("DELETE FROM rate_limits WHERE bucket='otm_post'");
 [$d] = call('plugin_time_machine_post', ['actor' => $actA, 'post' => ['content' => '甲']]);
 $idJia = (int)$d['id'];
 [$d] = call('plugin_time_machine_post', ['actor' => $actB, 'post' => ['content' => '乙']]);

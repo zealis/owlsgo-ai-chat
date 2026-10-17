@@ -188,6 +188,13 @@
     margin-top: 8px;
 }
 .ow-tm-like-avs { display: flex; display: -webkit-flex; }
+/* 行首心形：与点赞按钮同一颗（实心 + 主色），一眼看出这一行是「谁点了赞」 */
+.ow-tm-like-heart {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    flex-shrink: 0; -webkit-flex-shrink: 0;
+    color: var(--ow-primary-dark);
+}
 .ow-tm-like-avs .ow-tm-ava { margin-right: -8px; }        /* 头像叠放，最后一个也叠（不收回） */
 .ow-tm-like-avs .ow-tm-ava:last-child { margin-right: 0; }
 .ow-tm-like-names { font-size: 12.5px; color: var(--ow-text-sub); line-height: 1.6; }
@@ -257,9 +264,25 @@
 .ow-tm-cmt-main { flex: 1 1 auto; -webkit-flex: 1 1 auto; min-width: 0; }
 .ow-tm-cmt-meta { display: flex; display: -webkit-flex; align-items: baseline; -webkit-align-items: baseline; gap: 8px; }
 .ow-tm-cmt-text { font-size: 13.5px; line-height: 1.65; color: var(--ow-text); word-break: break-word; margin-top: 1px; }
-.ow-tm-cmt-row { display: flex; display: -webkit-flex; gap: 8px; margin-top: 8px; }
+.ow-tm-cmt-row { display: flex; display: -webkit-flex; align-items: center; -webkit-align-items: center; gap: 4px; margin-top: 8px; }
 .ow-tm-cmt-row .ow-input { flex: 1 1 auto; -webkit-flex: 1 1 auto; min-width: 0; }
 .ow-tm-cmt-row .ow-btn { flex-shrink: 0; -webkit-flex-shrink: 0; }
+/* 评论行里的表情 / 附件按钮：与编辑器工具条同档（28px 方角），挂在输入框与发送钮之间 */
+.ow-tm-cmt-row .ow-tm-cmp-btn { flex-shrink: 0; -webkit-flex-shrink: 0; }
+/* 评论里的表情面板：比编辑器那块矮一档（评论场景不需要铺满） */
+.ow-tm-cmt-emoji { max-height: 132px; }
+/* 评论待发附件：缩略图 56px、chip 更紧凑 */
+.ow-tm-cmt-media { display: flex; display: -webkit-flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.ow-tm-cmt-media:empty { display: none; }
+.ow-tm-cmt-media .ow-tm-thumb { width: 56px; height: 56px; }
+.ow-tm-cmt-media .ow-tm-chip { padding: 4px 24px 4px 6px; max-width: 190px; }
+/* 评论里已发布的图片：比正文图小一档，最多 3 列 */
+.ow-tm-cmt-imgs { margin-top: 6px; }
+.ow-tm-cmt-imgs.g1 .ow-tm-img { max-width: 180px; max-height: 180px; }
+.ow-tm-cmt-imgs.g2 .ow-tm-img { width: 42%; height: 84px; }
+.ow-tm-cmt-imgs.g3 .ow-tm-img { width: 28%; height: 76px; }
+.ow-tm-cmt-files { margin-top: 6px; }
+.ow-tm-cmt-files .ow-file-card { width: 220px; }
 
 /* ---------- 发波文编辑器（弹窗内） ---------- */
 /* 输入框与消息输入区同一套：rows=1 自动增高（40~120）+ 拖拽手柄自定义高度（40~320） */

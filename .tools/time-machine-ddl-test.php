@@ -49,7 +49,7 @@ function check(string $name, $got, $want = true): void
 
 $expectCols = [
     'plugin_time_machine_post'    => ['id', 'uid', 'nickname', 'avatar', 'role', 'content', 'images', 'views', 'likes', 'comments', 'created_at'],
-    'plugin_time_machine_comment' => ['id', 'post_id', 'uid', 'nickname', 'avatar', 'role', 'content', 'created_at'],
+    'plugin_time_machine_comment' => ['id', 'post_id', 'uid', 'nickname', 'avatar', 'role', 'content', 'media', 'created_at'],
     'plugin_time_machine_like'    => ['post_id', 'uid', 'created_at'],
     'plugin_time_machine_fav'     => ['post_id', 'uid', 'created_at'],
     'plugin_time_machine_view'    => ['post_id', 'viewer', 'seen_at'],
