@@ -73,6 +73,15 @@
             + ' onerror="OwAvatar.fallback(this)"></span>';
     }
 
+    /**
+     * 可点击的头像（与消息区 .ow-msg-av 同一待遇：手型 + 圆形裁切 + hover 微淡），
+     * 点开资料卡。昵称本来就可点，头像没有道理不行。
+     */
+    function avatarBtn(uid, name, url, cls) {
+        return '<span class="ow-tm-ava" title="查看资料" onclick="OwChat.userCard(' + (uid | 0) + ','
+            + jsAttr(name) + ')">' + avatarCell(url, name, cls) + '</span>';
+    }
+
     function fmtTime(ts) {
         if (!ts) return '';
         var dt = new Date(ts * 1000), now = new Date();
@@ -274,7 +283,7 @@
             /* 右上角「···」：收藏 / 复制 / 删除收进下拉菜单（复用核心 .ow-ctx-menu 外壳）。
                删除只在「本人或管理员」时出现在菜单里。 */
             var h = '<article class="ow-tm-card" data-pid="' + p.id + '">'
-                + '<div class="ow-tm-card-av">' + avatarCell(p.avatar, p.nickname, 'ow-avatar-lg') + '</div>'
+                + '<div class="ow-tm-card-av">' + avatarBtn(p.uid, p.nickname, p.avatar, 'ow-avatar-lg') + '</div>'
                 + '<div class="ow-tm-card-main">'
                 + '<div class="ow-tm-card-top">'
                 + '<span class="ow-tm-nick" onclick="OwChat.userCard(' + p.uid + ',' + jsAttr(p.nickname) + ')">' + esc(p.nickname) + '</span>'
@@ -305,7 +314,7 @@
             if (!ls.length) return '';
             var av = '', names = '', k, n;
             for (k = 0; k < ls.length && k < 5; k++) {
-                av += avatarCell(ls[k].avatar, ls[k].nickname, 'ow-avatar-xs');
+                av += avatarBtn(ls[k].uid, ls[k].nickname, ls[k].avatar, 'ow-avatar-xs');
             }
             for (k = 0; k < ls.length && k < 3; k++) {
                 names += (k ? '、' : '')
@@ -546,7 +555,7 @@
         /* ---------- 评论（默认展开，无需点开） ---------- */
         cmtRow: function (c) {
             return '<div class="ow-tm-cmt">'
-                + avatarCell(c.avatar, c.nickname, 'ow-avatar-xs')
+                + avatarBtn(c.uid, c.nickname, c.avatar, 'ow-avatar-xs')
                 + '<div class="ow-tm-cmt-main">'
                 + '<div class="ow-tm-cmt-meta"><span class="ow-tm-nick ow-tm-nick-s" onclick="OwChat.userCard(' + c.uid + ',' + jsAttr(c.nickname) + ')">' + esc(c.nickname) + '</span>'
                 + '<span class="ow-tm-time">' + esc(fmtTime(c.created_at)) + '</span></div>'
