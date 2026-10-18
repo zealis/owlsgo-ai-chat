@@ -220,6 +220,35 @@ ow_abs_url('uploads/a.jpg');    // 拼接绝对地址；第二个参数默认 tr
 - 吸顶（sticky）**刻意不在通用类里**：只有「面板自己就是滚动容器」时才有意义，插件自己加一条 ——
   参照 `plugins/time-machine/style.css` 的 `.ow-tm .ow-list-head { position: sticky; top: 0; z-index: 5; }`。
 
+## 文案：别写死「积分」（v1.5.4 起）
+
+「积分」是站点可改的**名词**（后台 系统设置 → 基本信息 → 积分名称，存 `settings.points_name`，
+空 = 默认「积分」）。站点可能把它叫「金币 / 星光 / 猫粮」，所以插件的所有用户可见文案
+（前台面板、后台表单、接口返回的 `msg`）都不要写死这两个字，走统一的出口取：
+
+```php
+$pn = ow_points_name();                       // 服务端（空值已兜底为「积分」）
+$msg = '签到成功，获得 ' . $n . ' ' . $pn;      // 拼进入口返回的 msg
+
+// 后台表单标签：$f()/kpi() 之类会自己转义，传原值即可；
+// 拼裸 HTML 时记得 Sec::e() / esc()
+. '<h3>建群名额与' . Sec::e($pn) . '</h3>'
+```
+
+```js
+// 前台（聊天页）：核心已下发 boot.settings.points_name
+var pn = (w.OwChat && OwChat.pointsName) ? OwChat.pointsName() : '积分';
+
+// 后台（插件后台页）：由 OwAdmin.init 下发
+var pn = (w.OwAdmin && OwAdmin.pointsName) ? OwAdmin.pointsName() : '积分';
+```
+
+两条注意：
+
+- 返回值是**纯文本**，拼 HTML 仍要自己 `esc()` / `Sec::e()`（核心不替调用方转义）；
+- 名称只在「用户看见的名词」处替换。数据库字段（`users.points`）、日志 key（`points` / `cost`）、
+  内部注释照旧 —— 那是**数据结构**，跟着改名会把库和旧日志一起弄乱。
+
 ## 头像相关（v1.3.11 起）
 
 头像是「风格 + 种子」的生成结果（DiceBear 10.x），核心字段 `users.avatar_type` / `avatar_style` /

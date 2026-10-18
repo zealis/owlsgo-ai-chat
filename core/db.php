@@ -815,3 +815,24 @@ class DB
         DB::run('UPDATE rooms SET owner_id=1 WHERE id=1 AND (owner_id IS NULL OR owner_id=0) AND EXISTS(SELECT 1 FROM users WHERE id=1)');
     }
 }
+
+/**
+ * 站点自定义的「积分」名称（v1.5.4，后台 系统设置 → 基本信息 → 积分名称）。
+ *
+ * 存的是**用户可见的名词**，不是功能开关：站点把积分叫「金币 / 星光 / 猫粮」时，
+ * 签到、建群扣费、用户管理等所有文案都跟着换。空串 = 默认的「积分」
+ * （不把默认值写进库，日后改默认文案不必写迁移）。
+ *
+ * ⚠️ 放在 db.php 而不是 index.php：插件 main.php 也会被 ws-server.php 加载，
+ *    那边只 require core/*.php、不经过 index.php —— 放在 index.php 里，
+ *    插件在 WS 进程里一调就是「未定义函数」。
+ *    前端对应 OwChat.pointsName() / OwAdmin.pointsName()，见 PLUGIN.md。
+ */
+function ow_points_name(): string
+{
+    // 不在此处缓存：ow_lang() 等同类辅助也是每次现读，
+    // 同一请求里「刚保存完再读」才拿得到新值（后台保存后立刻回显不会错位）。
+    // 单次读取是一条走索引的小查询，一轮请求最多几次，不值得为它引入静态缓存。
+    $v = trim((string)DB::setting('points_name', ''));
+    return $v !== '' ? $v : '积分';
+}

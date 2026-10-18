@@ -532,6 +532,10 @@ class Admin
                     }
                 }
                 $allow = ['site_name', 'site_url', 'allow_register', 'reg_email_verify', 'guest_browse', 'guest_chat',
+                          // v1.5.4 积分名称（全站替代表述：签到 / 建群扣费 / 用户管理）。
+                          // 校验与清洗在下面单独一段 —— 它是**名词**，不是普通字符串，
+                          // 会出现在前端拼接的 HTML 里，必须限制长度与字符集。
+                          'points_name',
                           // v1.1.0：guest_daily_limit 已下线，改为发言间隔（秒）
                           'guest_msg_interval',
                           // v1.2.2 消息服务器保留期（天），0 = 永久保留。
@@ -559,8 +563,21 @@ class Admin
                 // 数值型设置统一收敛为非负整数：负数会让间隔/保留期这类
                 // 「窗口秒数」「天数」直接失效或行为诡异，前端输入框挡不住。
                 $intKeys = ['guest_msg_interval', 'msg_retain_days', 'cron_log_retain_days', 'ws_port', 'ws_send_timeout', 'ws_send_max_inflight'];
+                // v1.5.4 积分名称：单独清洗，不进下面那条通用分支。
+                // 它是**用户可见的名词**，会出现在前端拼接的 HTML 与插件后台表单里，
+                // 所以先删标签与空白/控制字符再限长（8 字），不接受换行、引号内换行之类的东西。
+                // 空串 = 恢复默认「积分」：不把默认值写进库，日后改默认文案不必写迁移。
+                if (isset($_POST['points_name'])) {
+                    $pn = preg_replace('/[\s\x00-\x1F\x7F]+/u', '', strip_tags((string)$p('points_name')));
+                    $pn = is_string($pn) ? $pn : '';
+                    if (mb_strlen($pn, 'UTF-8') > 8) {
+                        Api::json(['ok' => false, 'msg' => '积分名称最多 8 个字']);
+                    }
+                    DB::setSetting('points_name', $pn);
+                }
                 foreach ($allow as $k) {
                     if (!isset($_POST[$k])) continue;
+                    if ($k === 'points_name') continue;   // 上面已单独处理
                     if (in_array($k, $intKeys, true)) {
                         DB::setSetting($k, (string)max(0, (int)$p($k)));
                     } else {

@@ -1087,7 +1087,7 @@ Plugin::on('room.create.gate', function (array &$dec, array $actor) {
     if ($cost <= 0) {
         // 后台把单价设为 0 = 不允许用积分绕过
         $dec['allowed'] = false;
-        $dec['reason']  = $why . '，且站点未开启「消耗积分创建群聊」。';
+        $dec['reason']  = $why . '，且站点未开启「消耗' . ow_points_name() . '创建群聊」。';
         return;
     }
     $dec['free']   = false;
@@ -1095,7 +1095,7 @@ Plugin::on('room.create.gate', function (array &$dec, array $actor) {
     // ⚠️ reason 必须是**纯文本**：前端会整体 esc() 再插入，
     //    这里塞 <b> 会被原样显示成「<b>50</b>」（v1.2.44 实测踩过）。
     //    需要强调的数字由前端用结构化字段（cost/quota/used/level/points）自己拼。
-    $dec['reason'] = $why . '，可消耗 ' . $cost . ' 积分创建（当前 ' . $pts . ' 积分）。';
+    $dec['reason'] = $why . '，可消耗 ' . $cost . ' ' . ow_points_name() . '创建（当前 ' . $pts . ' ' . ow_points_name() . '）。';
 });
 
 /**
@@ -1426,7 +1426,7 @@ Plugin::page('level', '星光殿堂', function (array $actor, $user = null) {
         . '<li><b>任务天</b>：完成每日任务直接加「天」，每个任务加多少天由后台设置'
         . '（当前：' . owSHLRewardText() . '），每个任务每天只计一次</li>'
         . '<li><b>签到天</b>：在「星光殿堂」里每天签到一次也加天（默认 '
-        . owSHLNum(owSHLCheckinReward()) . ' 天，后台可调；填 0 即不涨等级，只发积分）。'
+        . owSHLNum(owSHLCheckinReward()) . ' 天，后台可调；填 0 即不涨等级，只发' . Sec::e(ow_points_name()) . '）。'
         . '签到本身每天只能一次，因此这一项不需要额外的去重</li>'
         . '<li><b>设定天</b>：仅在管理员直接设置等级时出现，用来补齐「等级」与「天」的差额，'
         . '普通用户不会有这一项</li>'
@@ -1497,7 +1497,8 @@ Plugin::page('level', '星光殿堂', function (array $actor, $user = null) {
     $h .= '</table></div>'
         . '<div class="ow-lv-tip">建群名额用完、或等级未到 '
         . owSHLInt('room_min_level') . ' 级时，可消耗 <b>' . owSHLInt('room_point_cost')
-        . '</b> 积分创建群聊（每个群一次）。把该单价设为 0 即为「不允许用积分绕过」。</div>'
+        . '</b> ' . Sec::e(ow_points_name()) . '创建群聊（每个群一次）。把该单价设为 0 即为「不允许用'
+        . Sec::e(ow_points_name()) . '绕过」。</div>'
         . '</div>';
 
     return $h;
@@ -2043,9 +2044,10 @@ Plugin::route('plugin_starlight_hall_checkin_do', function (array $ctx) {
     if (!$r['ok']) Api::json(['ok' => false, 'msg' => $r['msg']]);
 
     $cyc = owSHCInt('cycle_days');
-    $msg = '签到成功，获得 ' . (int)$r['points'] . ' 积分';
+    $pn  = ow_points_name();
+    $msg = '签到成功，获得 ' . (int)$r['points'] . ' ' . $pn;
     if ((int)$r['streak'] > 1) $msg .= '，已连续 ' . (int)$r['streak'] . ' 天';
-    if ((int)$r['parts']['bonus'] > 0) $msg .= '（含连续 ' . $cyc . ' 天大奖 ' . (int)$r['parts']['bonus'] . ' 积分）';
+    if ((int)$r['parts']['bonus'] > 0) $msg .= '（含连续 ' . $cyc . ' 天大奖 ' . (int)$r['parts']['bonus'] . ' ' . $pn . '）';
 
     /**
      * 每日签到同时给等级进度发「天」（v1.1.0：签到也是成长的一部分）。
@@ -2084,7 +2086,7 @@ Plugin::route('plugin_starlight_hall_checkin_patch', function (array $ctx) {
     if (!$t['can']) Api::json(['ok' => false, 'msg' => $t['reason'] !== '' ? $t['reason'] : '当前没有可补签的日期']);
 
     $cost = owSHCInt('patch_cost');
-    if (owSHCPoints($uid) < $cost) Api::json(['ok' => false, 'msg' => '积分不足，补签需要 ' . $cost . ' 积分']);
+    if (owSHCPoints($uid) < $cost) Api::json(['ok' => false, 'msg' => ow_points_name() . '不足，补签需要 ' . $cost . ' ' . ow_points_name()]);
 
     $r = owSHCSign($uid, $t['day'], 'patch', false);
     if (!$r['ok']) Api::json(['ok' => false, 'msg' => $r['msg']]);
@@ -2223,7 +2225,7 @@ Plugin::route('plugin_starlight_hall_checkin_user_op', function (array $ctx) use
             $r = owSHCSign($uid, date('Y-m-d'), 'admin', true);
             if (!$r['ok']) Api::json(['ok' => false, 'msg' => $r['msg']]);
             Sec::log('checkin_admin_sign', (string)($ctx['actor']['nickname'] ?? ''), ['uid' => $uid]);
-            Api::json(['ok' => true, 'msg' => '已代签，发放 ' . (int)$r['points'] . ' 积分']);
+            Api::json(['ok' => true, 'msg' => '已代签，发放 ' . (int)$r['points'] . ' ' . ow_points_name()]);
 
         case 'reset':       // 连续天数清零（不删历史记录，只把 streak 归零）
             DB::run('UPDATE plugin_checkin_user SET streak=0 WHERE user_id=?', [$uid]);
@@ -2455,8 +2457,11 @@ Plugin::adminPage('starlight-hall', '星光殿堂', function () {
             . '</div>';
     };
 
+    // v1.5.4：本页文案里的「积分」都换成站点自定义名称（核心 系统设置 → 基本信息）
+    $pn = ow_points_name();
+
     $h = '<h2>星光殿堂</h2>'
-        . '<p class="ow-admin-desc">签到与等级合体的成长中心：每天签到攒积分与连续天数，'
+        . '<p class="ow-admin-desc">签到与等级合体的成长中心：每天签到攒' . Sec::e($pn) . '与连续天数，'
         . '完成任务攒等级天数 —— 等级 <b>L = 1 + ⌊ 在线天 + 任务天 + 设定天 − 消退天 ⌋</b>，'
         . '1 天 = 1 级，等级再反过来解锁头像 / 贴纸 / 加好友 / 建群 / 文件等能力。'
         . '下面是四张页签：概览看整体活跃，签到与等级各自配参数，用户把两边的档案合在一张卡里查。</p>';
@@ -2490,12 +2495,12 @@ Plugin::adminPage('starlight-hall', '星光殿堂', function () {
         . '<option value="1"' . (owSHCCfg('enable') === '1' ? ' selected' : '') . '>开启</option>'
         . '<option value="0"' . (owSHCCfg('enable') === '0' ? ' selected' : '') . '>关闭（前台显示「未开放」）</option>'
         . '</select></div>'
-        . $f('ci', 'base', '基础积分（分）', '每次签到都发的保底数')
-        . $f('ci', 'step', '连续递增（分/天）', '每多连一天额外增加')
-        . $f('ci', 'step_cap', '递增封顶（分）', '额外部分最多累加到该数值')
+        . $f('ci', 'base', '基础' . $pn, '每次签到都发的保底数')
+        . $f('ci', 'step', '连续递增（' . $pn . '/天）', '每多连一天额外增加')
+        . $f('ci', 'step_cap', '递增封顶（' . $pn . '）', '额外部分最多累加到该数值')
         . $f('ci', 'cycle_days', '大奖周期（天）', '连续满 N 天发一笔大奖；填 0 = 不发')
-        . $f('ci', 'cycle_bonus', '周期大奖（分）')
-        . $f('ci', 'patch_cost', '补签卡单价（积分）', '填 0 = 不提供补签')
+        . $f('ci', 'cycle_bonus', '周期大奖（' . $pn . '）')
+        . $f('ci', 'patch_cost', '补签卡单价（' . $pn . '）', '填 0 = 不提供补签')
         . $f('ci', 'patch_limit', '每月补签上限（次）')
         . $f('ci', 'rank_size', '前台榜单人数', '「本月签到榜」与「等级荣誉榜」共用这个人数，两个榜始终一致')
         . $f('ci', 'top_size', '后台累计榜人数', '后台「累计签到榜」显示多少人（1~500）；前台月榜用的是上一项')
@@ -2516,7 +2521,7 @@ Plugin::adminPage('starlight-hall', '星光殿堂', function () {
         . $f('lv', 'online_hours', '在线多少小时算 1 天', '累计在线每满这么多小时 = +1 天 = +1 级；默认 24。页面开着就算在线，单次最多记 2 分钟')
         . $f('lv', 'rw_login', '「登录」任务奖励（天）', '完成一次奖励多少天，默认 0.2；每个任务每天只发一次')
         . $f('lv', 'rw_gm', '「群发言」任务奖励（天）', '完成一次奖励多少天，默认 0.5。两个都填 1 就是「每天做完任务升 2 级」；填 0 = 该任务只记进度不发奖励')
-        . $f('lv', 'rw_checkin', '「每日签到」奖励（天）', '每天签到一次加多少等级天数，默认 0.2。填 0 = 签到只发积分、不涨等级（合并前的行为）')
+        . $f('lv', 'rw_checkin', '「每日签到」奖励（天）', '每天签到一次加多少等级天数，默认 0.2。填 0 = 签到只发' . $pn . '、不涨等级（合并前的行为）')
         . '</div>'
         . '<h4 class="ow-sh-cap">长期不登录消退（荣誉等级）</h4><div class="ow-form-row">'
         . $f('lv', 'decay_idle_days', '长期不登录天数', '每满这么多天不登录退 1 级；填 0 = 关闭消退')
@@ -2536,9 +2541,9 @@ Plugin::adminPage('starlight-hall', '星光殿堂', function () {
         . $f('lv', 'lv_honor', '荣誉标识（Lv）', '达到后显示荣誉徽章，同时也是「等级荣誉榜」的上榜门槛')
         . '</div></div>'
 
-        . '<div class="ow-card"><h3 class="ow-sh-h3">建群名额与积分</h3><div class="ow-form-row">'
-        . $f('lv', 'room_min_level', '免费建群最低等级（Lv）', '低于此级无免费名额，但可用积分创建')
-        . $f('lv', 'room_point_cost', '超额创建单价（积分）', '每个群扣一次；填 0 = 不允许用积分绕过')
+        . '<div class="ow-card"><h3 class="ow-sh-h3">建群名额与' . Sec::e($pn) . '</h3><div class="ow-form-row">'
+        . $f('lv', 'room_min_level', '免费建群最低等级（Lv）', '低于此级无免费名额，但可用' . $pn . '创建')
+        . $f('lv', 'room_point_cost', '超额创建单价（' . $pn . '）', '每个群扣一次；填 0 = 不允许用' . $pn . '绕过')
         . '<div class="ow-form-item" style="flex:1;min-width:220px"><label>免费名额档位</label>'
         . '<textarea class="ow-input ow-sh-mono" id="owShCfg_lv_room_tiers" rows="3">' . Sec::e(owSHLCfg('room_tiers')) . '</textarea>'
         . '<p style="font-size:12px">每行一条「等级:名额」，取最高命中档。默认 10:3 / 20:5 / 50:8</p>'

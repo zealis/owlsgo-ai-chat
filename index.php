@@ -1057,7 +1057,9 @@ if ($action !== '') {
                 $st = DB::run('UPDATE users SET points=points-? WHERE id=? AND points>=?', [$cost, $uid, $cost]);
                 if ($st->rowCount() === 0) {
                     $pts = (int)DB::val('SELECT points FROM users WHERE id=?', [$uid]);
-                    Api::json(['ok' => false, 'msg' => '积分不足，本次创建需要 ' . $cost . ' 积分（当前 ' . $pts . '）']);
+                    // v1.5.4：「积分」是站点可改的名词（后台 基本信息 → 积分名称）
+                    $pn = ow_points_name();
+                    Api::json(['ok' => false, 'msg' => $pn . '不足，本次创建需要 ' . $cost . ' ' . $pn . '（当前 ' . $pts . '）']);
                 }
                 $charged = $cost;
             }
@@ -1093,7 +1095,7 @@ if ($action !== '') {
             Plugin::fire('room.created', [$id, $actor, $charged]);
             Sec::log('room_create', $actor['nickname'], ['id' => $id, 'name' => $name, 'cost' => $charged]);
             Api::json(['ok' => true, 'msg' => $charged > 0
-                ? '群聊已创建（消耗 ' . $charged . ' 积分）'
+                ? '群聊已创建（消耗 ' . $charged . ' ' . ow_points_name() . '）'
                 : '群聊已创建', 'id' => $id, 'name' => $name, 'cost' => $charged]);
         // 且强制 attachment，避免 html/svg 之类被浏览器内联解析导致 XSS
         case 'file_download':
@@ -1694,6 +1696,9 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
     $settings = [
         'guest_chat' => DB::setting('guest_chat', '1'),
         'sound' => DB::setting('sound_default', '1'),
+        // v1.5.4：站点自定义的「积分」名称。前端与插件统一走 OwChat.pointsName()，
+        // 服务端走 ow_points_name() —— 两处都只是读这一个键，不各自兜底。
+        'points_name' => ow_points_name(),
         // v1.1.14：普通用户能否创建不公开群聊。**按当前身份算好后下发**，
         // 前端据此把「公开群聊」开关置灰——不这样做就会留下「点得动、必报错」的死开关。
         'room_private_create' => (
@@ -2058,6 +2063,10 @@ function renderAdmin(array $actor): void
        . '<script src="assets/js/chat.js?v=' . OWLSGO_VERSION . '"></script>'
        // 插件注册的 JS 资源合并输出（用户管理等插件的后台交互脚本）
        . '<script src="?action=assets&type=js"></script>'
-       . '<script>OwAdmin.init(' . json_encode(['key' => $actor['key'], 'ts' => time(), 'version' => OWLSGO_VERSION]) . ');</script>'
+       . '<script>OwAdmin.init(' . json_encode([
+             'key' => $actor['key'], 'ts' => time(), 'version' => OWLSGO_VERSION,
+             // v1.5.4：后台各页（含插件后台）统一从这里取「积分」的自定义名称
+             'points_name' => ow_points_name(),
+         ], JSON_UNESCAPED_UNICODE) . ');</script>'
        . '</body></html>';
 }

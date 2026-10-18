@@ -37,6 +37,15 @@
 
     /* ---------- 小工具 ---------- */
 
+    /**
+     * v1.5.4：「积分」是站点可改的名词（核心 系统设置 → 基本信息 → 积分名称）。
+     * 前台所有文案都走这里，站点把它叫「金币 / 星光」时签到面板跟着换。
+     * ⚠️ 返回纯文本，拼 HTML 时自己 esc()。
+     */
+    function pn() {
+        return (w.OwChat && w.OwChat.pointsName) ? w.OwChat.pointsName() : '积分';
+    }
+
     function num(v) {
         var n = parseFloat(v);
         if (!isFinite(n)) n = 0;
@@ -203,7 +212,7 @@
             + '<h3 class="ow-sh-pop-t">' + (done ? '签到成功！' : '每日签到') + '</h3>'
             + '<div class="ow-sh-pop-rewards">'
             + '<span class="ow-sh-pop-r">' + svgCoin(22, 'var(--ow-primary-strong)')
-            + '<b>+' + amount + '</b><i>积分</i></span>';
+            + '<b>+' + amount + '</b><i>' + esc(pn()) + '</i></span>';
         if (dd.bonus > 0) {
             h += '<span class="ow-sh-pop-r">' + svgStar(22, 'var(--ow-orange)')
                 + '<b>+' + dd.bonus + '</b><i>连签大奖</i></span>';
@@ -215,7 +224,7 @@
         }
         h += '</div>'
             + '<p class="ow-sh-pop-sub">' + (done ? '已连续签到 <b>' + dd.streak + '</b> 天'
-                : '今日可领 <b>' + dd.next + '</b> 积分，已连续 <b>' + dd.streak + '</b> 天') + '</p>'
+                : '今日可领 <b>' + dd.next + '</b> ' + esc(pn()) + '，已连续 <b>' + dd.streak + '</b> 天') + '</p>'
             + '<button class="ow-sh-pop-btn" id="owShPopBtn" type="button"'
             + ' onclick="OwSH.' + (done ? 'popClose' : 'popSign') + '()">' + (done ? '确定' : '立即签到') + '</button>'
             + '<a class="ow-sh-pop-link" href="javascript:;" onclick="OwSH.popGoPanel()">进入星光殿堂 ›</a>';
@@ -343,7 +352,7 @@
             + '<div class="ow-sh-hero-top">'
             + lvChip(lv, L.stage_no, isHonor)
             + '<span class="ow-sh-hero-stage">' + esc(L.stage || '') + '</span>'
-            + '<span class="ow-sh-pill">积分 ' + (x.my_points || 0) + '</span>'
+            + '<span class="ow-sh-pill">' + esc(pn()) + ' ' + (x.my_points || 0) + '</span>'
             + '</div>';
 
         /* ---------- 等级进度 ---------- */
@@ -375,7 +384,7 @@
             dis = ' disabled';
             btnInner = '<i>已签到</i>';
         } else {
-            btnInner = '签到<i>+' + x.next.total + ' 积分</i>';
+            btnInner = '签到<i>+' + x.next.total + ' ' + esc(pn()) + '</i>';
         }
         h += '<div class="ow-sh-ring" id="owShRing">' + ring
             + '<button class="' + btnCls + '" id="owShBtn" type="button"' + dis
@@ -385,7 +394,7 @@
         h += '<div class="ow-sh-stats">'
             + '<div class="ow-sh-stat"><b>' + x.streak + '</b><span>连续天数</span></div>'
             + '<div class="ow-sh-stat"><b>' + x.total_days + '</b><span>累计签到</span></div>'
-            + '<div class="ow-sh-stat"><b>' + x.earned + '</b><span>签到积分</span></div>'
+            + '<div class="ow-sh-stat"><b>' + x.earned + '</b><span>签到' + esc(pn()) + '</span></div>'
             + '</div>';
 
         // 周期点阵：一个点 = 周期内第 N 天，最后一格（大奖）加高亮
@@ -402,7 +411,7 @@
         // 补签：只在真的有缺口时出现（服务端已判过成本、次数与断签状态）
         if (x.patch && x.patch.can === 1) {
             h += '<button class="ow-btn ow-btn-ghost ow-sh-patch" type="button" onclick="OwSH.doPatch()">'
-                + '补签 ' + esc(x.patch.day.substr(5)) + '（消耗 ' + x.patch.cost + ' 积分）</button>';
+                + '补签 ' + esc(x.patch.day.substr(5)) + '（消耗 ' + x.patch.cost + ' ' + esc(pn()) + '）</button>';
         }
         h += '</div>';
         return h;
@@ -418,10 +427,10 @@
     function tipHtml(x) {
         var t;
         if (x.signed === 1) {
-            t = '今日已签到 <b>+' + x.got + '</b> 积分 · <b>+' + num(x.cfg.rw_checkin) + '</b> 天';
+            t = '今日已签到 <b>+' + x.got + '</b> ' + esc(pn()) + ' · <b>+' + num(x.cfg.rw_checkin) + '</b> 天';
         } else {
-            t = '今天签到 <b>+' + x.next.total + '</b> 积分 · <b>+' + num(x.cfg.rw_checkin) + '</b> 天';
-            if (x.next.bonus > 0) t += '（含大奖 <b>' + x.next.bonus + '</b> 分）';
+            t = '今天签到 <b>+' + x.next.total + '</b> ' + esc(pn()) + ' · <b>+' + num(x.cfg.rw_checkin) + '</b> 天';
+            if (x.next.bonus > 0) t += '（含大奖 <b>' + x.next.bonus + '</b> ' + esc(pn()) + '）';
             else if (x.cfg.cycle_days > 0 && x.cycle_left > 0) t += ' · 再连签 <b>' + x.cycle_left + '</b> 天拿大奖';
         }
         return t;
@@ -614,7 +623,7 @@
         var x = SH.data;
         if (!x || !x.patch || x.patch.can !== 1) return;
         var cost = x.patch.cost;
-        OwChat.confirm('补签 ' + x.patch.day + ' 将消耗 ' + cost + ' 积分（本月还剩 '
+        OwChat.confirm('补签 ' + x.patch.day + ' 将消耗 ' + cost + ' ' + pn() + '（本月还剩 '
             + x.patch.left + ' 次），连续天数得以延续。确定补签？', function () {
             SH.busy = 1;
             OwApi.secure(A + 'checkin_patch', {}, function (r) {

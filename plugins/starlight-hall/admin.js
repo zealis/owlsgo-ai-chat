@@ -20,6 +20,15 @@
     var A = 'plugin_starlight_hall_';
     var curUid = 0;
 
+    /**
+     * v1.5.4：「积分」是站点可改的名词（核心 系统设置 → 基本信息 → 积分名称），
+     * 后台概览 / 档案 / 提示里的「积分」一律走这里。
+     * 后台没有 OwChat，取的是 OwAdmin.pointsName()（由页面 init 下发）。
+     */
+    function pn() {
+        return (w.OwAdmin && w.OwAdmin.pointsName) ? w.OwAdmin.pointsName() : '积分';
+    }
+
     /* ---------- 小工具 ---------- */
 
     function esc(s) {
@@ -190,7 +199,7 @@
             + kpi(r.today, '今日签到人次')
             + kpi(r.month, '本月签到人次')
             + kpi(r.users, '参与人数')
-            + kpi(r.points, '累计发放积分')
+            + kpi(r.points, '累计发放' + pn())
             + kpi(r.all, '历史签到人次')
             + kpi(r.avg_streak, '平均连续天数')
             + '</div>';
@@ -208,7 +217,7 @@
             var t = trend[i];
             var pct = Math.max(2, Math.round(t.n / max * 100));
             h += '<i class="' + (t.n ? '' : 'zero') + '" style="height:' + pct + '%" title="'
-                + esc(t.day + ' · ' + t.n + ' 人次 · ' + t.p + ' 积分') + '"></i>';
+                + esc(t.day + ' · ' + t.n + ' 人次 · ' + t.p + ' ' + pn()) + '"></i>';
         }
         h += '</div><div class="ow-sh-tx"><span>' + esc(trend[0].day.substr(5)) + '</span><span>'
             + esc(trend[trend.length - 1].day.substr(5)) + '</span></div>';
@@ -226,7 +235,7 @@
             h += '<tr><td>' + (i + 1) + '</td>'
                 + '<td>' + esc(r.nickname) + ' <span style="color:var(--ow-text-sub)">#' + r.uid + '</span></td>'
                 + '<td>' + r.days + '</td><td>' + r.streak + '</td><td>' + r.max_streak + '</td>'
-                + '<td>' + r.points + ' 分</td></tr>';
+                + '<td>' + r.points + ' ' + esc(pn()) + '</td></tr>';
         }
         box.innerHTML = h + '</table>';
     }
@@ -340,11 +349,11 @@
     function checkinBlock(r) {
         var h = '<h4 class="ow-sh-cap">签到档案</h4>'
             + '<div class="ow-card-meta" style="border-top:0;padding-top:0">'
-            + row('积分余额', r.points + ' 分')
+            + row(pn() + '余额', r.points + ' ' + esc(pn()))
             + row('累计签到', r.total_days + ' 天')
             + row('当前连续', r.streak + ' 天')
             + row('最长连续', r.max_streak + ' 天')
-            + row('签到累计发放', r.earned + ' 分')
+            + row('签到累计发放', r.earned + ' ' + esc(pn()))
             + row('最近签到', esc(r.last_day || '—'))
             + row('今日状态', r.signed_today ? '<span style="color:var(--ow-green)">已签到</span>' : '未签到')
             + '</div>';
@@ -359,7 +368,7 @@
             for (var i = 0; i < r.recent.length; i++) {
                 var x = r.recent[i];
                 h += '<tr><td>' + esc(x.day) + '</td><td>连续 ' + x.streak + ' 天</td>'
-                    + '<td>' + x.points + ' 分</td><td>' + esc(kindCn[x.kind] || x.kind) + '</td></tr>';
+                    + '<td>' + x.points + ' ' + esc(pn()) + '</td><td>' + esc(kindCn[x.kind] || x.kind) + '</td></tr>';
             }
             h += '</table>';
         }
@@ -402,7 +411,7 @@
     w.OwSHAdmin.op = function (kind, op) {
         if (!curUid) { toast('请先查询用户'); return; }
         var tip = {
-            sign: '为该用户代签今天？将按当前规则发放积分。',
+            sign: '为该用户代签今天？将按当前规则发放' + pn() + '。',
             reset: '清零该用户的连续天数？历史签到记录不受影响。',
             patch: '为该用户补签今日任务？每周最多 1 次，会发放当天全部任务奖励。',
             freeze: '冻结该用户今日的任务进度？解冻前不再结算。'

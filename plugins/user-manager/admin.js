@@ -11,6 +11,15 @@
     'use strict';
     var $ = function (id) { return d.getElementById(id); };
 
+    /**
+     * v1.5.4：「积分」是站点可改的名词（核心 系统设置 → 基本信息 → 积分名称），
+     * 用户管理的表头 / 概览行 / 提示一律走它，不写死「积分」二字。
+     * 兜底值与服务端一致（空 = 积分），OwAdmin 尚未 init 时也不会得到 undefined。
+     */
+    function pn() {
+        return (w.OwAdmin && w.OwAdmin.pointsName) ? w.OwAdmin.pointsName() : '积分';
+    }
+
     w.OwUM = {
         /* 搜索：仅数字用户 ID 精确查询；非法输入服务端返回 {ok:false} 需拦截提示 */
         search: function () {
@@ -22,7 +31,7 @@
                     if (parseInt(r.data[k].level, 10) >= 1) { hasLevel = true; break; }
                 }
                 var th = '<tr><th>ID</th><th>昵称</th><th>邮箱</th><th>角色</th><th>称号</th>'
-                       + '<th>积分</th>' + (hasLevel ? '<th>等级</th>' : '') + '<th>状态</th><th>操作</th></tr>';
+                       + '<th>' + esc(pn()) + '</th>' + (hasLevel ? '<th>等级</th>' : '') + '<th>状态</th><th>操作</th></tr>';
                 var h = '<div class="ow-card"><table class="ow-table">' + th;
                 for (var i = 0; i < r.data.length; i++) {
                     var u = r.data[i];
@@ -119,7 +128,7 @@
                 // 信息行：注册时间带相对时间，最后登录 = 相对时间 + IP（参考概览式排版）
                 var meta = '<div class="ow-card-meta">'
                     + metaRow('邮箱', esc(u.email || '—'))
-                    + metaRow('积分', esc(String(parseInt(u.points, 10) || 0)))
+                    + metaRow(pn(), esc(String(parseInt(u.points, 10) || 0)))
                     + metaRow('注册时间', u.created_at
                         ? esc(fmt(u.created_at)) + ' <span style="color:var(--ow-text-sub)">（' + esc(ago(u.created_at)) + '）</span>'
                         : '—')

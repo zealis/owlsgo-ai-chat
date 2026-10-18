@@ -1578,6 +1578,16 @@
         historyDone: false, loadingHistory: false, sound: true, lastMsgId: 0,
         emojis: '😀 😁 😂 🤣 😊 😍 😘 😜 🤔 😎 😴 😷 🤒 😱 😭 😡 👍 👎 👏 🙏 💪 🤝 ❤️ 💔 🎉 🔥 ⭐ 🌹 🍀 🎂 ☕ 🍺 ⚽ 🏀 🚀 ✈️ 🐱 🐶 🦉 🌙 ☀️ 🌈'.split(' '),
 
+        /** v1.5.4：站点自定义的「积分」名称（后台 系统设置 → 基本信息 → 积分名称）。
+         *  全站（含插件前台）凡是要写「积分」二字的地方都走它，站点就能把它叫成
+         *  「金币 / 星光 / 猫粮」。空 = 顶层默认「积分」；插件侧建议这样取：
+         *      var pn = (w.OwChat && OwChat.pointsName) ? OwChat.pointsName() : '积分';
+         *  ⚠️ 返回值是**纯文本**，拼 HTML 时仍要自己 esc()。 */
+        pointsName: function () {
+            var s = (this.cfg && this.cfg.settings) || {};
+            return s.points_name || '积分';
+        },
+
         init: function (cfg) {
             this.cfg = cfg;
             OwApi.key = cfg.key;
@@ -3786,21 +3796,23 @@
                     $('owRCCreate').style.opacity = '.5';
                     $('owRCCreate').style.cursor = 'not-allowed';
                 } else if (g.cost > 0) {
+                    // v1.5.4：「积分」是站点可改的名词，统一走 pointsName()
+                    var pn = self.pointsName();
                     var why = (typeof g.level === 'number' && g.min_room_level && g.level < g.min_room_level)
                         ? '建群需 <b>' + g.min_room_level + '</b> 级（当前 Lv.' + g.level + '）'
                         : '免费名额已用完（<b>' + g.used + '/' + g.quota + '</b>）';
                     html = '<span style="color:var(--ow-yellow)">' + why + '，可消耗 <b>' + g.cost
-                        + '</b> 积分创建（当前 <b>' + g.points + '</b>）。</span>';
+                        + '</b> ' + esc(pn) + '创建（当前 <b>' + g.points + '</b>）。</span>';
                     if (g.points < g.cost) {
-                        html += '<br><span style="color:var(--ow-red)">积分不足：还需 <b>'
-                            + (g.cost - g.points) + '</b> 积分。</span>';
+                        html += '<br><span style="color:var(--ow-red)">' + esc(pn) + '不足：还需 <b>'
+                            + (g.cost - g.points) + '</b> ' + esc(pn) + '。</span>';
                         $('owRCCreate').disabled = true;
                         $('owRCCreate').style.opacity = '.5';
                         $('owRCCreate').style.cursor = 'not-allowed';
                     }
                 } else if (g.quota > 0) {
                     html = '<span style="color:var(--ow-text-sub)">免费名额 <b>' + g.used + '</b> / <b>'
-                        + g.quota + '</b>（超出后可用积分创建）。</span>';
+                        + g.quota + '</b>（超出后可用' + esc(self.pointsName()) + '创建）。</span>';
                 } else if (g.quota === 0 && !g.level) {
                     // gate 字段全为默认值 = 没有任何插件接管（未安装 / 已停用 / 超管）
                     html = '<span style="color:var(--ow-text-sub)">创建群聊不受等级或名额限制。</span>';
@@ -3839,7 +3851,7 @@
                     if (!r.ok) { msg.innerHTML = '<span style="color:var(--ow-red)">' + esc(r.msg) + '</span>'; return; }
                     self.closeModal();
                     toast('群聊「' + r.name + '」已创建'
-                        + (r.cost > 0 ? '，扣除 ' + r.cost + ' 积分' : '')
+                        + (r.cost > 0 ? '，扣除 ' + r.cost + ' ' + self.pointsName() : '')
                         + (pubBox.checked ? '' : '（仅邀请，可在群聊信息里邀请成员）'));
                     self.refreshRooms(r.id, r.name);
                 });
@@ -7180,6 +7192,12 @@
        OwAdmin：管理后台
        ========================================================================== */
     var OwAdmin = {
+        /** v1.5.4：站点自定义的「积分」名称（init 时由服务端下发）。
+         *  后台各页（含插件后台，如用户管理、星光殿堂）统一走它；
+         *  默认值兜底「积分」—— init 之前调也不会得到 undefined。 */
+        pointsName: function () {
+            return this._pn || '积分';
+        },
         /**
          * 通用确认弹窗（与前台 confirmModal 同一样式，v1.0.50）。
          * 所有删除 / 卸载 / 禁用等危险操作统一调用，不再使用原生 confirm。
@@ -7340,7 +7358,9 @@
             admin_settings: '保存系统设置',
             admin_ban: '后台封禁', ban_quick: '快捷封禁',
             admin_user_set: '后台设置用户', admin_user_lock: '后台锁定用户',
-            admin_user_points: '调整积分', admin_user_level: '调整等级',
+            // v1.5.4：admin_user_points（调整积分）不在这张表里 —— 「积分」是站点可改的
+            //   名词，标签由 _logActName 用 pointsName() 现拼。
+            admin_user_level: '调整等级',
             cron_toggle: '维护任务启停', cron_run: '手动执行任务', cron_token: '重置任务令牌', cron_error: '任务执行异常',
             room_create: '创建群聊', room_update: '更新群资料', room_review: '群聊处置', room_undo: '撤销处置',
             room_invite: '邀请入群', room_member_del: '移出成员', room_invite_code: '生成邀请链接', room_pass_fail: '房间密码错误',
@@ -7363,13 +7383,15 @@
             user_block_add: '拉黑用户', user_block_remove: '取消拉黑',
             admin_login_logs_clear: '清理登录日志', plugin_login_logs_err: '登录日志插件异常'
         },
-        /* data 字段 → 中文标签（没进表的键直接显示原键名） */
+        /* data 字段 → 中文标签（没进表的键直接显示原键名）。
+           v1.5.4：points / cost 两项不在这张表里 —— 它们的标签含「积分」二字，
+           由 _logDetail 按站点自定义名称现拼（见那里的注释）。 */
         _logKeys: {
             act: '操作', room: '群聊', id: 'ID', name: '名称', uid: '用户', target: '目标', to: '对象',
             count: '数量', fail: '失败', err: '错误', error: '错误', days: '天数', deleted: '删除数',
-            points: '积分', level: '等级', role: '角色', type: '类型', hours: '小时', size: '大小',
+            level: '等级', role: '角色', type: '类型', hours: '小时', size: '大小',
             ext: '扩展名', method: '方式', msgs: '消息数', files: '文件数', retain_days: '保留期',
-            trash: '回收站ID', cost: '扣除积分', items: '保存项', scene: '场景', interval: '间隔',
+            trash: '回收站ID', items: '保存项', scene: '场景', interval: '间隔',
             desc_limit: '简介字数', status: '状态', word: '词条', email: '邮箱', ip: 'IP',
             fails: '失败次数', minutes: '锁定分钟', reason: '原因', expires: '时长',
             domain: '域名', kind: '身份', removed: '移出名单', mode: '模式',
@@ -7378,7 +7400,11 @@
         /* room_review 的 act 子类型 */
         _logReviewAct: { reset_name: '重置名称', reset_avatar: '重置头像', ban: '封禁', unban: '解封', delete: '删除' },
 
-        _logActName: function (a) { return this._logActs[a] || a; },
+        _logActName: function (a) {
+            // v1.5.4：「积分」是站点可改的名词，动作名不能写死
+            if (a === 'admin_user_points') return '调整' + this.pointsName();
+            return this._logActs[a] || a;
+        },
         /** 时间戳 → 本地 Y-m-d H:i:s（旧实现 toLocaleString 带多余段落，且 ISO 是 UTC 会差 8 小时） */
         _logTs: function (ts) {
             var t = new Date(parseInt(ts, 10) * 1000);
@@ -7397,7 +7423,11 @@
                 var v = o[k];
                 if (v === '' || v === null || v === undefined) continue;
                 if (k === 'act' && d.action === 'room_review') v = this._logReviewAct[v] || v;
-                parts.push('<b>' + esc(keys[k] || k) + '</b> ' + esc(String(v)));
+                // v1.5.4：points / cost 的中文标签里含「积分」，按站点自定义名称渲染
+                var label = keys[k] || k;
+                if (k === 'points') label = this.pointsName();
+                else if (k === 'cost') label = '扣除' + this.pointsName();
+                parts.push('<b>' + esc(label) + '</b> ' + esc(String(v)));
             }
             return parts.length ? parts.join('，') : '—';
         },
@@ -7724,6 +7754,7 @@
             OwApi.key = opt.key;
             OwApi.setServerTime(opt.ts);
             this.version = opt.version || '';   // v1.3.38：后台「系统与维护」展示版本号用
+            this._pn = opt.points_name || '';   // v1.5.4：积分名称（空 = pointsName() 兜底「积分」）
             var menu = $('owAdminMenu'), self = this;
             // 移动端抽屉：顶栏汉堡开合 + 遮罩点击收起 + 回到桌面宽度自动复位
             var side = $('owAdminSide'), mask = $('owAdminMask');
@@ -8296,7 +8327,13 @@
                         /* ---------- ① 基本信息 ---------- */
                         + sec('基本信息',
                               fld('site_name', '站点名称', '')
-                            + fld('site_url', '固定网站地址', '', '留空自动识别'))
+                            + fld('site_url', '固定网站地址', '', '留空自动识别')
+                            // v1.5.4：积分名称 —— 全站（含插件）凡写「积分」的地方都改用它。
+                            // 空 = 默认「积分」；插件侧取值见 PLUGIN.md（ow_points_name / pointsName）。
+                            + fld('points_name', '积分名称', '积分', '留空 = 积分')
+                            + note('把「积分」换成站点自己的叫法（如金币、星光），'
+                                + '签到、建群扣费、用户管理等所有文案随之一并变更。最多 8 个字，'
+                                + '留空恢复默认的「积分」。'))
 
                         /* ---------- ② 注册登录：注册门槛 + 登录保护合在同一组（v1.2.54） ----------
                            原来「开放注册」在基本信息、「登录失败几次后锁定」在系统与维护，
@@ -8904,6 +8941,8 @@
             OwApi.post('admin_settings_save', {
                 site_name: $('owS_site_name').value,
                 site_url: $('owS_site_url') ? $('owS_site_url').value : '',
+                // v1.5.4 积分名称：空串 = 恢复默认（后端把空串存成空，读取时兜底「积分」）
+                points_name: $('owS_points_name') ? $('owS_points_name').value : '',
                 // v1.2.52：布尔项已从下拉改成开关（原生 checkbox）→ 读 checked 转成 '1'/'0'。
                 allow_register: swv('owS_allow_register'),
                 reg_email_verify: swv('owS_reg_email_verify'),
