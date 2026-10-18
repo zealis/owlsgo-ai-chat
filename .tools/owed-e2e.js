@@ -114,7 +114,7 @@ async function waitPlain(page, text, ms) {
             const m = document.getElementById('owModal');
             const mask = document.getElementById('owModalMask');
             if (!m || !mask || mask.style.display === 'none') return null;
-            return { text: m.textContent.replace(/\s+/g, ' '), hasOpen: /开启加密/.test(m.textContent) };
+            return { text: m.textContent.replace(/\s+/g, ' '), hasOpen: /开启端到端加密/.test(m.textContent) };
         });
     }
     /** 真点弹窗里的确认按钮。
@@ -167,7 +167,7 @@ async function waitPlain(page, text, ms) {
     /* ---------- ② A 先点：对方还没启用 ---------- */
     console.log('\n2) A 先点盾牌（对方未启用）');
     const mA = await clickShield(pA);
-    ok('弹出「开启加密私聊」说明框', !!mA && mA.hasOpen, mA && mA.text.slice(0, 60));
+    ok('弹出「开启端到端加密」说明框', !!mA && mA.hasOpen, mA && mA.text.slice(0, 60));
     ok('弹窗写明换设备/清缓存会永久丢失', !!mA && /换设备/.test(mA.text) && /(无法恢复|永久)/.test(mA.text));
     await clickModal(pA);
     await pA.waitForTimeout(2500);
@@ -252,6 +252,23 @@ async function waitPlain(page, text, ms) {
     await pA.screenshot({ path: path.join(OUT, 'owed-7-reload.png') });
 
     /* ---------- ⑨ 关闭加密 ---------- */
+    console.log('\n8.5) 加密会话里转发应被藏掉');
+    const fwdOn = await pA.evaluate(() => {
+        const n = document.querySelectorAll('#owMessages .ow-msg');
+        let m = null;
+        for (let i = 0; i < n.length; i++) {
+            const id = parseInt(String(n[i].id || '').replace('owMsg', ''), 10);
+            const row = id > 0 ? OwChat.msgCache[id] : null;
+            if (row && !row.mine) { m = row; break; }
+        }
+        if (!m) return { 有消息: false };
+        OwChat.showContentMenu(360, 320, m);
+        return { 菜单: /转发/.test(document.body.innerText), 多选: /多选/.test(document.body.innerText) };
+    });
+    ok('加密会话里消息菜单没有「转发」', fwdOn.有消息 !== false && !fwdOn.菜单, fwdOn);
+    await pA.evaluate(() => OwChat.closeCtxMenu && OwChat.closeCtxMenu());
+    await pA.waitForTimeout(300);
+
     console.log('\n9) 关闭加密');
     await clickShield(pA);
     let off = false;
@@ -272,6 +289,19 @@ async function waitPlain(page, text, ms) {
         const last = d7.dms[d7.dms.length - 1];
         ok('关闭后新消息是明文入库', !!last && last.enc === 0, last);
         ok('关闭后对端屏幕直接显示明文', await waitPlain(pB, PLAIN_AFTER));
+    const fwdOff = await pA.evaluate(() => {
+        const n = document.querySelectorAll('#owMessages .ow-msg');
+        let m = null;
+        for (let i = 0; i < n.length; i++) {
+            const id = parseInt(String(n[i].id || '').replace('owMsg', ''), 10);
+            const row = id > 0 ? OwChat.msgCache[id] : null;
+            if (row && !row.mine) { m = row; break; }
+        }
+        if (!m) return { 有消息: false };
+        OwChat.showContentMenu(360, 320, m);
+        return { 菜单: /转发/.test(document.body.innerText) };
+    });
+    ok('关闭端到端加密后「转发」恢复', !!fwdOff.菜单, fwdOff);
     }
     await pA.screenshot({ path: path.join(OUT, 'owed-8-off.png') });
 

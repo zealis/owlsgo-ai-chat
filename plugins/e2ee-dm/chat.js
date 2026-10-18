@@ -180,7 +180,7 @@
     function startSession(peerId) {
         var bundle = null, ek = null;
         return api('plugin_e2ee_dm_bundle', { peer_id: peerId }).then(function (r) {
-            if (!r.ok) throw new Error(r.msg || '对方还没有启用加密私聊');
+            if (!r.ok) throw new Error(r.msg || '对方还没有启用端到端加密');
             bundle = r.bundle;
             return OWEE.genDhPair();
         }).then(function (e) {
@@ -261,7 +261,7 @@
                 delete sessions[k];
                 delete recv[k];
                 saveSessions();
-                W.toast('对方已更换加密设备，下次发送时会重新建立会话', 3200);
+                W.toast('对方已更换端到端加密设备，下次发送时会重新建立会话', 3200);
             }
             return convState[k];
         }).catch(function () { return false; });
@@ -290,11 +290,11 @@
         ensureConvState(peer).then(function (on) {
             if (!on) { origSend.apply(oc, args); return; }
             if (type !== 'text') {
-                W.toast('加密会话暂只支持文字，图片与文件请先关闭加密');
+                W.toast('端到端加密会话暂只支持文字，图片与文件请先关闭端到端加密');
                 return;
             }
             return loadKeys().then(function () {
-                if (!keys) { W.toast('本设备还没有加密密钥，请点输入框上方的盾牌图标启用'); return; }
+                if (!keys) { W.toast('本设备还没有端到端加密密钥，请点顶栏的「端到端加密」标签启用'); return; }
                 var sess = sessions[peer];
                 var ready = sess ? Promise.resolve(sess) : startSession(dm.id);
                 return ready.then(function (s) {
@@ -316,7 +316,7 @@
                 });
             });
         }).catch(function (e) {
-            W.toast((e && e.message) || '加密失败，请稍后重试');
+            W.toast((e && e.message) || '端到端加密失败，请稍后重试');
         });
         };
     }
@@ -365,7 +365,7 @@
                 return 'done';
             }
             return loadKeys().then(function () {
-                if (!keys) throw new Error('本设备没有加密密钥（可能清理过浏览器数据或换了设备）');
+                if (!keys) throw new Error('本设备没有端到端加密密钥（可能清理过浏览器数据或换了设备）');
                 var s = recv[String(peer)];
                 if (s && env.si && s.peerIk && env.si !== s.peerIk) {
                     // 对方身份密钥变了：可能是换设备，也可能是中间人。必须显式告警。
@@ -377,7 +377,7 @@
                 var ready = s ? Promise.resolve(s) : adoptSession(env, peer);
                 return ready.then(function (ss) {
                     var item = env.m[keys.devId];
-                    if (!item) throw new Error('这条消息的密钥不在这台设备上（可能是在更换设备前加密的）');
+                    if (!item) throw new Error('这条消息的密钥不在这台设备上（可能是在更换设备前用端到端加密的）');
                     // 解密会推进棘轮状态；失败必须回滚，否则一条坏消息会把整条接收链带偏
                     var snap = JSON.stringify(ss.state);
                     return OWEE.decrypt(ss.state, item.h, item.c).then(function (text) {
@@ -492,7 +492,7 @@
         if (!oc.dm || !oc.dm.id || oc.dm.kind !== 'user') { W.toast('请先打开一个私聊'); return; }
         var peer = oc.dm.id;
         if (mode !== 'optin') {
-            W.toast('站点未开启加密私聊，请让管理员在后台「加密私聊」里选择「允许用户自行开启」', 5000);
+            W.toast('站点未开启端到端加密，请让管理员在后台「端到端加密」里选择「允许用户自行开启」', 5000);
             return;
         }
         mark('进入 enableFlow');
@@ -504,20 +504,20 @@
         }), 8000, '本机密钥存储无响应，请检查是否用了无痕 / 隐私窗口')
             .then(function (on) {
                 mark('④ 状态就绪，开关=' + (on ? '已开启' : '未开启'));
-                if (on) { W.toast('该会话已开启加密'); return; }
+                if (on) { W.toast('该会话已开启端到端加密'); return; }
                 var first = !keys;
                 var body = ''
-                    + '<p class="ow-modal-desc">这个会话的消息在<b>这台设备的浏览器里</b>加密，'
+                    + '<p class="ow-modal-desc">这个会话的消息在这台设备的浏览器里做<b>端到端加密</b>，'
                     + '私钥只存在本机，服务器只保存密文，没有能解开它的东西。</p>'
                     + '<p class="ow-modal-desc" style="color:var(--ow-red)">'
                     + '换设备、清理浏览器数据、使用无痕窗口都会丢失密钥：此前的加密消息'
                     + '<b>永久无法读取，也无法恢复</b>。</p>'
                     + '<p class="ow-modal-desc">'
-                    + (first ? '本设备还没有加密密钥，点「开启加密」会现在生成一套。' : '')
-                    + '对方也必须启用加密才能互发。开启后，这个会话的敏感词过滤、'
+                    + (first ? '本设备还没有端到端加密密钥，点「开启端到端加密」会现在生成一套。' : '')
+                    + '对方也必须启用端到端加密才能互发。开启后，这个会话的敏感词过滤、'
                     + '内容审核与管理员查阅都不再生效。</p>';
                 mark('⑤ 弹窗已打开');
-                modal('开启加密私聊', body, '开启加密', 'OWED._onOpen()', false);
+                modal('开启端到端加密', body, '开启端到端加密', 'OWED._onOpen()', false);
             }).catch(function (e) {
                 // 本地存储被禁用（无痕 / 隐私模式）、被别的标签页占用、或整体超时，
                 // 以前这些都会表现成「点了没反应」
@@ -533,7 +533,7 @@
         // ⚠ 弹窗**不关**：进度和失败原因都写在弹窗里。
         //   早先一进来就 closeModal()，只剩两条一闪而过的 toast ——
         //   用户看到的现象是「弹窗刚出来就没了」，被当成"频繁退出"报上来。
-        modalMsg('正在生成本设备的加密密钥…', false);
+        modalMsg('正在生成本设备的端到端加密密钥…', false);
         modalBusy(true);
         var p = keys ? Promise.resolve(keys) : createKeys();
         withTimeout(p, 15000, '生成本机密钥超时，请确认浏览器支持 WebCrypto 且不是无痕窗口')
@@ -541,7 +541,7 @@
                 return startSession(peer).catch(function (e) {
                     // 对方还没登记设备：本设备的密钥**已经登记成功**（createKeys 跑完了），
                     // 所以这里只是「会话还没建成」，要让用户知道下一步该干什么。
-                    modalMsg('对方还没有启用加密私聊：\n请让对方也在顶栏点一次「端到端加密」，然后你再点一次。', true);
+                    modalMsg('对方还没有启用端到端加密：\n请让对方也在顶栏点一次「端到端加密」标签，然后你再点一次。', true);
                     return null;
                 });
             }).then(function (s) {
@@ -552,7 +552,7 @@
                     convState[String(peer)] = true;
                     paintTag(true);
                     W.OwChat.closeModal();
-                    W.toast('已开启加密。请记住：换设备后此前的加密消息无法恢复', 4000);
+                    W.toast('已开启端到端加密。请记住：换设备后此前的加密消息无法恢复', 4000);
                 });
             }).catch(function (e) {
                 modalMsg((e && e.message) || '开启失败，请稍后重试', true);
@@ -564,10 +564,10 @@
         var oc = W.OwChat;
         if (!oc.dm || !oc.dm.id) return;
         var body = ''
-            + '<p class="ow-modal-desc">已经加密的消息仍保留在你们各自的设备上，可以继续阅读。</p>'
+            + '<p class="ow-modal-desc">已做端到端加密的消息仍保留在你们各自的设备上，可以继续阅读。</p>'
             + '<p class="ow-modal-desc">关闭后，新消息以<b>明文</b>发送并保存在服务器上：'
             + '管理员可依法查阅，敏感词与内容审核恢复生效。</p>';
-        modal('关闭加密', body, '关闭加密', 'OWED._onClose()', true);
+        modal('关闭端到端加密', body, '关闭端到端加密', 'OWED._onClose()', true);
     }
 
     function doDisable() {
@@ -581,7 +581,7 @@
             convState[String(peer)] = false;
             paintTag(false);
             W.OwChat.closeModal();
-            W.toast('已关闭加密，此后的消息以明文发送');
+            W.toast('已关闭端到端加密，此后的消息以明文发送');
         });
     }
 
@@ -690,6 +690,43 @@
      * 点击统一走 document 委托（与 installBtnClick 同一处），理由见那里：
      * 绑在节点上会随顶栏重渲染丢掉。
      */
+    /** 当前会话是否已开启端到端加密 */
+    function convEncrypted() {
+        var d = W.OwChat && W.OwChat.dm;
+        if (!d || !d.id) return false;
+        return convState[String(d.id)] === true;
+    }
+
+    /**
+     * 加密会话里藏掉「转发 / 多选」。
+     *
+     * 为什么必须藏：转发会把密文原文复制到**另一个会话**里去。对端在那边解不开
+     * （不是发给他的设备），内容就永久变成一串乱码；而「合并转发」还会把密文
+     * 打包成卡片留存 —— 与端到端加密的承诺直接冲突。所以这不是「体验优化」，
+     * 是这类功能与 E2EE 互斥，必须在入口处就不给。
+     *
+     * 做法：把已注册的消息菜单扩展逐个包一层，在它们 push 完之后按文案剔除。
+     * 比改 batch-ops 插件本体干净 —— 两个插件之间不需要互相知道。
+     */
+    function installMenuFilter() {
+        ['_ctxExt', '_ctxExtContent'].forEach(function (key) {
+            var arr = W.OwChat[key];
+            if (!arr || arr.__owedWrapped) return;
+            arr.__owedWrapped = true;
+            for (var i = 0; i < arr.length; i++) {
+                (function (fn) {
+                    arr[i] = function (items, m, env) {
+                        fn(items, m, env);
+                        if (!convEncrypted()) return;
+                        for (var j = items.length - 1; j >= 0; j--) {
+                            if (/转发|多选/.test(items[j] && items[j].t ? items[j].t : '')) items.splice(j, 1);
+                        }
+                    };
+                })(arr[i]);
+            }
+        });
+    }
+
     function installBtnClick() {
         W.document.addEventListener('click', function (e) {
             var t = e.target;
@@ -700,7 +737,7 @@
             mark('① 端到端加密标签被点击');
             if (unsupported) {
                 mark('× 环境不支持');
-                W.toast('当前环境不支持加密：需要用 HTTPS 或 localhost 访问，且浏览器要支持 WebCrypto', 4000);
+                W.toast('当前环境不支持端到端加密：需要用 HTTPS 或 localhost 访问，且浏览器要支持 WebCrypto', 4000);
                 return;
             }
             var oc = W.OwChat;
@@ -714,7 +751,7 @@
                 if (on) disableFlow(); else enableFlow();
             }, function (err) {
                 mark('× 开关查询失败：' + ((err && err.message) || err));
-                W.toast('无法查询加密状态，请稍后重试');
+                W.toast('无法查询端到端加密状态，请稍后重试');
             });
         }, true);
     }
@@ -733,7 +770,7 @@
             var dm = W.OwChat.dm;
             if (!dm || parseInt(dm.id, 10) !== uid) return;   // 只在与他人的私聊里给
             items.push({
-                t: '加密私聊设置',
+                t: '端到端加密设置',
                 run: function () {
                     ensureConvState(uid).then(function (on) {
                         if (on) disableFlow(); else enableFlow();
@@ -782,6 +819,7 @@
         watch();
         installMaskHint();
         installCtxMenu();
+        installMenuFilter();   // 加密会话里藏掉转发 / 多选
         // 只在「切换了会话」时查一次状态，不做轮询 —— 本站是长轮询架构，
         // 每 2 秒打一个接口等于给每个用户凭空加 30 次/分钟的请求。
         var lastPeer = '', shown = false;
@@ -795,6 +833,7 @@
             if (usable !== shown) { shown = usable; btnVisible(usable); }
             if (cur === lastPeer || !cur) return;
             lastPeer = cur;
+            installMenuFilter();
             syncConv(oc.dm.id).then(toastLock);
         }, 800);
         if (st && st.device) toastLock(false);
@@ -856,7 +895,7 @@
     W.OWED = {
         // 版本自检：浏览器控制台敲 OWED.v 应显示这个号。
         // 显示 undefined 就说明页面还在用旧的插件包（Ctrl+F5 硬刷新）。
-        v: '1.2.0',
+        v: '1.3.0',
         /**
          * 自检：控制台敲 OWED.diagnose() 回车。
          * 结果会**自动打印并复制到剪贴板**（Chrome 控制台的 copy() 辅助）——

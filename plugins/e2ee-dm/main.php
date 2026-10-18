@@ -453,12 +453,13 @@ Plugin::adminPage('e2ee-dm', '加密私聊', function () {
                      FROM plugin_e2ee_devices d LEFT JOIN users u ON u.id=d.user_id
                      ORDER BY d.id DESC LIMIT 30');
 
-    echo '<h2>加密私聊</h2>';
+    echo '<h2>端到端加密私聊</h2>';
     $meta = @json_decode((string)@file_get_contents(__DIR__ . '/plugin.json'), true);
     $ver = (string)($meta['version'] ?? '?');
     echo '<div class="ow-card"><p style="margin:0;font-size:12px">'
-        . '私聊消息在用户浏览器里加密，服务端只保存密文与公钥。开启后敏感词过滤、AI 审核、'
-        . '管理员查阅对这些会话一律失效 —— 这是端到端加密的定义，不是缺陷。</p>'
+        . '私聊消息在<b>用户浏览器里做端到端加密</b>：私钥只生成并保存在用户设备上，'
+        . '服务端只保存密文与公钥，拿不到能解开它的东西。开启后敏感词过滤、AI 审核、'
+        . '管理员查阅、转发与多选对这些会话一律失效 —— 这是端到端加密的定义，不是缺陷。</p>'
         . '<p style="margin:6px 0 0;font-size:12px">插件版本 v' . htmlspecialchars($ver, ENT_QUOTES, 'UTF-8') . '。'
         . '用户报「点了没反应」时，让他按 F12 打开控制台敲 <code>OWED.v</code>：'
         . '显示版本号说明前端是最新的；显示 undefined 说明浏览器还在用旧缓存，按 Ctrl+F5 硬刷新。</p></div>';
@@ -468,7 +469,7 @@ Plugin::adminPage('e2ee-dm', '加密私聊', function () {
         . '<label style="display:block;margin:4px 0"><input type="radio" name="owedMode" value="off"'
         . ($mode === 'off' ? ' checked' : '') . '> 关闭（前台不显示任何入口）</label>'
         . '<label style="display:block"><input type="radio" name="owedMode" value="optin"'
-        . ($mode === 'optin' ? ' checked' : '') . '> 允许用户自行开启</label>'
+        . ($mode === 'optin' ? ' checked' : '') . '> 允许用户自行开启端到端加密</label>'
         . '<p style="font-size:12px">开关由用户自己掌握：后台只决定「给不给这个能力」，'
         . '不指定任何会话必须加密。用户在私聊里点工具栏的盾牌按钮即可开启或关闭，'
         . '任一方开启即对该会话生效，另一方随时可以关掉。'

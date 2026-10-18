@@ -43,22 +43,8 @@
     background: rgba(0, 160, 233, .10);
 }
 
-/* 已解密的气泡：右侧一道细边，给用户一个「这条是加密的」的安静提示。
-   不加图标、不加底色 —— 聊天流里每条都挂图标会很吵。 */
-.ow-msg.private.owed-ok > .ow-msg-body > .ow-msg-content {
-    position: relative;
-}
-.ow-msg.private.owed-ok > .ow-msg-body > .ow-msg-content::after {
-    content: "加密";
-    position: absolute;
-    right: -2px;
-    bottom: -14px;
-    font-size: 10px;
-    line-height: 1;
-    color: var(--ow-text-sub, #999);
-    opacity: .55;
-    pointer-events: none;
-}
+/* 消息下方的「加密」角标按站方要求删除（v1.3.0）：
+   聊天流里每条消息都挂一个字太吵，而且气泡右上角的锁图标已经说明了状态。 */
 
 /* 解不开：整条降透明度 + 虚线边，避免被当成正常消息读过去 */
 .ow-msg.owed-bad > .ow-msg-body > .ow-msg-content,
