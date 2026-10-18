@@ -388,13 +388,16 @@
 .owrp-pane-body {
     -webkit-flex: 1 1 auto; flex: 1 1 auto;
     min-height: 0;
+    /* 兜底：万一运行环境 flex 失效（老内核），正文区自己封顶，底栏仍排在它下面 ——
+       结构上按钮不会被弹窗下边缘切到，而不是靠「粘底」碰运气。 */
+    max-height: calc(85vh - 110px);
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     padding: 24px;
 }
 .owrp-pane-foot {
     -webkit-flex: 0 0 auto; flex: 0 0 auto;
-    padding: 0 24px 24px;
+    padding: 0 24px 26px;
     background: var(--ow-bg);
 }
 /* 弹窗成了 flex 容器，浮动关闭钮会变成一行 flex 项把内容顶下去 → 改绝对定位 */
@@ -463,9 +466,22 @@
 }
 .owrp-bal b { font-weight: 600; color: var(--ow-text-title); }
 .owrp-actions { flex-wrap: wrap; -webkit-flex-wrap: wrap; }
+/* 「红包记录」是辅助入口，不跟「取消 / 塞钱进红包」抢按钮造型：
+   改成无边框的文字入口靠左，顺带彻底避开「按钮底边被啃掉一截」的老毛病。
+   （注意只作用在 .owrp-actions 里 —— 红包记录列表里的行也叫 .owrp-rec） */
 .owrp-actions .owrp-rec {
     -webkit-flex: 0 0 auto; flex: 0 0 auto;
     margin-right: auto;
+    padding-left: 0 !important;
+    padding-right: 12px !important;
+    border: 0 !important;
+    background: transparent !important;
+    color: var(--ow-text-sub) !important;
+    font-weight: 400;
+}
+.owrp-actions .owrp-rec:hover {
+    background: transparent !important;
+    color: var(--ow-primary-dark) !important;
 }
 .owrp-actions .ow-btn { white-space: nowrap; }
 
