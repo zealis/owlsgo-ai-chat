@@ -237,12 +237,18 @@ async function waitPlain(page, text, ms) {
         off = db().conv.every(c => c.enabled === 0);
     }
     ok('会话开关已置 0', off, db().conv);
-    const PLAIN_AFTER = '关闭后的明文 ' + Date.now();
-    await sendText(pA, PLAIN_AFTER);
-    let d7 = db();
-    const last = d7.dms[d7.dms.length - 1];
-    ok('关闭后新消息是明文入库', !!last && last.enc === 0, last);
-    ok('关闭后对端屏幕直接显示明文', await waitPlain(pB, PLAIN_AFTER));
+    // 关不掉时，后面两条断言没有意义（消息仍会加密），标成跳过而不是失败：
+    // 这是站点在小 FPM 池下被长轮询占满、接口 403 造成的测试环境抖动，不是功能回归
+    if (!off) {
+        console.log('     [跳过] 关闭失败（接口 403），后续两条断言不成立');
+    } else {
+        const PLAIN_AFTER = '关闭后的明文 ' + Date.now();
+        await sendText(pA, PLAIN_AFTER);
+        const d7 = db();
+        const last = d7.dms[d7.dms.length - 1];
+        ok('关闭后新消息是明文入库', !!last && last.enc === 0, last);
+        ok('关闭后对端屏幕直接显示明文', await waitPlain(pB, PLAIN_AFTER));
+    }
     await pA.screenshot({ path: path.join(OUT, 'owed-8-off.png') });
 
     await browser.close();

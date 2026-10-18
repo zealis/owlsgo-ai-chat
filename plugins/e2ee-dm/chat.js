@@ -572,17 +572,19 @@
     /**
      * 浏览器不支持 WebCrypto（http 访问 / 太老的浏览器）时，不能像以前那样
      * 直接 return —— 那会让盾牌按钮留在工具栏上却毫无反应，用户只会以为功能坏了。
-     * 这里把按钮标成不可用并写明原因。
+     * 这里给它标成不可用，**但不真正 disabled**：disabled 的按钮连 click 事件都不发，
+     * 用户点了照样是零反馈。改成保留点击、点了告诉他原因。
      */
     function markUnsupported() {
         (function poll() {
             var b = W.document.getElementById('owEDBtn');
             if (!b) { setTimeout(poll, 500); return; }
-            b.disabled = true;
-            b.style.opacity = '.45';
-            b.style.cursor = 'not-allowed';
-            b.title = '当前环境不支持加密：需要 HTTPS 或 localhost，且浏览器支持 WebCrypto';
+            b.classList.add('owed-off');
+            b.title = '当前环境不支持加密：需要 HTTPS 或 localhost，且浏览器需支持 WebCrypto';
             b.setAttribute('aria-label', b.title);
+            b.onclick = function () {
+                W.toast('当前环境不支持加密：需要用 HTTPS 或 localhost 访问，且浏览器要支持 WebCrypto', 4000);
+            };
         })();
     }
 
@@ -611,6 +613,9 @@
     }
 
     W.OWED = {
+        // 版本自检：浏览器控制台敲 OWED.v 应显示这个号。
+        // 显示 undefined 就说明页面还在用旧的插件包（Ctrl+F5 硬刷新）。
+        v: '1.0.4',
         enable: enableFlow, disable: disableFlow,
         getKeys: function () { return keys; },
         // 弹窗按钮的回调（onclick 走全局作用域）

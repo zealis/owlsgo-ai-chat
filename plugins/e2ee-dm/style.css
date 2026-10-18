@@ -39,3 +39,10 @@
 .ow-admin-main .ow-table code {
     font-size: 12px;
 }
+
+/* 不可用态（浏览器不支持 WebCrypto）：置灰但不 disabled —— 点了要能给出原因 */
+.ow-icon-btn.owed-off {
+    opacity: .4;
+    cursor: not-allowed;
+    color: var(--ow-text-sub, #999);
+}

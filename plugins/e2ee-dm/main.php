@@ -454,9 +454,14 @@ Plugin::adminPage('e2ee-dm', '加密私聊', function () {
                      ORDER BY d.id DESC LIMIT 30');
 
     echo '<h2>加密私聊</h2>';
+    $meta = @json_decode((string)@file_get_contents(__DIR__ . '/plugin.json'), true);
+    $ver = (string)($meta['version'] ?? '?');
     echo '<div class="ow-card"><p style="margin:0;font-size:12px">'
         . '私聊消息在用户浏览器里加密，服务端只保存密文与公钥。开启后敏感词过滤、AI 审核、'
-        . '管理员查阅对这些会话一律失效 —— 这是端到端加密的定义，不是缺陷。</p></div>';
+        . '管理员查阅对这些会话一律失效 —— 这是端到端加密的定义，不是缺陷。</p>'
+        . '<p style="margin:6px 0 0;font-size:12px">插件版本 v' . htmlspecialchars($ver, ENT_QUOTES, 'UTF-8') . '。'
+        . '用户报「点了没反应」时，让他按 F12 打开控制台敲 <code>OWED.v</code>：'
+        . '显示版本号说明前端是最新的；显示 undefined 说明浏览器还在用旧缓存，按 Ctrl+F5 硬刷新。</p></div>';
 
     echo '<div class="ow-card"><div class="ow-form-row">';
     echo '<div class="ow-form-item"><label>功能状态</label>'
