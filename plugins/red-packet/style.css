@@ -1,0 +1,370 @@
+/* ==========================================================================
+   红包插件样式（red-packet）
+   —— 只引用核心 --ow-* 变量，深浅两套主题自动跟随；不写任何字面色值。
+   红信封的「红」取 --ow-red，卡面文字取 --ow-bg（浅色下是白、深色下是近黑）：
+   这一对在两种主题里都保持足够对比，且不需要插件自己写 [data-theme="dark"] 覆盖块。
+   ========================================================================== */
+
+/* ---------- 消息里的红包卡 ---------- */
+
+/* 红包卡自己就是完整外观：把气泡的底色/描边/内边距全部抹掉。
+   选择器特意带上 .ow-msg 前缀，压过 .ow-msg.mine .ow-msg-content（同分则按源码顺序，
+   但多一层类更保险：插件的 CSS 在核心之后加载）。 */
+.ow-msg .ow-msg-content.owrp-bubble,
+.ow-msg.mention .ow-msg-content.owrp-bubble {
+    background: transparent;
+    border: 0;
+    padding: 0;
+    white-space: normal;
+    max-width: 100%;
+}
+
+.owrp-card {
+    position: relative;
+    overflow: hidden;
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    gap: 10px; -webkit-gap: 10px;
+    box-sizing: border-box;
+    width: 236px;
+    max-width: 100%;
+    padding: 11px 12px;
+    border-radius: 9px;
+    background: var(--ow-red);
+    color: var(--ow-bg);
+    text-align: left;
+    cursor: pointer;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    transition: filter .15s, -webkit-transform .15s;
+    transition: filter .15s, transform .15s;
+}
+/* 两笔纯装饰：右上角一圈细线（信封上的印痕）+ 内侧一圈极淡描边。
+   都取自 currentColor / --ow-bg，不引入任何字面色值，深浅两套主题都成立。 */
+.owrp-card::before {
+    content: '';
+    position: absolute;
+    right: -20px; top: -34px;
+    width: 96px; height: 96px;
+    border-radius: 50%;
+    border: 1px solid currentColor;
+    opacity: .18;
+    pointer-events: none;
+}
+.owrp-card::after {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; right: 0; bottom: 0;
+    border-radius: 9px;
+    box-shadow: inset 0 0 0 1px var(--ow-bg);
+    opacity: .16;
+    pointer-events: none;
+}
+.owrp-card-main, .owrp-coin { position: relative; z-index: 1; }
+.owrp-card:hover { filter: brightness(1.06); }
+/* 按下反馈：老内核不认 :active 里的 transform 也不影响可用性 */
+.owrp-card:active { -webkit-transform: scale(.985); transform: scale(.985); }
+/* 领完 / 过期 / 撤销：整卡降饱和——两种主题下都不会变成读不清的亮块 */
+.owrp-card.is-done { filter: grayscale(1); opacity: .72; }
+.owrp-card.is-done:hover { filter: grayscale(1) brightness(1.04); }
+
+.owrp-card-main {
+    -webkit-flex: 1; flex: 1;
+    min-width: 0;
+}
+.owrp-card-t {
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.35;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.owrp-card-s {
+    margin-top: 5px;
+    font-size: 11px;
+    line-height: 1.25;
+    opacity: .84;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.owrp-coin {
+    -webkit-flex: none; flex: none;
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    justify-content: center; -webkit-justify-content: center;
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    background: var(--ow-bg);
+    color: var(--ow-red);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: -.5px;
+}
+
+/* ---------- 发包弹窗 ---------- */
+
+.owrp-modal { position: relative; }
+.owrp-modal h3 { margin-bottom: 12px; }
+
+.owrp-seg { margin-bottom: 10px; }
+.owrp-seg .ow-seg-btn { font-size: 13px; }
+
+.owrp-tip {
+    margin: 0 0 12px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: var(--ow-bg-sub);
+    color: var(--ow-text-sub);
+    font-size: 12px;
+    line-height: 1.6;
+}
+.owrp-row {
+    display: flex; display: -webkit-flex;
+    gap: 10px; -webkit-gap: 10px;
+}
+.owrp-row .ow-form-item {
+    -webkit-flex: 1; flex: 1;
+    min-width: 0;
+}
+.owrp-modal .ow-form-item label { font-size: 12px; }
+.owrp-hint {
+    margin-top: 6px;
+    font-size: 11.5px;
+    color: var(--ow-text-sub);
+}
+.owrp-hint.is-bad { color: var(--ow-red); }
+.owrp-err {
+    min-height: 16px;
+    margin-top: 2px;
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--ow-red);
+}
+.owrp-ta {
+    min-height: 108px;
+    resize: vertical;
+    line-height: 1.6;
+}
+.owrp-bal {
+    display: flex; display: -webkit-flex;
+    align-items: baseline; -webkit-align-items: baseline;
+    gap: 4px; -webkit-gap: 4px;
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--ow-text-sub);
+}
+.owrp-bal b { font-weight: 600; color: var(--ow-text-title); }
+.owrp-actions { flex-wrap: wrap; -webkit-flex-wrap: wrap; }
+.owrp-actions .owrp-rec {
+    -webkit-flex: 0 0 auto; flex: 0 0 auto;
+    margin-right: auto;
+}
+.owrp-actions .ow-btn { white-space: nowrap; }
+
+/* ---------- 详情 / 结果 / 记录 ---------- */
+
+.owrp-detail-top {
+    padding: 6px 0 14px;
+    text-align: center;
+}
+.owrp-detail-amt {
+    font-size: 30px;
+    font-weight: 600;
+    line-height: 1.15;
+    color: var(--ow-red);
+    word-break: break-all;
+}
+.owrp-detail-amt small {
+    margin-left: 4px;
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--ow-text-sub);
+}
+.owrp-detail-bless {
+    margin-top: 6px;
+    font-size: 13px;
+    color: var(--ow-text-sub);
+    word-break: break-word;
+}
+.owrp-detail-meta {
+    margin-top: 4px;
+    font-size: 11.5px;
+    color: var(--ow-text-sub);
+}
+.owrp-claims {
+    max-height: 230px;
+    overflow-y: auto;
+    border-top: 1px solid var(--ow-border);
+}
+.owrp-claim {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    justify-content: space-between; -webkit-justify-content: space-between;
+    gap: 10px; -webkit-gap: 10px;
+    padding: 8px 2px;
+    border-bottom: 1px solid var(--ow-border);
+    font-size: 13px;
+}
+.owrp-claim-n {
+    min-width: 0;
+    color: var(--ow-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.owrp-claim-a {
+    -webkit-flex: none; flex: none;
+    color: var(--ow-text-sub);
+    font-size: 12px;
+}
+.owrp-empty {
+    padding: 26px 0;
+    text-align: center;
+    font-size: 12px;
+    color: var(--ow-text-sub);
+}
+
+/* 拆开后的结果卡：中间一枚「开」印 */
+.owrp-result { padding: 10px 0 4px; text-align: center; }
+.owrp-result-coin {
+    display: inline-flex; display: -webkit-inline-flex;
+    align-items: center; -webkit-align-items: center;
+    justify-content: center; -webkit-justify-content: center;
+    width: 54px; height: 54px;
+    margin-bottom: 10px;
+    border-radius: 50%;
+    background: var(--ow-red);
+    color: var(--ow-bg);
+    font-size: 20px;
+    font-weight: 600;
+}
+.owrp-result-amt {
+    font-size: 32px;
+    font-weight: 600;
+    line-height: 1.1;
+    color: var(--ow-red);
+}
+.owrp-result-amt small {
+    margin-left: 4px;
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--ow-text-sub);
+}
+.owrp-result-s {
+    margin-top: 6px;
+    font-size: 12.5px;
+    color: var(--ow-text-sub);
+}
+.owrp-result-bless {
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--ow-text-sub);
+    word-break: break-word;
+}
+.owrp-wbox {
+    margin-top: 12px;
+    padding: 12px;
+    border: 1px dashed var(--ow-border-control);
+    border-radius: 8px;
+    background: var(--ow-bg-sub);
+    color: var(--ow-text);
+    font-size: 13px;
+    line-height: 1.65;
+    text-align: left;
+    word-break: break-all;
+    white-space: pre-wrap;
+    -webkit-user-select: text; user-select: text;
+}
+.owrp-wcopy {
+    margin-top: 10px;
+    text-align: right;
+}
+.owrp-wcopy .ow-btn { padding: 5px 12px; font-size: 12px; }
+
+.owrp-rec-list {
+    max-height: 320px;
+    overflow-y: auto;
+    margin-top: 2px;
+}
+.owrp-rec {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    justify-content: space-between; -webkit-justify-content: space-between;
+    gap: 10px; -webkit-gap: 10px;
+    padding: 9px 2px;
+    border-bottom: 1px solid var(--ow-border);
+}
+.owrp-rec-l { min-width: 0; }
+/* 收到的记录可点开详情（福利红包的内容只能在详情里回看） */
+.owrp-rec.is-link { cursor: pointer; }
+.owrp-rec.is-link:hover { background: var(--ow-hover-bg); }
+.owrp-rec-t {
+    font-size: 13px;
+    color: var(--ow-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.owrp-rec-s {
+    margin-top: 2px;
+    font-size: 11px;
+    color: var(--ow-text-sub);
+}
+.owrp-rec-a {
+    -webkit-flex: none; flex: none;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ow-red);
+    white-space: nowrap;
+}
+.owrp-rec-a.is-out { color: var(--ow-text-sub); font-weight: 400; }
+
+/* ---------- 后台 ---------- */
+
+.ow-rp-kpi {
+    display: flex; display: -webkit-flex;
+    flex-wrap: wrap; -webkit-flex-wrap: wrap;
+    gap: 22px; -webkit-gap: 22px;
+    padding: 4px 2px;
+}
+.ow-rp-kpi-i { min-width: 96px; }
+.ow-rp-kpi-i b {
+    display: block;
+    font-size: 20px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--ow-text-title);
+}
+.ow-rp-kpi-i span {
+    display: block;
+    margin-top: 2px;
+    font-size: 12px;
+    color: var(--ow-text-sub);
+}
+.ow-rp-head-note {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--ow-text-sub);
+}
+.ow-rp-loading {
+    padding: 24px 0;
+    text-align: center;
+    font-size: 12px;
+    color: var(--ow-text-sub);
+}
+
+/* ---------- 移动端 ---------- */
+
+@media (max-width: 480px) {
+    /* 通用弹窗在 360px 屏上是满宽贴边（.ow-modal width:100%），这里收一档 */
+    .owrp-modal { width: 92%; padding: 18px; }
+    .owrp-card { width: 208px; padding: 10px; }
+    .owrp-coin { width: 36px; height: 36px; font-size: 12px; }
+    .owrp-seg .ow-seg-btn { padding: 0 4px; font-size: 12px; }
+    .owrp-detail-amt { font-size: 26px; }
+    .owrp-result-amt { font-size: 28px; }
+    .owrp-actions .ow-btn { font-size: 13px; }
+}
