@@ -613,13 +613,16 @@
                         btn.className = 'ow-tm-act' + (on ? ' is-on' : '');
                         btn.innerHTML = ico(on ? 'heart-fill' : 'heart', 16) + '<i>' + (r.likes | 0) + '</i>';
                     }
-                    // 点赞用户行整块重画（头像 + 昵称 + 等 N 人）
+                    // 点赞用户行整块重画（头像 + 昵称 + 等 N 人）。
+                    // ⚠️ 插入点必须锚在**动作条之前**（.ow-tm-acts）：这一行在卡片里的
+                    // 位置是「内容/配图之后、动作条之前」。曾经用父节点 afterbegin 重插，
+                    // 结果取消赞时它跑到昵称上方去了（v1.4.6 修）。
                     var row = card.getElementsByClassName('ow-tm-likers')[0];
-                    if (row) {
-                        var fresh = self.likersRow(self.posts[pid] || {});
-                        var wrap = row.parentNode;
-                        wrap.removeChild(row);
-                        if (fresh) wrap.insertAdjacentHTML('afterbegin', fresh);
+                    var fresh = self.likersRow(self.posts[pid] || {});
+                    if (row && row.parentNode) row.parentNode.removeChild(row);
+                    if (fresh) {
+                        var acts = card.getElementsByClassName('ow-tm-acts')[0];
+                        if (acts) acts.insertAdjacentHTML('beforebegin', fresh);
                     }
                 } else {
                     var onf = !!r.on;
