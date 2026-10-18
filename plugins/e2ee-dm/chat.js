@@ -92,11 +92,23 @@
         });
     }
 
+    /**
+     * 取一次站点状态。
+     *
+     * ⚠ 两个致命细节，都是站方那次「点了没用」的真凶：
+     *   ① **必须判 r.ok**。接口失败时核心返回的是 `{ok:false,msg:'签名验证失败…'}`，
+     *      没有 mode 字段 —— 旧代码 `mode = r.mode || 'off'` 会把「请求失败」
+     *      直接翻译成「站点关闭了」，于是功能在浏览器里静默自我关闭：
+     *      巡检不启动、右键菜单不注册、按钮永远摆在那儿点了没反应。
+     *   ② **不能在这里吞掉异常**。首屏这个 XHR 最容易被长轮询挤成 403，
+     *      失败必须往上抛，由 init 决定重试，而不是假装一切正常。
+     */
     function boot() {
         return api('plugin_e2ee_dm_state', {}).then(function (r) {
-            mode = r.mode || 'off';
+            if (!r || r.ok !== true) throw new Error((r && r.msg) || '取站点状态失败');
+            mode = r.mode === 'optin' ? 'optin' : 'off';
             return r;
-        }).catch(function () { mode = 'off'; });
+        });
     }
 
     /* ===================== 密钥 ===================== */
@@ -458,6 +470,10 @@
         var oc = W.OwChat;
         if (!oc.dm || !oc.dm.id || oc.dm.kind !== 'user') { W.toast('请先打开一个私聊'); return; }
         var peer = oc.dm.id;
+        if (mode !== 'optin') {
+            W.toast('站点未开启加密私聊，请让管理员在后台「加密私聊」里选择「允许用户自行开启」', 5000);
+            return;
+        }
         // 先给一声回执：后面要读本地存储、问服务端，任何一步慢了用户都不该以为没点上
         W.toast('正在检查本机密钥…', 1800);
 
@@ -652,29 +668,57 @@
     /* ===================== 启动 ===================== */
 
     function init() {
-        loadKeys().then(loadSessions).then(boot).then(function (st) {
-            if (mode === 'off') return;
-            btnVisible(false);      // 先藏起来，等确认当前是私聊再显示
-            watch();
-            installMaskHint();
-            installCtxMenu();
-            // 只在「切换了会话」时查一次状态，不做轮询 —— 本站是长轮询架构，
-            // 每 2 秒打一个接口等于给每个用户凭空加 30 次/分钟的请求。
-            var lastPeer = '', shown = false;
-            setInterval(function () {
-                var oc = W.OwChat;
-                var cur = oc && oc.dm && oc.dm.id ? String(oc.dm.id) : '';
-                // 有弹窗时把盾牌藏起来：被遮罩盖住的按钮点了不会有任何反应，
-                // 摆在那儿只会让人反复点（实测：登录后的每日签到弹窗吃掉了第一下点击）。
-                // 弹窗一关，按钮自己回来 —— 它重新出现本身就是「现在可以点了」的信号。
-                var usable = !!cur && !masked();
-                if (usable !== shown) { shown = usable; btnVisible(usable); }
-                if (cur === lastPeer || !cur) return;
-                lastPeer = cur;
-                syncConv(oc.dm.id).then(toastLock);
-            }, 800);
-            if (st && st.device) toastLock(false);
-        });
+        loadKeys().then(loadSessions).then(function () { return boot(); })
+            .then(function (st) { setup(st); })
+            .catch(function (e) {
+                // 状态没拉到（多半是首屏 XHR 被长轮询挤掉）。此时**不能**当成「站点关闭」：
+                // 先把盾牌藏起来——宁可按钮暂时不出现，也不能摆一个点了没反应的东西；
+                // 然后重试，拉到了再放出来。
+                btnVisible(false);
+                retryBoot(5, e);
+            });
+    }
+
+    /** 状态拉取重试：1s 起、每次翻倍，最多 tries 次 */
+    function retryBoot(tries, lastErr) {
+        if (tries <= 0) {
+            W.toast((lastErr && lastErr.message) || '无法获取加密功能状态，请刷新页面', 4000);
+            return;
+        }
+        setTimeout(function () {
+            boot().then(function (st) { setup(st); }, function (e) { retryBoot(tries - 1, e); });
+        }, tries === 5 ? 1000 : 1000);
+    }
+
+    /** 一切就绪后的装配：解密观察、点击、菜单、会话切换巡检 */
+    function setup(st) {
+        if (setup.done) return;
+        if (mode !== 'optin') {
+            // 服务端确实关闭了：按钮是页面渲染时留下的（设置可能刚被改），收起来
+            btnVisible(false);
+            return;
+        }
+        setup.done = true;
+        btnVisible(false);      // 先藏起来，等确认当前是私聊再显示
+        watch();
+        installMaskHint();
+        installCtxMenu();
+        // 只在「切换了会话」时查一次状态，不做轮询 —— 本站是长轮询架构，
+        // 每 2 秒打一个接口等于给每个用户凭空加 30 次/分钟的请求。
+        var lastPeer = '', shown = false;
+        setInterval(function () {
+            var oc = W.OwChat;
+            var cur = oc && oc.dm && oc.dm.id ? String(oc.dm.id) : '';
+            // 有弹窗时把盾牌藏起来：被遮罩盖住的按钮点了不会有任何反应，
+            // 摆在那儿只会让人反复点（实测：登录后的每日签到弹窗吃掉了第一下点击）。
+            // 弹窗一关，按钮自己回来 —— 它重新出现本身就是「现在可以点了」的信号。
+            var usable = !!cur && !masked();
+            if (usable !== shown) { shown = usable; btnVisible(usable); }
+            if (cur === lastPeer || !cur) return;
+            lastPeer = cur;
+            syncConv(oc.dm.id).then(toastLock);
+        }, 800);
+        if (st && st.device) toastLock(false);
     }
 
     /** 此刻是否有弹窗遮罩盖着页面 */
@@ -733,7 +777,7 @@
     W.OWED = {
         // 版本自检：浏览器控制台敲 OWED.v 应显示这个号。
         // 显示 undefined 就说明页面还在用旧的插件包（Ctrl+F5 硬刷新）。
-        v: '1.0.10',
+        v: '1.1.1',
         /**
          * 自检：控制台敲 OWED.diagnose() 回车。
          * 结果会**自动打印并复制到剪贴板**（Chrome 控制台的 copy() 辅助）——
@@ -771,6 +815,7 @@
         },
         enable: enableFlow, disable: disableFlow,
         getKeys: function () { return keys; },
+        getMode: function () { return mode; },
         // 弹窗按钮的回调（onclick 走全局作用域）
         _onOpen: doEnable,
         _onClose: doDisable
