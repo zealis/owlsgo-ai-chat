@@ -31,6 +31,7 @@
     var mode = null;                 // off | optin
     var dbp = null;                  // IndexedDB 连接
     var pending = {};                // 并发解密去重
+    var plainCache = {};              // envKey -> 本机明文（渲染「发送中」气泡时替换密文）
 
     /* ===================== 存储 ===================== */
 
@@ -276,7 +277,9 @@
                         saveSessions();
                         // 自己发出去的密文是发给**对方设备**的，本机解不开 ——
                         // 本地存一份明文，回显与翻历史时按信封前缀取回（与所有 E2EE 客户端一样，
-                        // 明文只存在自己的设备里）。
+                        // 明文只存在自己的设备里）。内存那份给 buildMessage 用：
+                        // 「发送中」气泡渲染的就是这个信封，不换回来用户会看到一串 base64。
+                        plainCache[envKey(o.content)] = String(content);
                         idbSet('out:' + envKey(o.content), String(content));
                         return origSend.call(oc, o);
                     });
@@ -540,6 +543,34 @@
      * 委托绑在 document 上，换多少个节点都不受影响。
      * 用捕获阶段还能抢在别的处理器之前。
      */
+    /**
+     * 渲染前把密文换成本机明文。
+     *
+     * 为什么必须包 buildMessage：核心的「发送中」临时气泡直接渲染 payload.content，
+     * 而那里装的已经是密文信封 —— WSS 通路上这个窗口可能长达数秒（ws_send_timeout 默认 8 秒），
+     * 用户会眼睁睁看着自己刚打的字变成一串 base64。
+     * 发送那一刻把明文记进内存缓存，渲染时同key换回来，顺带也让回显没有闪断。
+     *
+     * 对方发来的消息这里换不了（本机没明文），交给 decryptNode 解密。
+     */
+    function installRenderHook() {
+        if (typeof W.OwChat.buildMessage !== 'function') return;
+        installRenderHook.done = true;
+        var orig = W.OwChat.buildMessage;
+        W.OwChat.buildMessage = function (m) {
+            if (m && typeof m.content === 'string' && OWEE.isEnvelope(m.content)) {
+                var p = plainCache[envKey(m.content)];
+                if (p != null) {
+                    var c = {}, k;
+                    for (k in m) if (m.hasOwnProperty(k)) c[k] = m[k];
+                    c.content = p;
+                    return orig.call(this, c);
+                }
+            }
+            return orig.call(this, m);
+        };
+    }
+
     function installBtnClick() {
         W.document.addEventListener('click', function (e) {
             var t = e.target;
@@ -651,6 +682,7 @@
 
     // 点击委托无条件装上：不支持加密的环境里也要能点出原因，否则又是个哑巴按钮
     installBtnClick();
+    installRenderHook();
 
     if (W.document.readyState === 'loading') {
         W.document.addEventListener('DOMContentLoaded', function () {
@@ -666,7 +698,7 @@
     W.OWED = {
         // 版本自检：浏览器控制台敲 OWED.v 应显示这个号。
         // 显示 undefined 就说明页面还在用旧的插件包（Ctrl+F5 硬刷新）。
-        v: '1.0.6',
+        v: '1.0.7',
         enable: enableFlow, disable: disableFlow,
         getKeys: function () { return keys; },
         // 弹窗按钮的回调（onclick 走全局作用域）

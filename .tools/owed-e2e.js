@@ -115,10 +115,21 @@ async function waitPlain(page, text, ms) {
             return { text: m.textContent.replace(/\s+/g, ' '), hasOpen: /开启加密/.test(m.textContent) };
         });
     }
-    async function sendText(page, text) {
+    /** 页面上任何位置都不该出现密文字面量（尤其「发送中」气泡） */
+    async function noCipherVisible(page) {
+        return page.evaluate(() => {
+            const n = document.querySelectorAll('#owMessages .ow-msg-content, #owMessages .ow-msg-plain');
+            for (let i = 0; i < n.length; i++) if (/^owee1:/.test((n[i].textContent || '').trim())) return true;
+            return false;
+        });
+    }
+    async function sendText(page, text, label) {
         await page.fill('#owInput', text);
         await page.press('#owInput', 'Enter');
-        await page.waitForTimeout(2500);
+        // 立刻查一次：「发送中」气泡在 WSS 通路上可能挂好几秒，那里绝不能露出密文
+        await page.waitForTimeout(350);
+        if (label) ok(label, !(await noCipherVisible(page)));
+        await page.waitForTimeout(2200);
     }
     const hasPlain = (page, t) => page.evaluate((txt) => {
         const n = document.querySelectorAll('#owMessages .ow-msg.private .ow-msg-content');
@@ -134,11 +145,14 @@ async function waitPlain(page, text, ms) {
     ok('B 侧协议核心与前端接线加载', await libReady(pB));
     await openDm(pA, BB, '加密测试2');
     await openDm(pB, A, '加密测试1');
+    // 弹窗开着时盾牌是故意藏起来的（v1.0.5），所以先关弹窗、等巡检把按钮放回来再断言
+    await closeAnyModal(pA);
+    await pA.waitForTimeout(1400);
     const gA = await pA.evaluate(() => {
         const b = document.getElementById('owEDBtn');
         return b ? getComputedStyle(b).display : 'absent';
     });
-    ok('私聊里盾牌可见', gA !== 'none' && gA !== 'absent', gA);
+    ok('关掉弹窗后私聊里盾牌可见', gA !== 'none' && gA !== 'absent', gA);
     await pA.screenshot({ path: path.join(OUT, 'owed-1-dm.png') });
 
     /* ---------- ② A 先点：对方还没启用 ---------- */
@@ -168,7 +182,7 @@ async function waitPlain(page, text, ms) {
     /* ---------- ④ B 发消息 → 密文 ---------- */
     console.log('\n4) B 发消息');
     const MSG_B = '来自 B 的加密私聊 ' + Date.now();
-    await sendText(pB, MSG_B);
+    await sendText(pB, MSG_B, '「发送中」气泡不露出密文');
     let d3 = db();
     const fromB = d3.dms.filter(m => m.user_id === BB);
     ok('库里 B 的消息是密文信封', fromB.length > 0 && fromB[fromB.length - 1].enc === 1, fromB[fromB.length - 1]);
@@ -189,7 +203,7 @@ async function waitPlain(page, text, ms) {
     /* ---------- ⑥ A 发消息 ---------- */
     console.log('\n6) A 发消息');
     const MSG_A = '来自 A 的加密私聊 ' + Date.now();
-    await sendText(pA, MSG_A);
+    await sendText(pA, MSG_A, '「发送中」气泡不露出密文（A 侧）');
     let d5 = db();
     const fromA = d5.dms.filter(m => m.user_id === A);
     ok('库里 A 的消息是密文信封', fromA.length > 0 && fromA[fromA.length - 1].enc === 1, fromA[fromA.length - 1]);
