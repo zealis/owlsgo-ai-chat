@@ -319,9 +319,41 @@ Plugin::route('plugin_voice_msg_send', function (array $ctx) {
 });
 
 /**
+ * 一条语音记录 → 前端气泡要用的数据；不可见返回 null。
+ * 群聊走 roomAccessOk，私聊走「是不是本人 / 对方」—— 消息 ID 连号，
+ * 不校验可见性就等于给了「猜别人语音」的接口。
+ */
+function owVMCard(array $v, array $actor, int $uid): ?array
+{
+    $m = DB::one('SELECT id, room_id, user_id, to_user_id FROM messages WHERE id=?', [(int)$v['msg_id']]);
+    if (!$m) return null;   // 消息没了（过期清理 / 删除）→ 不当成语音
+    if ((int)$m['room_id'] === 0) {
+        $visible = $uid > 0 && ($uid === (int)$m['user_id'] || $uid === (int)$m['to_user_id']);
+    } else {
+        $room = Chat::room((int)$m['room_id']);
+        $visible = $room && Chat::roomAccessOk($room, $actor);
+    }
+    if (!$visible) return null;
+    $peaks = [];
+    $pj = json_decode((string)$v['peaks'], true);
+    if (is_array($pj)) {
+        foreach ($pj as $p) {
+            $peaks[] = max(0, min(100, (int)$p));
+            if (count($peaks) >= 60) break;
+        }
+    }
+    return [
+        // 与图片消息同口径：手动配置了「固定网站地址」才给绝对地址
+        'url'   => ow_abs_url('uploads/' . (string)$v['path'], true),
+        'ext'   => (string)$v['ext'],
+        'dur'   => max(0, (int)$v['dur']),
+        'peaks' => $peaks,
+        'mine'  => $uid > 0 && $uid === (int)$m['user_id'],
+    ];
+}
+
+/**
  * 批量问「这些消息哪些是语音」（前端扫到新消息后调用；最多 60 条一批）。
- * 消息 ID 连号，不校验可见性就等于给了「猜别人语音」的接口 ——
- * 群聊走 roomAccessOk，私聊走「是不是本人 / 对方」。
  */
 Plugin::route('plugin_voice_msg_cards', function (array $ctx) {
     $actor = $ctx['actor'];
@@ -338,31 +370,73 @@ Plugin::route('plugin_voice_msg_cards', function (array $ctx) {
     $rows = DB::all("SELECT * FROM plugin_voice_msg WHERE msg_id IN ($ph)", $ids);
     $items = [];
     foreach ($rows as $v) {
-        $m = DB::one('SELECT id, room_id, user_id, to_user_id FROM messages WHERE id=?', [(int)$v['msg_id']]);
-        if (!$m) continue;   // 消息没了（过期清理 / 删除）→ 不当成语音
-        if ((int)$m['room_id'] === 0) {
-            $visible = $uid > 0 && ($uid === (int)$m['user_id'] || $uid === (int)$m['to_user_id']);
-        } else {
-            $room = Chat::room((int)$m['room_id']);
-            $visible = $room && Chat::roomAccessOk($room, $actor);
+        $card = owVMCard($v, $actor, $uid);
+        if ($card) $items[(string)(int)$v['msg_id']] = $card;
+    }
+    Api::json(['ok' => true, 'items' => $items]);
+});
+
+/**
+ * 首屏预取：按会话取最近一页的语音清单（v1.0.1）。
+ *
+ * 为什么需要它：核心没有「消息内容渲染」钩子，插件只能在消息**已经渲染成文件卡
+ * 之后**才认得出它是不是语音，再回头问 cards 接口 —— 实测刷新页面后这中间隔着
+ * 约 1.4 秒，30 条语音会整屏先显示成附件文件卡再逐个变成语音气泡（首屏闪烁）。
+ *
+ * 这里的做法是把「认语音」提前到首屏渲染**之前**：前端在进入群聊/私聊时先拿一份
+ * 清单进内存，消息渲染出来时直接查内存决定渲染成什么 → 气泡与消息同帧出现。
+ * cards 接口仍然保留：预取只覆盖首屏这一页，之后的新消息仍走增量（并顺手把
+ * 结果并进内存，清单会随使用变全）。
+ *
+ * 可见性口径与 cards 完全一致（都走 owVMCard）。
+ */
+Plugin::route('plugin_voice_msg_prefetch', function (array $ctx) {
+    $actor = $ctx['actor'];
+    $uid = ($actor['kind'] ?? '') === 'user' ? (int)($actor['id'] ?? 0) : 0;
+    $post = $ctx['post'];
+    $limit = max(1, min(60, (int)($post['limit'] ?? 30)));
+
+    // 私聊：to_user_id 是**对方**。自己发给自己不是真实场景，退化成空而不是误取。
+    $peer = (int)($post['to_user_id'] ?? 0);
+    if ($peer > 0) {
+        if ($uid <= 0) Api::json(['ok' => false, 'msg' => '请先登录'], 403);
+        if ($uid === $peer) Api::json(['ok' => true, 'items' => []]);
+        // 私聊要能发出去的前提就是好友（核心 Chat::send 同口径），不是好友不给清单
+        if (!Chat::areFriends($uid, $peer)) {
+            Api::json(['ok' => true, 'items' => []]);
         }
-        if (!$visible) continue;
-        $peaks = [];
-        $pj = json_decode((string)$v['peaks'], true);
-        if (is_array($pj)) {
-            foreach ($pj as $p) {
-                $peaks[] = max(0, min(100, (int)$p));
-                if (count($peaks) >= 60) break;
-            }
+        // 私聊：只看「我与对方之间」的消息（要么我发的、要么对方发给我的）
+        $rows = DB::all(
+            "SELECT v.* FROM plugin_voice_msg v
+               JOIN messages m ON m.id = v.msg_id
+              WHERE v.msg_id > 0 AND m.room_id = 0
+                AND ((m.user_id = ? AND m.to_user_id = ?)
+                  OR (m.user_id = ? AND m.to_user_id = ?))
+           ORDER BY v.msg_id DESC LIMIT $limit",
+            [$uid, $peer, $peer, $uid]
+        );
+        $rows = array_reverse($rows);
+    } else {
+        $roomId = (int)($post['room_id'] ?? 0);
+        if ($roomId <= 0) Api::json(['ok' => true, 'items' => []]);
+        $room = Chat::room($roomId);
+        if (!$room || !Chat::roomAccessOk($room, $actor)) {
+            Api::json(['ok' => true, 'items' => []]);   // 进不去：不给（与 cards 同口径）
         }
-        $items[(string)(int)$v['msg_id']] = [
-            // 与图片消息同口径：手动配置了「固定网站地址」才给绝对地址
-            'url'   => ow_abs_url('uploads/' . (string)$v['path'], true),
-            'ext'   => (string)$v['ext'],
-            'dur'   => max(0, (int)$v['dur']),
-            'peaks' => $peaks,
-            'mine'  => $uid > 0 && $uid === (int)$m['user_id'],
-        ];
+        $rows = DB::all(
+            "SELECT v.* FROM plugin_voice_msg v
+               JOIN messages m ON m.id = v.msg_id
+              WHERE v.msg_id > 0 AND m.room_id = ?
+           ORDER BY v.msg_id DESC LIMIT $limit",
+            [$roomId]
+        );
+        $rows = array_reverse($rows);
+    }
+
+    $items = [];
+    foreach ($rows as $v) {
+        $card = owVMCard($v, $actor, $uid);
+        if ($card) $items[(string)(int)$v['msg_id']] = $card;
     }
     Api::json(['ok' => true, 'items' => $items]);
 });

@@ -445,12 +445,73 @@
 
     var queue = [], qTimer = 0, mo = null;
 
+    /* 语音清单缓存：msg_id → 气泡数据。
+     * 首屏靠它做到「消息与气泡同帧渲染」—— 见 prefetch() 的注释。
+     * 增量拿到的结果也并进来，所以缓存会随使用越来越全，重复问的越来越少。 */
+    var cards = {};
+    function remember(id, v) { cards[String(id)] = v; }
+    function hasCard(id) { return !!cards[String(id)]; }
+    function takeCard(id) { return cards[String(id)]; }
+
+    /** 当前会话标识（群 / 私聊），切会话时用它判断要不要重取清单 */
+    function convKey() {
+        if (OwChat.dm) return 'dm:' + (OwChat.dm.id || OwChat.dm.peer || 0);
+        return 'room:' + (OwChat.room || 0);
+    }
+    var prefetchedKey = '';
+
+    /**
+     * 预取当前会话最近一页的语音清单（v1.0.1）。
+     *
+     * 要解决的问题：核心没有「消息内容渲染」钩子，插件只能在消息**已经被渲染成
+     * 文件卡之后**才认得出它是不是语音 —— 实测刷新页面后这段间隔约 1.4 秒，
+     * 一屏语音会先整屏显示成附件文件卡再逐个变成语音气泡。
+     *
+     * 所以把「认语音」提前：进会话时先把清单拿进内存，消息渲染出来时直接查内存
+     * 决定渲染成什么，**不需要再发请求**。prefetching 标记保证与核心首屏的
+     * history 请求并行发起（谁先回都行 —— 回晚了 consider() 自然回落到增量查询）。
+     */
+    function prefetch(key) {
+        if (!key || key === prefetchedKey) return;
+        prefetchedKey = key;
+        var payload = { limit: 30 };
+        if (OwChat.dm) payload.to_user_id = OwChat.dm.id || OwChat.dm.peer || 0;
+        else payload.room_id = OwChat.room || 0;
+        OwApi.post('plugin_voice_msg_prefetch', payload, function (r) {
+            if (!r || !r.ok || !r.items) return;
+            for (var k in r.items) {
+                if (r.items.hasOwnProperty(k)) remember(k, r.items[k]);
+            }
+            // 预取回来时首屏可能已经渲染完：把已在 DOM 里的文件卡补升级
+            rescan();
+        });
+    }
+
+    /** 把消息区里还没升级、但缓存里已有答案的文件卡补升级（预取晚到时用） */
+    function rescan() {
+        var box = $('owMessages');
+        if (!box) return;
+        var kids = box.getElementsByClassName('ow-msg'), i, id;
+        for (i = 0; i < kids.length; i++) {
+            if (kids[i].getAttribute('data-owvm')) continue;
+            id = parseInt(String(kids[i].id || '').replace('owMsg', ''), 10) || 0;
+            if (id > 0 && hasCard(id)) upgrade(id, takeCard(id));
+        }
+        // 已被 rescan 升级掉的那批不必再问一次：把队列里命中缓存的清出去。
+        // 不清也不影响正确性（flush 只是多问一次、结果一样），但首屏能省一发请求。
+        if (queue.length) {
+            queue = queue.filter(function (q) { return !hasCard(q); });
+        }
+    }
+
     function consider(el) {
         if (!el || el.nodeType !== 1) return;
         if (el.getAttribute && el.getAttribute('data-owvm')) return;
         if (!el.querySelector || !el.querySelector('.ow-file-card')) return;   // 只捞文件消息
         var id = parseInt(String(el.id || '').replace('owMsg', ''), 10) || 0;
         if (id <= 0) return;
+        // 命中预取清单 → **同步**升级成气泡，与消息同帧出现（首屏不闪）
+        if (hasCard(id)) { upgrade(id, takeCard(id)); return; }
         el.setAttribute('data-owvm-q', '1');   // 先占位：失败也不重试，避免每帧都打接口
         queue.push(id);
     }
@@ -473,6 +534,7 @@
             if (!r || !r.ok || !r.items) return;
             for (var k in r.items) {
                 if (!r.items.hasOwnProperty(k)) continue;
+                remember(k, r.items[k]);      // 增量结果并进内存：往后滚动不再重复问
                 upgrade(k, r.items[k]);
             }
         });
@@ -557,10 +619,17 @@
         if ((e.keyCode || e.which) === 27) stop(false);   // Esc 取消
     }
     function onView(ctx) {
-        if (!rec.on) return;
+        if (rec.on) {
+            if (ctx && (ctx.view === 'room' || ctx.view === 'dm')) {
+                stop(false);
+                toast('已取消录音：切换了会话');
+            }
+        }
+        // 换会话要重取清单（每个会话的语音集合不同）
         if (ctx && (ctx.view === 'room' || ctx.view === 'dm')) {
-            stop(false);
-            toast('已取消录音：切换了会话');
+            cards = {};
+            prefetchedKey = '';
+            prefetch(convKey());
         }
     }
 
@@ -573,6 +642,9 @@
         };
         if (d.addEventListener) d.addEventListener('keydown', onKey, false);
         if (OwChat.onViewChange) OwChat.onViewChange(onView);
+
+        // 首屏预取：与核心的 history 请求并行发出，两者互不等待（见 prefetch 注释）
+        prefetch(convKey());
 
         var box = $('owMessages');
         if (box) {

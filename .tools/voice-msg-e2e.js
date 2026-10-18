@@ -205,6 +205,31 @@ function ok(label, cond, extra) {
     ok('工具栏出现麦克风按钮', !!(await page.$('#owBtnVoice')));
     ok('录音前输入栏正常（工具栏可见）', await page.isVisible('.ow-inputbar > .ow-toolbar'));
 
+    // 首屏不能闪一屏附件文件卡（v1.0.1）：语音气泡必须与消息同帧出现。
+    // ⚠️ 判据是「首屏加载完成后消息区里不应有语音残留成文件卡」，而不是
+    // 「核心插入的那一刻节点里已经是气泡」—— 核心 addMessage 必然先渲成文件卡，
+    // 插件在同一批 MutationObserver 回调里替换（实测 0ms，浏览器来不及绘制）。
+    // 断言前者才是用户可感知的那件事；后者会把「核心没渲染钩子」这个客观事实
+    // 误判成缺陷。
+    await page.goto(B + '/?room=' + ROOM, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('.owvm-voice', { timeout: 20000 });
+    await page.waitForTimeout(2000);   // 等首屏补齐 + 预取落地
+    const firstPaint = await page.evaluate(() => {
+        const box = document.getElementById('owMessages');
+        const msgs = box ? box.querySelectorAll('.ow-msg') : [];
+        let voice = 0, file = 0;
+        for (const el of msgs) {
+            if (el.querySelector('.owvm-voice')) voice++;
+            else if (el.querySelector('.ow-file-card')) file++;
+        }
+        return { total: msgs.length, voice: voice, file: file };
+    });
+    ok('首屏加载完成后没有语音残留成文件卡',
+        firstPaint.voice > 0 && firstPaint.file === 0,
+        JSON.stringify(firstPaint));
+    ok('首屏语音全部渲染为气泡', firstPaint.voice === firstPaint.total,
+        firstPaint.voice + '/' + firstPaint.total);
+
     // 录音中冒出来的弹窗必须被自动收掉，否则会盖住「发送 / 取消」
     // （星光堂「每日签到」每天首次进站必弹，是真实场景）
     await openPanel(page);

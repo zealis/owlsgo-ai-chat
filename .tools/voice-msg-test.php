@@ -60,6 +60,11 @@ class Chat
         return $id > 0 ? ['id' => $id, 'type' => 'public', 'name' => '测试群'] : null;
     }
     public static function roomAccessOk(array $room, array $actor): bool { return self::$accessOk; }
+    public static function areFriends(int $a, int $b): bool
+    {
+        $n = DB::val('SELECT COUNT(*) FROM friends WHERE (user_id=? AND friend_id=?) OR (user_id=? AND friend_id=?)', [$a, $b, $b, $a]);
+        return (int)$n > 0;
+    }
     public static function send(array $actor, int $roomId, string $type, string $content, array $opt = []): array
     {
         self::$lastSend = ['actor' => $actor, 'room_id' => $roomId, 'type' => $type, 'content' => $content, 'opt' => $opt];
@@ -118,6 +123,7 @@ class DB
             user_id INT DEFAULT 0, guest_id INT DEFAULT 0, to_user_id INT DEFAULT 0, to_guest_id INT DEFAULT 0,
             type TEXT, content TEXT, created_at INT DEFAULT 0)');
         self::run('CREATE TABLE rate_limits (bucket TEXT, ident TEXT, window_start INT, count INT)');
+        self::run('CREATE TABLE friends (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INT, friend_id INT, created_at INT)');
         self::run('CREATE TABLE plugins (name TEXT, enabled INT DEFAULT 0, config TEXT)');
     }
 
@@ -351,6 +357,50 @@ ok('游客也能看到群里的语音（mine=0）', isset($r['items']['100']) &&
 
 [$st, $r] = call('plugin_voice_msg_cards', ['ids' => '']);
 ok('空 ids 直接返回空', $r['items'] === []);
+
+/* ============================ ④b 首屏预取 ============================ */
+echo "\n4b) 预取路由 plugin_voice_msg_prefetch\n";
+// 私聊预取要求双方是好友（与核心私聊口径一致），先建关系
+DB::run('INSERT INTO friends (user_id, friend_id, created_at) VALUES (5, 6, ?)', [time()]);
+// 群 1 里再放两条语音（消息 102 / 103，发送者分别是 5 与 6）
+DB::run("INSERT INTO messages (id, room_id, user_id, type, content, created_at) VALUES (102, 1, 6, 'file', ?, ?)",
+    [json_encode(['name' => '语音消息', 'size' => 1, 'ext' => 'wav', 'path' => $path3]), time()]);
+DB::run('UPDATE plugin_voice_msg SET msg_id=102 WHERE path=?', [$path3]);
+DB::run("INSERT INTO messages (id, room_id, user_id, type, content, created_at) VALUES (103, 1, 5, 'file', ?, ?)",
+    [json_encode(['name' => '语音消息', 'size' => 1, 'ext' => 'wav', 'path' => $path5]), time()]);
+DB::run('UPDATE plugin_voice_msg SET msg_id=103 WHERE path=?', [$path5]);
+
+Chat::$accessOk = true;
+[$st, $r] = call('plugin_voice_msg_prefetch', ['room_id' => '1', 'limit' => 30]);
+ok('群预取：拿到该群全部语音', isset($r['items']['100'], $r['items']['102'], $r['items']['103']), json_encode(array_keys($r['items'])));
+ok('群预取：不掺进别的群 / 私聊的消息', !isset($r['items']['101']), json_encode(array_keys($r['items'])));
+ok('群预取：mine 判定正确（发送者是本人）', $r['items']['100']['mine'] === true && $r['items']['102']['mine'] === false);
+
+Chat::$accessOk = false;
+[$st, $r] = call('plugin_voice_msg_prefetch', ['room_id' => '1'], [], ['kind' => 'user', 'id' => 7, 'nickname' => '测试丙', 'role' => 'member']);
+ok('进不去的群：预取给空（与 cards 同口径）', $r['items'] === []);
+Chat::$accessOk = true;
+
+// 私聊：msg 101 是 5→6 的语音。to_user_id 传的是**对方**
+[$st, $r] = call('plugin_voice_msg_prefetch', ['to_user_id' => '6'], [], ['kind' => 'user', 'id' => 5, 'nickname' => '测试甲', 'role' => 'member']);
+ok('私聊预取：发送方视角拿得到', isset($r['items']['101']), json_encode(array_keys($r['items'])));
+ok('私聊预取：mine 随身份翻转（我是发送者）', $r['items']['101']['mine'] === true, json_encode($r['items']['101']['mine']));
+[$st, $r] = call('plugin_voice_msg_prefetch', ['to_user_id' => '5'], [], ['kind' => 'user', 'id' => 6, 'nickname' => '测试乙', 'role' => 'member']);
+ok('私聊预取：接收方视角同样拿得到', isset($r['items']['101']), json_encode(array_keys($r['items'])));
+ok('私聊预取：接收方 mine=false', $r['items']['101']['mine'] === false, json_encode($r['items']['101']['mine']));
+[$st, $r] = call('plugin_voice_msg_prefetch', ['to_user_id' => '6'], [], ['kind' => 'user', 'id' => 7, 'nickname' => '测试丙', 'role' => 'member']);
+ok('第三方预取不到别人的私聊语音', !isset($r['items']['101']), json_encode($r['items']));
+// 自己给自己发私聊不是真实场景，但参数自指时不能把会话搞错（应退化为空）
+[$st, $r] = call('plugin_voice_msg_prefetch', ['to_user_id' => '6'], [], ['kind' => 'user', 'id' => 6, 'nickname' => '测试乙', 'role' => 'member']);
+ok('to_user_id 传自己：拿不到对方发来的语音', !isset($r['items']['101']), json_encode(array_keys($r['items'])));
+
+[$st, $r] = call('plugin_voice_msg_prefetch', ['room_id' => '0'], [], ['kind' => 'user', 'id' => 5, 'nickname' => '测试甲', 'role' => 'member']);
+ok('没给 room 也没给 peer：返回空而不是报错', $r['ok'] === true && $r['items'] === []);
+
+[$st, $r] = call('plugin_voice_msg_prefetch', ['room_id' => '1', 'limit' => 1]);
+ok('limit 生效（只回最近 1 条）', count($r['items']) === 1, json_encode(array_keys($r['items'])));
+[$st, $r] = call('plugin_voice_msg_prefetch', ['to_user_id' => '6'], [], ['kind' => 'guest', 'id' => 0, 'nickname' => '游客']);
+ok('游客预取私聊：拒绝', $r['ok'] === false || $r['items'] === [], json_encode($r));
 
 /* ============================ ⑤ 维护任务 ============================ */
 echo "\n5) 维护任务 gc\n";
