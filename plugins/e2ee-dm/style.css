@@ -1,0 +1,41 @@
+/* 加密私聊：只加两种视觉状态，不覆盖核心通用类 */
+
+/* 工具栏盾牌：未开启时与普通图标按钮一致，开启后填充品牌蓝 */
+.owed-btn.on {
+    color: #00A0E9;
+    background: rgba(0, 160, 233, .10);
+}
+
+/* 已解密的气泡：右侧一道细边，给用户一个「这条是加密的」的安静提示。
+   不加图标、不加底色 —— 聊天流里每条都挂图标会很吵。 */
+.ow-msg.private.owed-ok > .ow-msg-body > .ow-msg-content {
+    position: relative;
+}
+.ow-msg.private.owed-ok > .ow-msg-body > .ow-msg-content::after {
+    content: "加密";
+    position: absolute;
+    right: -2px;
+    bottom: -14px;
+    font-size: 10px;
+    line-height: 1;
+    color: var(--ow-text-sub, #999);
+    opacity: .55;
+    pointer-events: none;
+}
+
+/* 解不开：整条降透明度 + 虚线边，避免被当成正常消息读过去 */
+.ow-msg.owed-bad > .ow-msg-body > .ow-msg-content,
+.ow-msg.owed-bad > .ow-msg-body > .ow-msg-plain {
+    opacity: .55;
+    border-bottom: 1px dashed var(--ow-red, #e45);
+}
+
+/* 对方身份密钥变了：红边告警，必须让用户看见 */
+.ow-msg.owed-warn > .ow-msg-body > .ow-msg-content {
+    box-shadow: inset 3px 0 0 var(--ow-red, #e45);
+}
+
+/* 后台：设备表格在窄屏下不撑破卡片 */
+.ow-admin-main .ow-table code {
+    font-size: 12px;
+}

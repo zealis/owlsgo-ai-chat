@@ -376,9 +376,12 @@ OwChat.registerAvatarUploader(function (file, filename, onOk) {
 | `dm.read` | 私聊已读上报（`Chat::markDmRead` 内） | `[&$allow, &$reason, $actor, $targetId, $from, $to]` |
 | `ban.check` | 消息发送禁言判定（`Chat::isBanned` 内，核心 bans 表无命中时触发，每条消息一次） | `[&$reason, $actor, $roomId]` —— `$reason` 初始为 **null**，设为非空字符串即拦截（即用户看到的文案）；回调签名必须用 **`?string &$reason`**（nullable，初始 null 传非 nullable 引用会 TypeError 且被 fire 静默吞掉）。参考：`plugins/ban-manager/` 的运行时说明 |
 | `text.filter` | 任何要入库的文字（消息 / 公告 / 举报理由…）**改写**用 | `[&$text, $scene, $actor]` —— `$text` 按引用改写（敏感词插件在这里做替换），不拦截 |
+| `text.opaque` | 同一批文字的**不透明内容**声明（v1.5.8，`Chat::filterText` / `Chat::checkText` 开头） | `[&$skip, $text, $scene, $actor]` —— `$skip` 置 true 即该段文字**整段跳过** `text.filter` 与 `text.check`，由其自行负责内容安全。端到端加密的密文信封必须走这条：base64 里偶发命中短敏感词会被打码，一个字符被改就 AEAD 认证失败，那条消息从此永久解不开 |
 | `text.check` | 同一批文字（消息 / 昵称 / 公告…）的**拦截**判定 | `[&$reason, &$text, $scene, $actor]` —— `$reason` 置非空即拦截，即用户看到的文案 |
 | `message.quote` | 消息带引用发送时（`Chat::send` 内，引用已规范化为 JSON 后） | `[&$quote, $content, $actor, $roomId]` —— `$quote` 为 `{nick,text}` 的 JSON 字符串；可改写为脱敏后的内容，或置空禁用该条引用 |
-| `message.before_send` | 消息入库前（`Chat::send` 内）            | `[&$content, $actor, $roomId]` —— `$content` 按引用传入，可改写（敏感词过滤之后、入库之前） |
+| `message.before_send` | 消息入库前（`Chat::send` 内）            | `[&$content, $actor, $roomId, $toUserId]` —— `$content` 按引用传入，可改写（敏感词过滤之后、入库之前）。`$toUserId` 为 v1.5.8 追加：私聊时是收件人 id，群聊为 null —— 加密插件靠它判断「这条私信属于哪个会话」（只有 `roomId=0` 分不出收件人）。老插件少声明该形参不受影响 |
+| `message.maxlen` | 单条消息长度校验前（`Chat::send` 内，v1.5.8） | `[&$maxLen, $type, $roomId, $actor, $content]` —— `$maxLen` 初始 2000，改大即放宽（加密信封比明文长约 70%）。刻意带上 `$content`：只该给「确实是密文」的那种放宽，不能把明文私信的上限一起抬掉 |
+| `message.conv_text` | 会话列表那一行的摘要（`Chat::convText` 内，v1.5.8） | `[&$text, $m]` —— `$text` 已按 60 字截断，按引用改写。加密会话的正文是信封，直接截断会把 base64 抖到列表上，插件在这里换成「[加密消息]」 |
 | `message.after_send` | 消息入库后（含定时群发 / AI 应答等由插件发出的消息） | `[$msgId, $actor, $roomId, $content, $type, $toUserId]` —— 通知型；群聊自动化据此做关键词回复与 @ 应答（回调里要防循环：机器人自己发的消息也会进来） |
 | `msg.before_delete` | 删除消息前（`Chat::deleteMessage` 内，权限判定后、执行前） | `[&$allow, &$reason, $msg, $actor]` —— `$allow` 置 false 即拦截，`$reason` 为展示给用户的理由；可用于保护特定消息/房间 |
 | `msg.after_recall` | 撤回消息后（自己撤回或管理员撤回他人，`Chat::recall` 内） | `[$msgId, $msg, $actor]` —— 通知型，供审计 / 同步类插件扩展 |

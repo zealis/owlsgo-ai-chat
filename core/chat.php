@@ -682,6 +682,15 @@ class Chat
     // 场景 scene：message / nickname / room_name / room_desc / announcement。
     public static function filterText(string &$text, string $scene, array $actor = []): void
     {
+        // v1.5.8：不透明内容（端到端加密的密文信封）必须整段跳过文字过滤。
+        // 密文是 base64url，短敏感词（ass / pwd 之类）会以很小的概率随机命中并被打成 ***，
+        // 一个字符被改 → AEAD 认证失败 → 这条消息**永久**解不开，且现象极难定位。
+        // 约定：任一插件把 $skip 置 true 即整段不参与过滤与否决，由其自行保证内容安全。
+        if (class_exists('Plugin')) {
+            $skip = false;
+            Plugin::fire('text.opaque', [&$skip, $text, $scene, $actor]);
+            if ($skip) return;
+        }
         $before = $text;
         Plugin::fire('text.filter', [&$text, $scene, $actor]);
         // v1.3.171 防守：插件把内容改坏（非 string / 非法 UTF-8）时回退过滤前原值。
@@ -708,6 +717,13 @@ class Chat
         // 否则下游插件正则与入库都会出问题（实测：GBK 正文可打出 500）。所有文字入口
         // （消息 / 昵称 / 群名 / 公告）都会经过这里或 filterText，拒绝文案即用户可见。
         if (!mb_check_encoding($text, 'UTF-8')) return '内容编码无效，请重新输入';
+        // 与 filterText 同源：密文信封不参与任何文字判定（AI 审核 / 敏感词 / 刷屏），
+        // 否则要么把密文送去判（纯浪费且误判），要么直接改坏导致永久无法解密。
+        if (class_exists('Plugin')) {
+            $skip = false;
+            Plugin::fire('text.opaque', [&$skip, $text, $scene, $actor]);
+            if ($skip) return null;
+        }
         $reason = '';
         Plugin::fire('text.check', [&$reason, &$text, $scene, $actor]);
         return is_string($reason) && $reason !== '' ? $reason : null;
@@ -888,7 +904,13 @@ class Chat
         } elseif ($type !== 'image') {
             $content = trim($content);
             if ($content === '') return [false, '消息不能为空'];
-            if (mb_strlen($content) > 2000) return [false, '消息过长（最多 2000 字）'];
+            // 钩子：允许插件放宽单条长度上限。加密私信的信封比明文长约 70%，
+            // 500 字中文加密后就有 2100+ 字符，硬卡 2000 会让正常私信发不出去。
+            $maxLen = 2000;
+            if (class_exists('Plugin')) Plugin::fire('message.maxlen', [&$maxLen, $type, $roomId, $actor, $content]);
+            if (mb_strlen($content) > $maxLen) {
+                return [false, $maxLen === 2000 ? '消息过长（最多 2000 字）' : "消息过长（最多 $maxLen 字）"];
+            }
             self::filterText($content, 'message', $actor);
             if (($why = self::checkText($content, 'message', $actor)) !== null) return [false, $why];
         }
@@ -913,7 +935,9 @@ class Chat
         // 钩子：可改写引用内容（如脱敏、追加上下文），或直接清空以禁用该条引用
         if ($quote !== '') Plugin::fire('message.quote', [&$quote, $content, $actor, $roomId]);
 
-        Plugin::fire('message.before_send', [&$content, $actor, $roomId]);
+        // 钩子：可改写消息正文（如加密、脱敏）。v1.5.8 追加第 4 参 $toUserId ——
+        // 加密私信插件要靠它判断「这条私信属于哪个会话」，只给 roomId=0 分不出收件人。
+        Plugin::fire('message.before_send', [&$content, $actor, $roomId, $toUserId]);
 
         try {
             $id = DB::insert('messages', [
@@ -1943,7 +1967,11 @@ class Chat
             $info = json_decode((string)$m['content'], true);
             return '[文件] ' . (is_array($info) ? (string)($info['name'] ?? '') : '');
         }
-        return mb_substr((string)$m['content'], 0, 60);
+        // 钩子：摘要可被插件改写。加密私信的正文是信封，直接截前 60 字会把
+        // base64 抖到会话列表上；插件在这里换成「[加密消息]」。
+        $out = mb_substr((string)$m['content'], 0, 60);
+        if (class_exists('Plugin')) Plugin::fire('message.conv_text', [&$out, $m]);
+        return $out;
     }
 
     /** 私聊历史：仅双方可见；按 id 升序返回（向上翻页用 before_id） */
