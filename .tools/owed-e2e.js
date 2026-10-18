@@ -115,6 +115,13 @@ async function waitPlain(page, text, ms) {
             return { text: m.textContent.replace(/\s+/g, ' '), hasOpen: /开启加密/.test(m.textContent) };
         });
     }
+    /** 真点弹窗里的确认按钮。
+     *  ⚠ 必须真点：v1.1.2 之前 E2E 全程用 evaluate 调 OWED._onOpen()，
+     *    于是「onclick=\"OWED._onOpen\" 少了括号、按���点了没反应」这个 bug
+     *    在测试里永远看不见。以后一律真点。 */
+    async function clickModal(page, danger) {
+        await page.click(danger ? '#owModal .ow-btn-danger' : '#owModal .ow-btn-primary');
+    }
     /** 页面上任何位置都不该出现密文字面量（尤其「发送中」气泡） */
     async function noCipherVisible(page) {
         return page.evaluate(() => {
@@ -160,7 +167,7 @@ async function waitPlain(page, text, ms) {
     const mA = await clickShield(pA);
     ok('弹出「开启加密私聊」说明框', !!mA && mA.hasOpen, mA && mA.text.slice(0, 60));
     ok('弹窗写明换设备/清缓存会永久丢失', !!mA && /换设备/.test(mA.text) && /(无法恢复|永久)/.test(mA.text));
-    await pA.evaluate(() => { OWED._onOpen(); });
+    await clickModal(pA);
     await pA.waitForTimeout(2500);
     let d1 = db();
     ok('A 的设备已登记（密钥留在本机）', d1.devices.some(x => x.user_id === A), d1.devices);
@@ -171,7 +178,7 @@ async function waitPlain(page, text, ms) {
     console.log('\n3) B 点盾牌 → 成功');
     const mB = await clickShield(pB);
     ok('B 侧同样弹出说明框', !!mB && mB.hasOpen);
-    await pB.evaluate(() => { OWED._onOpen(); });
+    await clickModal(pB);
     await pB.waitForTimeout(3000);
     let d2 = db();
     ok('B 的设备已登记', d2.devices.some(x => x.user_id === BB), d2.devices);
@@ -192,7 +199,7 @@ async function waitPlain(page, text, ms) {
     /* ---------- ⑤ A 再点：成功并解历史 ---------- */
     console.log('\n5) A 再点盾牌 → 成功 + 解开 B 的历史');
     await clickShield(pA);
-    await pA.evaluate(() => { OWED._onOpen(); });
+    await clickModal(pA);
     await pA.waitForTimeout(3000);
     let d4 = db();
     ok('A 也消耗了一枚预密钥（双向各有会话）', d4.opk_used >= 2, { used: d4.opk_used });
@@ -246,7 +253,7 @@ async function waitPlain(page, text, ms) {
     await clickShield(pA);
     let off = false;
     for (let i = 0; i < 4 && !off; i++) {
-        await pA.evaluate(() => { OWED._onClose(); });
+        await clickModal(pA, true);
         await pA.waitForTimeout(2500);
         off = db().conv.every(c => c.enabled === 0);
     }

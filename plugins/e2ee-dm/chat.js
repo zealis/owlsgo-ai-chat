@@ -496,7 +496,7 @@
                     + '对方也必须启用加密才能互发。开启后，这个会话的敏感词过滤、'
                     + '内容审核与管理员查阅都不再生效。</p>';
                 mark('⑤ 弹窗已打开');
-                modal('开启加密私聊', body, '开启加密', 'OWED._onOpen', false);
+                modal('开启加密私聊', body, '开启加密', 'OWED._onOpen()', false);
             }).catch(function (e) {
                 // 本地存储被禁用（无痕 / 隐私模式）、被别的标签页占用、或整体超时，
                 // 以前这些都会表现成「点了没反应」
@@ -507,7 +507,8 @@
     function doEnable() {
         W.OwChat.closeModal();
         var peer = W.OwChat.dm && W.OwChat.dm.id;
-        if (!peer) return;
+        // 不在私聊时也必须出声 —— 早先这里是裸 return，点了完全没反应
+        if (!peer) { W.toast('当前不在私聊，请先打开一个私聊', 4000); return; }
         // 密钥生成要走一遍 WebCrypto，慢的时候有一两秒 —— 不给反馈用户就会以为又没点上
         mark('⑥ doEnable 已进入');
         W.toast('正在生成本设备的加密密钥…', 6000);
@@ -543,13 +544,13 @@
             + '<p class="ow-modal-desc">已经加密的消息仍保留在你们各自的设备上，可以继续阅读。</p>'
             + '<p class="ow-modal-desc">关闭后，新消息以<b>明文</b>发送并保存在服务器上：'
             + '管理员可依法查阅，敏感词与内容审核恢复生效。</p>';
-        modal('关闭加密', body, '关闭加密', 'OWED._onClose', true);
+        modal('关闭加密', body, '关闭加密', 'OWED._onClose()', true);
     }
 
     function doDisable() {
         W.OwChat.closeModal();
         var peer = W.OwChat.dm && W.OwChat.dm.id;
-        if (!peer) return;
+        if (!peer) { W.toast('当前不在私聊', 3000); return; }
         api('plugin_e2ee_dm_conv', { peer_id: peer, on: 0 }).then(function (r) {
             if (!r.ok) { W.toast(r.msg || '关闭失败'); return; }
             convState[String(peer)] = false;
@@ -800,7 +801,7 @@
     W.OWED = {
         // 版本自检：浏览器控制台敲 OWED.v 应显示这个号。
         // 显示 undefined 就说明页面还在用旧的插件包（Ctrl+F5 硬刷新）。
-        v: '1.1.2',
+        v: '1.1.3',
         /**
          * 自检：控制台敲 OWED.diagnose() 回车。
          * 结果会**自动打印并复制到剪贴板**（Chrome 控制台的 copy() 辅助）——
