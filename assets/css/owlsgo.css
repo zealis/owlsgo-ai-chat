@@ -62,9 +62,16 @@
        因为后者还被 .ow-msg.mine（自己消息气泡底色）共用 —— 那是**非选中**场景，
        跟「当前选中行」语义无关，不能一起改。 */
     --ow-active-bg: #E4E4E4;
-    /* v1.3.120：设置弹窗左侧导航栏的底色（站方指定 #F7F7F7）。
-       比白卡片深一档、又比 hover(#E8E8E8) 浅一档 —— 底色/hover/选中三层要拉得开。 */
-    --ow-navset-bg: #F7F7F7;
+    /* v1.5.16：设置弹窗左侧导航栏底色恢复成**白**（站方要求）。
+       此前是 v1.3.120 定的 #F7F7F7，比弹窗面深一档。现在改回与弹窗同面 ——
+       值直接指向 --ow-bg（.ow-modal 的底色），不再单写颜色：
+         · 浅色 #FFFFFF = 白，与弹窗一致 ✅
+         · 深色 #1C1C1E = 与弹窗同面，不用再单独给一档灰
+       「恢复」二字是真的恢复：v1.3.121 之前 .ow-navset-nav **压根没有 background**，
+       看到的就是弹窗的白底；v1.3.120 才加的这层 #F7F7F7。
+       ⚠️ 保留这个变量而不是删掉 background 声明：将来若又要区分，
+         改这一处即可，不必回头翻历史。 */
+    --ow-navset-bg: var(--ow-bg);
     --ow-font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
     --ow-mono: Consolas, Monaco, "Courier New", monospace;
     /* v1.1.17：顶栏高度带。实测 = padding 10+10 + 图标钮 36 + 下边框 1 = 57px。
@@ -256,9 +263,10 @@
     -webkit-transition: background .15s;
 }
 .ow-navset-item:hover { background: var(--ow-hover-bg); }
-/* 选中态用 --ow-active-bg 而不是 --ow-bg-sub：导航栏整条有底色(#F7F7F7)之后，
-   #F5F5F5 与它只差 2 档、几乎看不出来；#E4E4E4 才拉得开，且比 hover(#E8E8E8) 更深一档
-   —— 这条写在 :hover 后面，鼠标停在已选中项上不会「越悬停越浅」。 */
+/* 选中态用 --ow-active-bg 而不是 --ow-bg-sub：#F5F5F5 与白底只差 2 档、几乎看不出来；
+   #E4E4E4 才拉得开，且比 hover(#E8E8E8) 更深一档
+   —— 这条写在 :hover 后面，鼠标停在已选中项上不会「越悬停越浅」。
+   v1.5.16 导航栏底色恢复成白之后，这三档（白底 / hover E8 / 选中 E4）依然单调可辨。 */
 .ow-navset-item.is-active { background: var(--ow-active-bg); font-weight: 600; }
 .ow-navset-ico { display: block; -webkit-flex: none; flex: none; opacity: .8; }
 .ow-navset > .ow-pagetab-panel {
@@ -416,7 +424,9 @@ html[data-fontsize="comfortable"] .ow-card-name { font-size: 19px; }
     --ow-blue-light: #14323F;       /* 浅蓝底 → 深青底 */
     --ow-hover-bg: #303035;         /* hover（同上，深底更亮） */
     --ow-active-bg: #35353B;        /* 选中态：比 hover 再亮一档 */
-    --ow-navset-bg: #242427;        /* 左侧导航栏底色：比主背景(#1C1C1E)亮一档（浅色下是深一档） */
+    /* v1.5.16：--ow-navset-bg 改为 var(--ow-bg)，深浅自动跟随，深色下这条已多余 ——
+       弹窗面本身就是 #1C1C1E，导航栏与它同面才是「恢复成白」的语义。原先的
+       #242427（比主背景亮一档）随灰底一起去掉了。 */
     --ow-surface: #2A2A2E;          /* 卡片/气泡的"面" */
     --ow-surface-2: #232326;        /* 通栏条（顶栏/页头） */
     --ow-panel-bg: #242428;         /* 带边框内容块 */
@@ -2454,11 +2464,13 @@ span.ow-panel-entry-ico.ow-avatar { width: 24px; height: 24px; line-height: 24px
 }
 /* v1.3.132：让导航栏**整条**贴住弹窗左缘（站方先圈了灰底这条白缝，又圈了条目色块
    这条 —— 两处都是弹窗那 24px 内边距）。做法是「加宽 24 + 负 margin 24」：
-   容器左移到边、宽度补回 24，于是灰底和条目色块一起到边，**右边缘一格没动**，
+   容器左移到边、宽度补回 24，于是底色和条目色块一起到边，**右边缘一格没动**，
    内容区宽度不受影响。左内边距必须清 0，只留负 margin 的话色块仍会缩进 24。
    条目左圆角同时抹平：色块既然顶到边框，再留 8px 圆角就只会在两个角漏出
-   一档 #F7F7F7 的月牙，看着像没对齐；右侧圆角保留，仍是「一行可点中的条目」。
-   窄屏（≤560px）导航是横排，不套这条，否则横排会被 152px 的 flex-basis 卡住。 */
+   一档底色的月牙，看着像没对齐；右侧圆角保留，仍是「一行可点中的条目」。
+   窄屏（≤560px）导航是横排，不套这条，否则横排会被 152px 的 flex-basis 卡住。
+   v1.5.16 导航栏底色恢复成白后，「漏出的月牙」本就看不出来，但圆角抹平仍要保留 ——
+   选中态色块本身是 #E4E4E4，留圆角会在两角露出白底，仍像没对齐。 */
 @media (min-width: 561px) {
     .ow-modal-fixed .ow-navset-nav {
         flex: 0 0 152px; -webkit-flex: 0 0 152px;
