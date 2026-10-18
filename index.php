@@ -1111,15 +1111,23 @@ if ($action !== '') {
                 if (!$room || !Chat::roomAccessOk($room, $actor)) Api::json(['ok' => false, 'msg' => '无权访问']);
             }
             $info = json_decode((string)$msg['content'], true);
-            $abs  = Upload::fileAbs((string)($info['path'] ?? ''));
-            if (!$abs) Api::json(['ok' => false, 'msg' => '文件不存在']);
+            $path = (string)($info['path'] ?? '');
+            $name = preg_replace('/[\r\n"]/', '', (string)($info['name'] ?? 'file'));
+            // v1.5.17：云存储下载接管点。插件识别出自家的云端 path 时自行输出
+            //（流式代理或 302 到对象存储）并置 $handled=true；无插件响应时维持本地 readfile。
+            // 放在权限校验**之后** —— 插件不能借这个口子绕过群/私聊可见性。
+            $handled = false;
+            if (class_exists('Plugin')) Plugin::fire('file.download', [&$handled, $path, $msg, $actor]);
+            $abs = $handled ? null : Upload::fileAbs($path);
+            if (!$handled && !$abs) Api::json(['ok' => false, 'msg' => '文件不存在']);
             // v1.2.42：下载完成钩子（等级信任插件据此记「今日下载文件」任务）。
             // 放在权限与文件存在性校验**之后** —— 失败的下载不该算完成任务。
             // 上传者下载自己的文件由插件自行排除（设计文档：禁止刷任务）。
+            // v1.5.17：插件接管的云端下载同样计数（下载真实发生了）。
             if (($actor['kind'] ?? '') === 'user') {
                 Plugin::fire('file.downloaded', [(int)$actor['id'], (int)$msg['id'], (int)($msg['user_id'] ?? 0)]);
             }
-            $name = preg_replace('/[\r\n"]/', '', (string)($info['name'] ?? 'file'));
+            if ($handled) exit;   // 插件已自行输出（流式读完或已发 302）
             header('Content-Type: application/octet-stream');
             header('Content-Length: ' . filesize($abs));
             header('Content-Disposition: attachment; filename="' . $name . '"; filename*=UTF-8\'\'' . rawurlencode($name));

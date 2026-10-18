@@ -608,13 +608,21 @@ class Auth
     /**
      * 上传文件的可访问 URL（头像、群头像走这里）。
      * 站点根拿不到时（CLI / host 缺失）退回相对路径 —— 前端按相对当前页解析。
+     *
+     * v1.5.17：开放 avatar.url 改写（此前只有生成式头像触发）——
+     * 云存储插件在此把本地 uploads/ 路径映射成对象存储地址，库里的路径保持不动，
+     * 关掉插件即整体回落本地，不需要迁移数据。
      */
     public static function avatarFileUrl(string $rel): string
     {
         $rel = ltrim($rel, '/');
         if ($rel === '') return '';
         $base = function_exists('ow_site_url') ? ow_site_url() : '';
-        return $base !== '' ? $base . '/' . $rel : $rel;
+        $url = $base !== '' ? $base . '/' . $rel : $rel;
+        if (class_exists('Plugin')) {
+            Plugin::fire('avatar.url', [&$url, ['style' => '', 'seed' => '', 'source' => 'upload']]);
+        }
+        return $url;
     }
 
     /**

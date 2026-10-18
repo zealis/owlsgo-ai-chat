@@ -738,13 +738,18 @@ class Chat
      *
      * 四条硬约束（请求可以绕过前端直接打 send，所以服务端必须自己判）：
      *  · url 必须是本站 uploads/ 下**真实存在**的文件（`Upload::mediaRel`），外站一律否；
+     *    v1.5.17 起例外：装了云存储插件时，媒体可以在对象存储里 —— 由插件经
+     *    media.allow 钩子担保归属，并可就地改写成渲染可达的完整地址；
      *  · 媒体最多 9 个 —— 与输入框待发区的上限同值，两边各拦一次；
      *  · kind 只允许 image / video，其它一律按文件走（不进混排）；
      *  · 文字与媒体至少要有一个非空，否则是空消息。
      *
+     * @param string $content 前端 JSON
+     * @param array  $actor   当前身份（v1.5.17：给 media.allow 钩子用）
+     * @param int    $roomId  房间 / 0=私聊（同上）
      * @return array{0:bool,1:string,2:string,3:array} [是否通过, 失败原因, 文字, 媒体数组]
      */
-    public static function normalizeRich(string $content): array
+    public static function normalizeRich(string $content, array $actor = [], int $roomId = 0): array
     {
         $j = json_decode($content, true);
         if (!is_array($j)) return [false, '混排消息格式不正确', '', []];
@@ -757,8 +762,19 @@ class Chat
             if (!is_array($m)) return [false, '混排消息里的媒体项不正确', '', []];
             $kind = (string)($m['kind'] ?? '');
             if (!in_array($kind, ['image', 'video'], true)) return [false, '混排消息只支持图片和视频', '', []];
-            $rel = Upload::mediaRel((string)($m['url'] ?? ''));
-            if ($rel === null) return [false, '混排消息里的文件无效或已被删除', '', []];
+            $url = (string)($m['url'] ?? '');
+            $rel = Upload::mediaRel($url);
+            if ($rel === null) {
+                // v1.5.17：云存储放行口。媒体在对象存储里时它不是本站 uploads/ 路径，
+                // 由插件担保归属（只放行它自己空间里的 key），$url 按引用可就地
+                // 改写成渲染可达的完整地址。无插件响应时维持「仅限本站 uploads/ 下
+                // 真实文件」，外链一律进不来。
+                $allow = '';
+                if (class_exists('Plugin')) Plugin::fire('media.allow', [&$allow, &$url, $kind, $actor, $roomId]);
+                if ($allow !== '1') return [false, '混排消息里的文件无效或已被删除', '', []];
+            } else {
+                $url = 'uploads/' . $rel;
+            }
             // 文件名只是展示用的标题（视频气泡下面那行字），不参与寻址：
             // 换行与引号一律去掉，长度截到 120，别让它变成注入 JSON 的入口。
             $name = mb_substr(str_replace(["\r", "\n", '"'], '', trim((string)($m['name'] ?? ''))), 0, 120);
@@ -766,7 +782,8 @@ class Chat
             // 一律夹成非负整数 —— 负数与字符串都会原样进 JSON，渲染时很难看。
             $size = max(0, (int)($m['size'] ?? 0));
             // 存相对路径（uploads/ 下）：换域名 / 换协议时，历史消息不会跟着一起失效
-            $media[] = ['url' => 'uploads/' . $rel, 'kind' => $kind, 'name' => $name, 'size' => $size];
+            // （云端媒体存的是插件改写的完整地址，同理不随域名失效）
+            $media[] = ['url' => $url, 'kind' => $kind, 'name' => $name, 'size' => $size];
         }
         if ($text === '' && !$media) return [false, '消息不能为空', '', []];
         return [true, '', $text, $media];
@@ -881,7 +898,7 @@ class Chat
             // 图文混排（v1.3.86）：一条消息里文字 + 最多 9 个本站图片/视频。
             // ⚠️ 敏感词只过滤**文字那一段**：整串 JSON 一起过会把替换成的 *** 写进 url，
             // 消息存进去就是一条打不开的破图 —— 先拆、过滤、再拼回去。
-            [$okR, $msgR, $rText, $rMedia] = self::normalizeRich($content);
+            [$okR, $msgR, $rText, $rMedia] = self::normalizeRich($content, $actor, $roomId);
             if (!$okR) return [false, $msgR];
             self::filterText($rText, 'message', $actor);
             // 打码之后才否决：插件（垃圾信息控制）看到的是**最终**文字，
@@ -890,16 +907,23 @@ class Chat
             $content = json_encode(['text' => $rText, 'media' => $rMedia], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         } elseif ($type === 'file') {
             // 文件消息 content 是 JSON：只允许 name/size/ext/path 四个字段，
-            // 且 path 必须来自上传接口返回（Upload::fileAbs 会再校验一次）
+            // 且 path 必须来自上传接口返回（Upload::fileAbs 会再校验一次）。
+            // v1.5.17 起例外：path 可以是云存储插件担保的云端标识（如 file/cloud-<空间>/<key>，
+            // 由 upload.stored 钩子写进上传返回值）—— fileAbs 认不过时由插件经
+            // media.allow 放行；下载由 index.php 的 file.download 钩子接走。
             $info = json_decode($content, true);
-            if (!is_array($info) || !Upload::fileAbs((string)($info['path'] ?? ''))) {
-                return [false, '文件信息无效'];
+            if (!is_array($info)) return [false, '文件信息无效'];
+            $fpath = (string)($info['path'] ?? '');
+            if (Upload::fileAbs($fpath) === null) {
+                $allow = '';
+                if (class_exists('Plugin')) Plugin::fire('media.allow', [&$allow, $fpath, 'file', $actor, $roomId]);
+                if ($allow !== '1') return [false, '文件信息无效'];
             }
             $content = json_encode([
                 'name' => mb_substr(preg_replace('/[\\\\\/\x00-\x1F\x7F]/u', '', (string)($info['name'] ?? 'file')), 0, 120),
                 'size' => (int)($info['size'] ?? 0),
                 'ext'  => strtolower(preg_replace('/[^a-z0-9]/i', '', (string)($info['ext'] ?? ''))),
-                'path' => (string)$info['path'],
+                'path' => $fpath,
             ], JSON_UNESCAPED_UNICODE);
         } elseif ($type !== 'image') {
             $content = trim($content);
