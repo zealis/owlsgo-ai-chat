@@ -302,7 +302,8 @@
         }
         // 「你已领取」不写进副标题：右侧铜钱位已经是「已领」，再写一遍会把
         // 一行本来就不长的副标题挤成省略号（移动端 208px 宽尤其明显）。
-        var coin = p.mine ? '明细' : (p.claimed ? '已领' : (done ? '查看' : '开'));
+        // 发包人本人也能领，所以铜钱位不再区分「明细」：没领过就是「开」。
+        var coin = p.claimed ? '已领' : (done ? '查看' : '开');
         return '<div class="owrp-card' + (done ? ' is-done' : '') + '"'
              + ' onclick="OwRP.open(' + p.id + ')" role="button" tabindex="0"'
              + ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();OwRP.open(' + p.id + ');}"'
@@ -379,10 +380,10 @@
        四、领取 / 详情 / 记录
        ===================================================================== */
 
-    /** 点卡片：自己的、领过的、已结束的看详情；其余直接拆 */
+    /** 点卡片：没领过且还在进行中就直接拆（发包人本人也一样）；其余看详情 */
     RP.open = function (id) {
         var p = RP.byId[id];
-        if (p && !p.mine && !p.claimed && p.status === 'active') {
+        if (p && !p.claimed && p.status === 'active') {
             if (p.kind === 'password') { askPass(id); return; }
             doClaim(id, '', null);
             return;
@@ -522,8 +523,9 @@
         // 领取名单（福利红包只显示「已领」，不显示别人抽到的内容）
         h += '<div class="owrp-claims" id="owRpClaims"></div>';
 
-        // p.mine = 是不是我发的；r.claimed = 我领过没有。两者都不是「能不能领」的依据。
-        if (!p.mine && !r.claimed && p.status === 'active') {
+        // p.mine = 是不是我发的（只影响标题文案）；r.claimed = 我领过没有。
+        // 发包人本人也可以领一次，所以这里不再排除 p.mine。
+        if (!r.claimed && p.status === 'active') {
             if (p.kind === 'password') {
                 h += '<div class="ow-form-item" style="margin-top:12px"><label>领取口令</label>'
                    + '<input class="ow-input" id="owRpPassIn" type="text" maxlength="20" autocomplete="off"'
