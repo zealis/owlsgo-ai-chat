@@ -217,6 +217,7 @@ function owRPPayload(array $p, int $uid, bool $claimed = false, int $myAmount = 
         'sender'     => (string)$p['sender_nick'],
         'sender_id'  => (int)$p['sender_id'],
         'sender_avatar' => owRPAvatar((int)$p['sender_id']),
+        'room_id'    => (int)$p['room_id'],   // 0 = 私聊红包（前端据此禁止自领）
         'mine'       => $uid > 0 && $uid === (int)$p['sender_id'],
         'claimed'    => $claimed,
         'my_amount'  => $myAmount,
@@ -293,6 +294,10 @@ function owRPDoClaim(array $actor, int $pid, string $pass): array
 
     // 领取者必须看得见这个红包（群聊看房间权限，私聊看是不是本人/对方）
     if (!owRPCanSee($p, $actor)) return [false, '你无权领取这个红包', []];
+    // 私聊红包只送给对方，发包人自己不能领（群聊里的自领不受限制，v1.0.1 起就允许）
+    if ((int)$p['room_id'] === 0 && (int)$p['sender_id'] === $uid) {
+        return [false, '私聊红包只有对方能领', []];
+    }
 
     if ((string)$p['kind'] === 'password') {
         if ($pass === '') return [false, '请输入口令', []];

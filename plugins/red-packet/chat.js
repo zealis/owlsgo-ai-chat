@@ -332,8 +332,10 @@
         }
         // 「你已领取」不写进副标题：右侧铜钱位已经是「已领」，再写一遍会把
         // 一行本来就不长的副标题挤成省略号（移动端 208px 宽尤其明显）。
-        // 发包人本人也能领，所以铜钱位不再区分「明细」：没领过就是「开」。
-        var coin = p.claimed ? '已领' : (done ? '查看' : '开');
+        // 群聊红包：发包人本人也能领，没领过就是「开」。
+        // 私聊红包只送给对方 —— 自己那份铜钱位显示「明细」，点了只进详情。
+        var onlyPeer = RP.isDmCard(p) && p.mine;
+        var coin = onlyPeer ? '明细' : (p.claimed ? '已领' : (done ? '查看' : '开'));
         return '<div class="owrp-card' + (done ? ' is-done' : '') + '"'
              + ' onclick="OwRP.open(' + p.id + ')" role="button" tabindex="0"'
              + ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();OwRP.open(' + p.id + ');}"'
@@ -410,6 +412,11 @@
        四、领取 / 详情 / 记录
        ===================================================================== */
 
+    /** 私聊红包（room_id=0）：只有对方能领，发包人自己点开只进详情 */
+    RP.isDmCard = function (p) {
+        return !!p && parseInt(p.room_id, 10) === 0;
+    };
+
     /**
      * 点卡片：进行中且没领过 → 打开「开红包」弹窗（**不直接领取**，还需点一下「开」）；
      * 已领 / 已领完 / 已过期 → 详情。
@@ -418,7 +425,11 @@
      */
     RP.open = function (id) {
         var p = RP.byId[id];
-        if (p && !p.claimed && p.status === 'active') { openEnv(p); return; }
+        if (p && !p.claimed && p.status === 'active') {
+            if (RP.isDmCard(p) && p.mine) { loadDetail(id); return; }   // 私聊：留给对方
+            openEnv(p);
+            return;
+        }
         loadDetail(id);
     };
 
@@ -706,10 +717,13 @@
 
         // p.mine = 是不是我发的（只影响标题文案）；r.claimed = 我领过没有。
         // 发包人本人也可以领一次，所以这里不再排除 p.mine。
+        // 私聊红包只送给对方：自己那份不给「开红包」，改一句说明
+        var onlyPeer = RP.isDmCard(p) && p.mine;
+        if (onlyPeer && !r.claimed) h += '<div class="owrp-detail-meta">私聊红包只能对方领取</div>';
         var foot = '<div class="owrp-err" id="owRpPassErr"></div>'
                  + '<div class="ow-modal-actions">'
                  + '<button class="ow-btn ow-btn-ghost" type="button" onclick="OwChat.closeModal()">关闭</button>';
-        if (!r.claimed && p.status === 'active') {
+        if (!r.claimed && p.status === 'active' && !onlyPeer) {
             // 口令输入框跟着底栏走：弹窗再矮，「输口令 + 开」也永远在同一屏里
             if (p.kind === 'password') {
                 foot += '<input class="ow-input owrp-foot-pass" id="owRpPassIn" type="text" maxlength="20"'
