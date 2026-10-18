@@ -1,0 +1,308 @@
+/* 通行密钥插件样式（passkey）
+   硬规矩：
+   ① 颜色一律引核心 --ow-* 变量 —— 深浅两套主题自动跟随，禁止写死 #hex / rgb() / 颜色名；
+   ② 类名一律 owpk- 前缀，不碰核心通用类（.ow-btn / .ow-input 等只用不改）；
+   ③ 不用渐变、不用毛玻璃，与全站扁平语言一致；
+   ④ 移动端优先保证触控目标 ≥ 40px、窄屏不横向溢出。 */
+
+/* ==========================================================================
+   一、登录页：「使用通行密钥登录」
+   ========================================================================== */
+
+.owpk-login { margin-top: 2px; }
+
+/* 分隔线「或」：两侧各一条 1px 细线，中间文字 */
+.owpk-or {
+    display: flex;
+    display: -webkit-flex;
+    align-items: center;
+    -webkit-align-items: center;
+    gap: 10px;
+    margin: 14px 0;
+    font-size: 12px;
+    color: var(--ow-text-sub);
+    line-height: 1;
+}
+.owpk-or::before,
+.owpk-or::after {
+    content: "";
+    -webkit-flex: 1 1 auto; flex: 1 1 auto;
+    height: 1px;
+    background: var(--ow-border);
+}
+.owpk-or span { -webkit-flex: 0 0 auto; flex: 0 0 auto; }
+
+.owpk-pk-btn {
+    display: flex;
+    display: -webkit-flex;
+    align-items: center;
+    -webkit-align-items: center;
+    justify-content: center;
+    -webkit-justify-content: center;
+    gap: 8px;
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 44px;
+    padding: 0 12px;
+    border: 1px solid var(--ow-field-border);
+    border-radius: 8px;
+    background: var(--ow-bg);
+    color: var(--ow-text);
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s, border-color .15s, color .15s;
+}
+.owpk-pk-btn:hover:not([disabled]) {
+    background: var(--ow-blue-light);
+    border-color: var(--ow-primary);
+    color: var(--ow-primary-dark);
+}
+.owpk-pk-btn:active:not([disabled]) { background: var(--ow-hover-bg); }
+.owpk-pk-btn[disabled] { opacity: .72; cursor: default; }
+.owpk-pk-ico { display: inline-flex; line-height: 0; color: var(--ow-primary); }
+.owpk-pk-btn:hover:not([disabled]) .owpk-pk-ico { color: var(--ow-primary-dark); }
+.owpk-pk-t { line-height: 1.2; }
+
+/* 忙碌态转圈：只转这一枚，按钮布局不跳动 */
+.owpk-spin {
+    display: none;
+    width: 14px;
+    height: 14px;
+    box-sizing: border-box;
+    border: 2px solid var(--ow-border);
+    border-top-color: var(--ow-primary-strong);
+    border-radius: 50%;
+    -webkit-animation: owpk-spin .7s linear infinite;
+    animation: owpk-spin .7s linear infinite;
+}
+.owpk-pk-btn.is-busy .owpk-spin { display: inline-block; }
+@-webkit-keyframes owpk-spin { from { -webkit-transform: rotate(0deg); } to { -webkit-transform: rotate(360deg); } }
+@keyframes owpk-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+.owpk-tip {
+    display: none;
+    margin-top: 8px;
+    font-size: 12.5px;
+    line-height: 1.65;
+    color: var(--ow-text-sub);
+    word-break: break-word;
+}
+.owpk-tip.is-on { display: block; }
+.owpk-tip.is-err { color: var(--ow-red); }
+
+/* 「先填账号再验证」的备用行（免用户名取凭据失败后才出现） */
+.owpk-idrow {
+    display: none;
+    gap: 8px;
+    margin-top: 8px;
+}
+.owpk-idrow.is-on { display: flex; display: -webkit-flex; }
+.owpk-idrow .ow-input { -webkit-flex: 1 1 auto; flex: 1 1 auto; min-width: 0; }
+.owpk-idrow .ow-btn { -webkit-flex: 0 0 auto; flex: 0 0 auto; }
+
+/* ==========================================================================
+   二、个人设置 → 账号：通行密钥管理区
+   ========================================================================== */
+
+.owpk-set {
+    border-top: 1px solid var(--ow-border);
+    margin-top: 16px;
+    padding-top: 14px;
+}
+
+.owpk-set-head {
+    display: flex;
+    display: -webkit-flex;
+    align-items: flex-start;
+    -webkit-align-items: flex-start;
+    gap: 10px;
+}
+.owpk-set-main {
+    display: flex;
+    display: -webkit-flex;
+    -webkit-flex-direction: column; flex-direction: column;
+    -webkit-flex: 1 1 auto; flex: 1 1 auto;
+    min-width: 0;
+}
+.owpk-set-t {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--ow-text-title);
+    line-height: 1.5;
+}
+.owpk-set-s {
+    font-size: 12px;
+    color: var(--ow-text-sub);
+    line-height: 1.6;
+    margin-top: 2px;
+}
+.owpk-add { -webkit-flex: 0 0 auto; flex: 0 0 auto; }
+
+.owpk-list { margin-top: 10px; }
+
+.owpk-item {
+    display: flex;
+    display: -webkit-flex;
+    align-items: center;
+    -webkit-align-items: center;
+    gap: 10px;
+    padding: 9px 10px;
+    margin-bottom: 8px;
+    border: 1px solid var(--ow-border);
+    border-radius: 8px;
+    background: var(--ow-bg-sub);
+}
+.owpk-item:last-child { margin-bottom: 0; }
+
+.owpk-item-ico {
+    display: flex;
+    display: -webkit-flex;
+    align-items: center;
+    -webkit-align-items: center;
+    justify-content: center;
+    -webkit-justify-content: center;
+    -webkit-flex: 0 0 auto; flex: 0 0 auto;
+    width: 30px;
+    height: 30px;
+    border: 1px solid var(--ow-border);
+    border-radius: 8px;
+    background: var(--ow-bg);
+    color: var(--ow-primary);
+    line-height: 0;
+}
+
+.owpk-item-main {
+    display: flex;
+    display: -webkit-flex;
+    -webkit-flex-direction: column; flex-direction: column;
+    -webkit-flex: 1 1 auto; flex: 1 1 auto;
+    min-width: 0;
+}
+.owpk-item-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ow-text);
+    line-height: 1.5;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.owpk-item-meta {
+    font-size: 11.5px;
+    color: var(--ow-text-sub);
+    line-height: 1.5;
+    margin-top: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.owpk-item-act {
+    -webkit-flex: 0 0 auto; flex: 0 0 auto;
+    padding: 4px 6px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--ow-text-sub);
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 1.4;
+    cursor: pointer;
+}
+.owpk-item-act:hover { background: var(--ow-hover-bg); color: var(--ow-text); }
+.owpk-item-act.is-del:hover { background: var(--ow-warn-bg); color: var(--ow-red); }
+
+/* 空态：虚线框，不占太多高度 */
+.owpk-empty {
+    padding: 14px 12px;
+    border: 1px dashed var(--ow-border);
+    border-radius: 8px;
+    text-align: center;
+    font-size: 12px;
+    line-height: 1.65;
+    color: var(--ow-text-sub);
+}
+
+/* 密码 / 改名弹窗里的输入框外层（自带一点上间距，避免贴着说明文字） */
+.owpk-pw { margin-top: 4px; }
+
+/* 设备确认弹窗的主视觉：浅蓝圆底 + 指纹线，深色下 --ow-blue-light 自动翻成深青 */
+.owpk-hero {
+    display: flex;
+    display: -webkit-flex;
+    align-items: center;
+    -webkit-align-items: center;
+    justify-content: center;
+    -webkit-justify-content: center;
+    width: 76px;
+    height: 76px;
+    margin: 6px auto 14px;
+    border-radius: 50%;
+    background: var(--ow-blue-light);
+    color: var(--ow-primary-strong);
+    line-height: 0;
+}
+.owpk-hero-tip {
+    margin-top: 10px;
+    font-size: 12px;
+    line-height: 1.65;
+    color: var(--ow-text-sub);
+    text-align: center;
+}
+
+/* ==========================================================================
+   三、后台页
+   ========================================================================== */
+
+.owpk-kpi {
+    display: flex;
+    display: -webkit-flex;
+    flex-wrap: wrap;
+    -webkit-flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+.owpk-kpi-c {
+    -webkit-flex: 1 1 150px; flex: 1 1 150px;
+    min-width: 0;
+    padding: 14px 16px;
+    border: 1px solid var(--ow-border);
+    border-radius: 8px;
+    background: var(--ow-bg);
+}
+.owpk-kpi-n {
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 1.2;
+    color: var(--ow-text-title);
+}
+.owpk-kpi-l {
+    margin-top: 3px;
+    font-size: 12px;
+    color: var(--ow-text-sub);
+}
+
+/* ==========================================================================
+   四、移动端
+   ========================================================================== */
+
+@media (max-width: 720px) {
+    /* 登录按钮在手机上给足高度（拇指点击目标） */
+    .owpk-pk-btn { min-height: 46px; }
+    .owpk-or { margin: 12px 0; }
+
+    .owpk-kpi { gap: 8px; }
+    .owpk-kpi-c { -webkit-flex: 1 1 calc(50% - 4px); flex: 1 1 calc(50% - 4px); padding: 12px; }
+    .owpk-kpi-n { font-size: 19px; }
+
+    .owpk-item { gap: 8px; padding: 8px; }
+    .owpk-item-ico { width: 28px; height: 28px; }
+    .owpk-item-act { padding: 5px 5px; }
+}
+
+@media (max-width: 380px) {
+    .owpk-item-name { font-size: 12.5px; }
+    .owpk-item-act { padding: 4px 3px; font-size: 11.5px; }
+}
