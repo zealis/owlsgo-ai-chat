@@ -902,7 +902,25 @@
         '一次最多 9 个图片/视频': 'Up to 9 images or videos per message',
         '还有文件在上传，请稍候': 'Still uploading — one moment',
         '上传失败': 'Upload failed',
-        '[图片]': '[Image]'
+        '[图片]': '[Image]',
+
+        /* ---------- 语音消息（voice-msg v1.0.0） ---------- */
+        '语音消息': 'Voice message',
+        '播放语音': 'Play voice message',
+        '请先登录后再录音': 'Sign in before recording',
+        '请先选择一个群聊或联系人': 'Pick a room or a contact first',
+        '当前浏览器不支持录音': 'Recording is not supported in this browser',
+        '当前浏览器不支持录音（需要 HTTPS 或较新浏览器）': 'Recording needs HTTPS or a newer browser',
+        '麦克风权限被拒绝，请在浏览器地址栏的权限设置里允许后重试': 'Microphone access was denied. Allow it in your browser, then try again',
+        '未检测到麦克风设备': 'No microphone was found',
+        '无法启动录音：': 'Cannot start recording: ',
+        '说话时间太短': 'That was too short',
+        '已达最长时长，已自动发送': 'Maximum length reached — sent automatically',
+        '录音为空，请重试': 'The recording is empty — try again',
+        '发送失败': 'Send failed',
+        '语音播放失败': 'Playback failed',
+        '已取消录音：切换了会话': 'Recording cancelled — you switched conversations',
+        '输入栏未就绪，请刷新页面': 'The input bar is not ready — refresh the page'
     };
 
     w.OwI18n.register('en', 'English', dict);
