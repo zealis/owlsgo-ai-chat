@@ -516,10 +516,183 @@
     }, false);
 
     /* ==========================================================================
+       三·二、后台：通行密钥列表（搜索 / 分页 / 批量）
+       --------------------------------------------------------------------------
+       与核心「安全日志 / 登录日志」同一套轮子：OwAdmin.uiBatchBar 出批量工具栏、
+       OwAdmin.uiPager 出分页、OwAdmin.confirm 出二次确认、OwApi.secure 走票据。
+       页面 HTML 由 admin_plugin_page 异步注入，所以初始化挂在 #owpkTable 的
+       data-pk-inited 标记 + MutationObserver 上（照抄登录日志的做法）。
+       ========================================================================== */
+    var adm = { page: 1, psize: 20, total: 0, pages: 1 };
+
+    var Adm = {
+        init: function () {
+            Adm.batchBar();
+            Adm.load(1);
+        },
+
+        /** 批量工具栏（两个动作都是危险操作：删除后用户只能密码登录） */
+        batchBar: function () {
+            if (!w.OwAdmin || !w.OwAdmin.uiBatchBar) return;
+            w.OwAdmin.uiBatchBar({
+                id: 'owpkBatch',
+                chkCls: 'owpkChk',
+                statBase: '共 0 条',
+                actions: [
+                    { key: 'del', label: '删除所选通行密钥', danger: true },
+                    { key: 'del_user_all', label: '删除所选用户的全部通行密钥', danger: true }
+                ],
+                onExec: function (act, ids) { Adm.execBatch(act, ids); }
+            });
+        },
+
+        load: function (page) {
+            if (!$('owpkTable')) return;
+            var q = $('owpkQ'), t = $('owpkType'), u = $('owpkUsed');
+            adm.page = page || 1;
+            w.OwApi.post('plugin_passkey_admin_list', {
+                q: q ? q.value : '',
+                type: t ? t.value : '',
+                used: u ? u.value : '',
+                page: adm.page,
+                psize: adm.psize
+            }, function (r) {
+                if (!r || !r.ok) { toast((r && r.msg) || '加载失败'); return; }
+                adm.total = r.total;
+                adm.pages = r.pages;
+                adm.page = r.page || adm.page;   // 删光本页时服务端会把越界页码收敛回来
+                Adm.renderKpi(r.stats);
+                Adm.render(r.data);
+                if (w.OwAdmin && w.OwAdmin.uiPager) {
+                    w.OwAdmin.uiPager('owpkPager', adm.page, adm.total, adm.psize, function (pg) { Adm.load(pg); });
+                }
+            });
+        },
+
+        /** 重置筛选 */
+        reset: function () {
+            var q = $('owpkQ'), t = $('owpkType'), u = $('owpkUsed');
+            if (q) q.value = '';
+            if (t) t.value = '';
+            if (u) u.value = '';
+            Adm.load(1);
+        },
+
+        renderKpi: function (s) {
+            var box = $('owpkKpi');
+            if (!box || !s) return;
+            box.innerHTML = '<div class="owpk-kpi-c"><div class="owpk-kpi-n">' + (s.users || 0) + '</div><div class="owpk-kpi-l">已启用用户</div></div>'
+                + '<div class="owpk-kpi-c"><div class="owpk-kpi-n">' + (s.total || 0) + '</div><div class="owpk-kpi-l">通行密钥总数</div></div>'
+                + '<div class="owpk-kpi-c"><div class="owpk-kpi-n">' + (s.week || 0) + '</div><div class="owpk-kpi-l">近 7 天被使用</div></div>'
+                + '<div class="owpk-kpi-c"><div class="owpk-kpi-n">' + (s.pct || 0) + '%</div><div class="owpk-kpi-l">用户覆盖率</div></div>';
+        },
+
+        render: function (rows) {
+            var tbl = $('owpkTable');
+            if (!tbl) return;
+            var tb = tbl.getElementsByTagName('tbody')[0];
+            if (!tb) return;
+            var h = '', i;
+            rows = rows || [];
+            for (i = 0; i < rows.length; i++) {
+                var r = rows[i];
+                var who = r.nickname
+                    ? esc(r.nickname) + ' <span style="color:var(--ow-text-sub)">#' + r.uid + '</span>'
+                    : '<span style="color:var(--ow-text-sub)">已注销 #' + r.uid + '</span>';
+                h += '<tr>'
+                    + '<td><input type="checkbox" class="owpkChk" value="' + esc(r.id) + '"></td>'
+                    + '<td>' + who + '</td>'
+                    + '<td>' + esc(r.name) + '</td>'
+                    + '<td>' + (r.cross
+                        ? '<span class="ow-tag ow-tag-member">安全密钥</span>'
+                        : '<span class="ow-tag ow-tag-green">本机设备</span>') + '</td>'
+                    + '<td>' + esc(r.created) + '</td>'
+                    + '<td' + (r.last_text ? ' title="' + esc(r.last_text) + '"' : '') + '>' + esc(r.last_ago) + '</td>'
+                    + '<td>' + (r.last_ip ? esc(r.last_ip) : '<span style="color:var(--ow-text-sub)">—</span>') + '</td>'
+                    + '<td><button type="button" class="ow-btn ow-btn-mini ow-btn-ghost" data-pk-del="' + esc(r.id) + '">删除</button></td>'
+                    + '</tr>';
+            }
+            if (!rows.length) {
+                h = '<tr><td colspan="8" style="color:var(--ow-text-sub);text-align:center;padding:24px">没有符合条件的通行密钥</td></tr>';
+            }
+            tb.innerHTML = h;
+
+            var all = $('owpkCheckAll');
+            if (all) all.checked = false;    // 换页/刷新后全选态复位
+
+            // 行内删除与勾选回调：tbody 是整块替换的，必须每次重新绑
+            var dels = tb.querySelectorAll('[data-pk-del]');
+            for (i = 0; i < dels.length; i++) {
+                dels[i].onclick = function () { Adm.delOne(this.getAttribute('data-pk-del')); };
+            }
+            var chks = tb.getElementsByClassName('owpkChk');
+            for (i = 0; i < chks.length; i++) chks[i].onchange = Adm.syncBatch;
+
+            Adm.syncBatch();
+            var c = $('owpkCount');
+            if (c) c.textContent = '第 ' + adm.page + ' / ' + adm.pages + ' 页 · 共 ' + adm.total + ' 条';
+        },
+
+        toggleAll: function (cb) {
+            var boxes = d.getElementsByClassName('owpkChk'), i;
+            for (i = 0; i < boxes.length; i++) boxes[i].checked = cb.checked;
+            Adm.syncBatch();
+        },
+
+        syncBatch: function () {
+            if (w.OwAdmin && w.OwAdmin.batchSync) {
+                w.OwAdmin.batchSync('owpkChk', 'owpkBatch', '共 ' + adm.total + ' 条');
+            }
+        },
+
+        delOne: function (id) {
+            if (!id) return;
+            w.OwAdmin.confirm('确定删除这个通行密钥？该用户仍可用密码登录，也可以自行重新添加。', function () {
+                Adm.run('del', [id]);
+            });
+        },
+
+        execBatch: function (act, ids) {
+            var text = act === 'del_user_all'
+                ? '确定把所选 ' + ids.length + ' 条记录对应用户的全部通行密钥一起删除？\n这些用户将只剩「账号密码」一种登录方式。'
+                : '确定删除选中的 ' + ids.length + ' 个通行密钥？\n用户仍可用密码登录，也可以自行重新添加。';
+            w.OwAdmin.confirm(text, function () { Adm.run(act, ids); });
+        },
+
+        run: function (act, ids) {
+            w.OwApi.secure('plugin_passkey_admin_batch', { act: act, ids: ids.join(',') }, function (r) {
+                toast((r && r.msg) || (r && r.ok ? '已删除' : '删除失败'));
+                if (r && r.ok) Adm.load(adm.page);
+            });
+        }
+    };
+
+    /** 后台页注入后自动初始化（插件页是 innerHTML 替换，不能只在加载时绑一次） */
+    function notifyAdmin() {
+        var main = $('owAdminMain');
+        if (!main) return;
+        var tryInit = function () {
+            var t = $('owpkTable');
+            if (t && t.getAttribute('data-pk-inited') !== '1') {
+                t.setAttribute('data-pk-inited', '1');
+                $('owpkCheckAll').onchange = function () { Adm.toggleAll(this); };
+                Adm.init();
+            }
+        };
+        if (w.MutationObserver) {
+            new w.MutationObserver(tryInit).observe(main, { childList: true, subtree: true });
+        } else {
+            w.setInterval(tryInit, 300);
+        }
+        tryInit();
+    }
+
+    /* ==========================================================================
        四、启动
        ========================================================================== */
     function boot() {
         if (d.querySelector('.ow-auth-form[data-mode="login"]')) { initLogin(); return; }
+        if ($('owAdminMain')) { notifyAdmin(); return; }
         if (w.OwChat && w.OwChat.cfg && w.OwChat.cfg.me) initChat();
     }
     if (d.readyState === 'loading') {
@@ -528,5 +701,5 @@
         boot();
     }
 
-    w.OwPK = { errText: errText, deviceLabel: deviceLabel };
+    w.OwPK = { errText: errText, deviceLabel: deviceLabel, admin: Adm };
 })(window, document);

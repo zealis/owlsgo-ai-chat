@@ -782,66 +782,208 @@ Plugin::route('plugin_passkey_admin_save', function (array $ctx): void {
     Api::json(['ok' => true, 'msg' => $on === '1' ? '已开启通行密钥登录' : '已关闭通行密钥登录']);
 });
 
+/* ---------- 5.9 后台：列表（搜索 + 分页） ---------- */
+
+/**
+ * 后台列表查询。与核心「安全日志 / 登录日志」同一套参数口径：
+ * 关键词、类型、使用情况三组筛选 + 页码/每页条数，返回的 stats 顺带刷新顶部 KPI
+ * （批量删除后 KPI 要跟着变，所以不在页面里烤死）。
+ */
+Plugin::route('plugin_passkey_admin_list', function (array $ctx): void {
+    if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);
+    $post = $ctx['post'];
+    $page  = max(1, (int)($post['page'] ?? 1));
+    $psize = max(1, min(100, (int)($post['psize'] ?? 20)));
+    $kw    = trim((string)($post['q'] ?? ''));
+    $type  = (string)($post['type'] ?? '');
+    $used  = (string)($post['used'] ?? '');
+
+    $where = ' WHERE 1=1';
+    $args = [];
+    if ($kw !== '') {
+        // 纯数字优先按用户 ID 精确匹配（后台最常见的就是「按 uid 查这个人挂了哪些钥匙」），
+        // 同时仍允许它作为昵称 / 名称的模糊词
+        if (preg_match('/^\d{1,19}$/', $kw)) {
+            $where .= ' AND (p.user_id=? OR u.nickname LIKE ? OR p.name LIKE ?)';
+            $args[] = (int)$kw;
+            $args[] = '%' . $kw . '%';
+            $args[] = '%' . $kw . '%';
+        } else {
+            $where .= ' AND (u.nickname LIKE ? OR p.name LIKE ?)';
+            $args[] = '%' . $kw . '%';
+            $args[] = '%' . $kw . '%';
+        }
+    }
+    if ($type === 'platform') $where .= ' AND p.cross_platform=0';
+    elseif ($type === 'cross') $where .= ' AND p.cross_platform=1';
+    if ($used === 'week') {
+        $where .= ' AND p.last_used_at>=?';
+        $args[] = time() - 86400 * 7;
+    } elseif ($used === 'never') {
+        $where .= ' AND p.last_used_at=0';
+    } elseif ($used === 'idle') {
+        $where .= ' AND (p.last_used_at=0 OR p.last_used_at<?)';
+        $args[] = time() - 86400 * 90;    // 90 天没动过 = 可以清的闲置钥匙
+    }
+
+    $from = ' FROM plugin_passkey p LEFT JOIN users u ON u.id=p.user_id';
+    $total = (int)DB::val('SELECT COUNT(*)' . $from . $where, $args);
+    $pages = max(1, (int)ceil($total / $psize));
+    if ($page > $pages) $page = $pages;          // 删光本页后页码收敛，别返回空表
+    $offset = ($page - 1) * $psize;
+
+    $rows = DB::all(
+        'SELECT p.id_hash, p.user_id, p.name, p.cross_platform, p.aaguid,
+                p.created_at, p.last_used_at, p.last_ip, p.sign_count, u.nickname'
+        . $from . $where . ' ORDER BY p.created_at DESC, p.id_hash ASC'
+        . " LIMIT $psize OFFSET $offset",
+        $args
+    );
+
+    $now = time();
+    $data = [];
+    foreach ($rows as $r) {
+        $lu = (int)$r['last_used_at'];
+        $ago = '未使用';
+        if ($lu > 0) {
+            $d = max(0, $now - $lu);
+            if ($d < 60)        $ago = '刚刚';
+            elseif ($d < 3600)  $ago = (int)floor($d / 60) . ' 分钟前';
+            elseif ($d < 86400) $ago = (int)floor($d / 3600) . ' 小时前';
+            else                $ago = (int)floor($d / 86400) . ' 天前';
+        }
+        $data[] = [
+            'id'         => (string)$r['id_hash'],
+            'uid'        => (int)$r['user_id'],
+            'nickname'   => (string)($r['nickname'] ?? ''),
+            'name'       => (string)$r['name'],
+            'cross'      => (int)$r['cross_platform'] === 1,
+            'created'    => (int)$r['created_at'] > 0 ? date('Y-m-d H:i', (int)$r['created_at']) : '—',
+            'last_ago'   => $ago,
+            'last_text'  => $lu > 0 ? date('Y-m-d H:i', $lu) : '',
+            'last_ip'    => (string)$r['last_ip'],
+            'sign_count' => (int)$r['sign_count'],
+        ];
+    }
+
+    $users = (int)DB::val('SELECT COUNT(DISTINCT user_id) FROM plugin_passkey');
+    $all = (int)DB::val('SELECT COUNT(*) FROM plugin_passkey');
+    $allUsers = (int)DB::val('SELECT COUNT(*) FROM users');
+    $week = (int)DB::val('SELECT COUNT(*) FROM plugin_passkey WHERE last_used_at>=?', [time() - 86400 * 7]);
+
+    Api::json([
+        'ok'    => true,
+        'page'  => $page,
+        'pages' => $pages,
+        'total' => $total,
+        'data'  => $data,
+        'stats' => [
+            'users' => $users,
+            'total' => $all,
+            'week'  => $week,
+            'pct'   => $allUsers > 0 ? round($users / $allUsers * 100, 1) : 0,
+        ],
+    ]);
+});
+
+/* ---------- 5.10 后台：批量操作（敏感） ---------- */
+
+/**
+ * 批量删除。两种粒度：
+ *   del          —— 只删勾选的这几行
+ *   del_user_all —— 把这些行所属用户**全部**钥匙一起删（换设备 / 疑似泄露时清干净）
+ * 敏感操作：一次性票据 + 二次确认（票据校验在 index.php 的 $isSensitive 分支）。
+ */
+Plugin::route('plugin_passkey_admin_batch', function (array $ctx): void {
+    $actor = $ctx['actor'] ?? [];
+    if (($actor['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);
+    $act = (string)($ctx['post']['act'] ?? '');
+    if (!in_array($act, ['del', 'del_user_all'], true)) Api::json(['ok' => false, 'msg' => '未知操作']);
+
+    $raw = preg_split('/[,\s]+/', (string)($ctx['post']['ids'] ?? ''));
+    $ids = [];
+    foreach ($raw as $x) {
+        $x = preg_replace('/[^a-f0-9]/', '', (string)$x);
+        if (strlen($x) === 64) $ids[] = $x;
+    }
+    $ids = array_values(array_unique($ids));
+    if (!$ids) Api::json(['ok' => false, 'msg' => '请先勾选要操作的通行密钥']);
+    if (count($ids) > 200) Api::json(['ok' => false, 'msg' => '单次最多 200 条']);
+
+    $in = implode(',', array_fill(0, count($ids), '?'));
+    // ⚠️ 顺序：必须**先**把涉及的 uid 捞出来再删 —— 删完那些 id_hash 就查不到了，
+    //    先删后查会让 del_user_all 静默退化成「只删勾选的几行」。
+    $uids = [];
+    if ($act === 'del_user_all') {
+        foreach (DB::all("SELECT DISTINCT user_id FROM plugin_passkey WHERE id_hash IN ($in)", $ids) as $r) {
+            $uids[] = (int)$r['user_id'];
+        }
+        $uids = array_values(array_filter($uids));
+    }
+
+    $st = DB::run("DELETE FROM plugin_passkey WHERE id_hash IN ($in)", $ids);
+    $n = $st ? $st->rowCount() : 0;
+
+    if ($uids) {
+        $uin = implode(',', array_fill(0, count($uids), '?'));
+        $st2 = DB::run("DELETE FROM plugin_passkey WHERE user_id IN ($uin)", $uids);
+        $n += $st2 ? $st2->rowCount() : 0;
+    }
+
+    Sec::log('passkey_admin_batch', (string)($actor['nickname'] ?? ''), ['act' => $act, 'rows' => $n]);
+    Api::json(['ok' => true, 'msg' => '已删除 ' . $n . ' 个通行密钥']);
+});
+Plugin::sensitive('plugin_passkey_admin_batch');
+
 /* ==========================================================================
    六、后台页面
    ========================================================================== */
 
 Plugin::adminPage('passkey', '通行密钥', function (): string {
     $on = owPkEnabled();
-    $total = (int)DB::val('SELECT COUNT(*) FROM plugin_passkey');
-    $users = (int)DB::val('SELECT COUNT(DISTINCT user_id) FROM plugin_passkey');
-    $allUsers = (int)DB::val('SELECT COUNT(*) FROM users');
-    $week = (int)DB::val('SELECT COUNT(*) FROM plugin_passkey WHERE last_used_at>=?', [time() - 86400 * 7]);
-    $pct = $allUsers > 0 ? round($users / $allUsers * 100, 1) : 0;
-
-    $rows = DB::all('SELECT p.name, p.aaguid, p.cross_platform, p.created_at, p.last_used_at,
-                            p.user_id AS uid, u.nickname
-                     FROM plugin_passkey p LEFT JOIN users u ON u.id=p.user_id
-                     ORDER BY p.created_at DESC LIMIT 20');
-
-    $h = '<h2>通行密钥</h2>'
-       . '<p class="ow-admin-desc">用户在「个人设置 → 账号」里自行添加通行密钥（指纹 / 面容 / 设备 PIN），'
-       . '之后可直接在登录页免密码进入。此处只做站点级开关与使用情况查看，看不到也无法还原任何凭据私钥。</p>'
-       . '<div class="owpk-kpi">'
-       . '<div class="owpk-kpi-c"><div class="owpk-kpi-n">' . $users . '</div><div class="owpk-kpi-l">已启用用户</div></div>'
-       . '<div class="owpk-kpi-c"><div class="owpk-kpi-n">' . $total . '</div><div class="owpk-kpi-l">通行密钥总数</div></div>'
-       . '<div class="owpk-kpi-c"><div class="owpk-kpi-n">' . $week . '</div><div class="owpk-kpi-l">近 7 天被使用</div></div>'
-       . '<div class="owpk-kpi-c"><div class="owpk-kpi-n">' . $pct . '%</div><div class="owpk-kpi-l">用户覆盖率</div></div>'
-       . '</div>';
-
-    $h .= '<div class="ow-card">'
+    // 列表与 KPI 都由 plugin_passkey_admin_list 现取现渲染（批量删除后要跟着变），
+    // 页面骨架只出容器 —— 与登录日志 / 内容举报等后台页同一做法。
+    return '<h2>通行密钥</h2>'
+        . '<p class="ow-admin-desc">用户在「个人设置 → 账号」里自行添加通行密钥（指纹 / 面容 / 设备 PIN），'
+        . '之后可直接在登录页免密码进入。这里可以按用户 / 名称搜索、按类型与使用情况筛选、'
+        . '批量清理失效的钥匙 —— 但看不到也无法还原任何私钥。</p>'
+        // KPI（JS 渲染）
+        . '<div class="owpk-kpi" id="owpkKpi"></div>'
+        // 站点开关
+        . '<div class="ow-card">'
         . '<div class="ow-switch-row">'
         . '<span class="ow-switch-label">允许使用通行密钥登录</span>'
         . '<input type="checkbox" class="ow-switch-input" id="owpkAdmSwitch"' . ($on ? ' checked' : '') . '>'
         . '<label class="ow-switch' . ($on ? ' is-on' : '') . '" for="owpkAdmSwitch"></label>'
         . '<p class="ow-switch-hint">关闭后登录页不再显示入口，已添加的凭据保留在库里，重新开启即恢复。改动即时生效，无需保存。</p>'
-        . '</div></div>';
-
-    $h .= '<div class="ow-card"><div class="ow-list-head"><span class="ow-list-head-t">最近添加的通行密钥</span></div>';
-    if (!$rows) {
-        $h .= '<div class="owpk-empty">还没有任何通行密钥。用户可在「个人设置 → 账号 → 通行密钥」里添加。</div>';
-    } else {
-        $h .= '<div class="ow-table-wrap"><table class="ow-table"><thead><tr>'
-            . '<th>用户</th><th>名称</th><th>类型</th><th>添加时间</th><th>最近使用</th>'
-            . '</tr></thead><tbody>';
-        foreach ($rows as $r) {
-            $nick = (string)($r['nickname'] ?? '');
-            $h .= '<tr>'
-                . '<td>' . ($nick !== ''
-                    ? Sec::e($nick) . ' <span style="color:var(--ow-text-sub)">#' . (int)$r['uid'] . '</span>'
-                    : '<span style="color:var(--ow-text-sub)">已注销 #' . (int)$r['uid'] . '</span>') . '</td>'
-                . '<td>' . Sec::e((string)$r['name']) . '</td>'
-                . '<td>' . ((int)$r['cross_platform'] === 1
-                    ? '<span class="ow-tag ow-tag-member">安全密钥</span>'
-                    : '<span class="ow-tag ow-tag-green">本机设备</span>') . '</td>'
-                . '<td>' . ((int)$r['created_at'] > 0 ? date('Y-m-d H:i', (int)$r['created_at']) : '—') . '</td>'
-                . '<td>' . ((int)$r['last_used_at'] > 0 ? date('Y-m-d H:i', (int)$r['last_used_at']) : '未使用') . '</td>'
-                . '</tr>';
-        }
-        $h .= '</tbody></table></div>';
-    }
-    $h .= '</div>';
-    return $h;
+        . '</div></div>'
+        // 筛选
+        . '<div class="ow-card"><div class="ow-form-row">'
+        . '<div class="ow-form-item" style="flex:2;min-width:180px"><label>关键词</label>'
+        . '<input class="ow-input" id="owpkQ" placeholder="昵称 / 通行密钥名称 / 用户 ID" '
+        . 'onkeydown="if(event.key===\'Enter\')OwPK.admin.load(1)"></div>'
+        . '<div class="ow-form-item" style="min-width:140px"><label>类型</label>'
+        . '<select class="ow-input" id="owpkType" onchange="OwPK.admin.load(1)">'
+        . '<option value="">全部</option><option value="platform">本机设备</option>'
+        . '<option value="cross">安全密钥</option></select></div>'
+        . '<div class="ow-form-item" style="min-width:160px"><label>使用情况</label>'
+        . '<select class="ow-input" id="owpkUsed" onchange="OwPK.admin.load(1)">'
+        . '<option value="">全部</option><option value="week">近 7 天用过</option>'
+        . '<option value="never">从未使用</option><option value="idle">90 天未使用</option></select></div>'
+        . '<button class="ow-btn ow-btn-primary" onclick="OwPK.admin.load(1)">搜索</button>'
+        . '<button class="ow-btn ow-btn-ghost" onclick="OwPK.admin.reset()">重置</button>'
+        . '</div></div>'
+        // 列表
+        . '<div class="ow-card">'
+        . '<div class="ow-list-head"><span class="ow-list-head-t">通行密钥列表</span>'
+        . '<span id="owpkCount" style="font-size:12px;color:var(--ow-text-sub)"></span></div>'
+        . '<div id="owpkBatch"></div>'
+        . '<div class="ow-table-wrap"><table class="ow-table" id="owpkTable">'
+        . '<thead><tr><th style="width:32px"><input type="checkbox" id="owpkCheckAll"></th>'
+        . '<th>用户</th><th>名称</th><th>类型</th><th>添加时间</th><th>最近使用</th><th>最近 IP</th>'
+        . '<th style="width:64px">操作</th></tr></thead><tbody></tbody></table></div>'
+        . '<div id="owpkPager"></div>'
+        . '</div>';
 });
 
 /* ==========================================================================
