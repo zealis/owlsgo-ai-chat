@@ -555,18 +555,27 @@
             bindBtn();
             // 只在「切换了会话」时查一次状态，不做轮询 —— 本站是长轮询架构，
             // 每 2 秒打一个接口等于给每个用户凭空加 30 次/分钟的请求。
-            var lastPeer = '';
+            var lastPeer = '', shown = false;
             setInterval(function () {
                 var oc = W.OwChat;
                 var cur = oc && oc.dm && oc.dm.id ? String(oc.dm.id) : '';
-                if (cur === lastPeer) return;
+                // 有弹窗时把盾牌藏起来：被遮罩盖住的按钮点了不会有任何反应，
+                // 摆在那儿只会让人反复点（实测：登录后的每日签到弹窗吃掉了第一下点击）。
+                // 弹窗一关，按钮自己回来 —— 它重新出现本身就是「现在可以点了」的信号。
+                var usable = !!cur && !masked();
+                if (usable !== shown) { shown = usable; btnVisible(usable); }
+                if (cur === lastPeer || !cur) return;
                 lastPeer = cur;
-                if (!cur) { btnVisible(false); return; }
-                btnVisible(true);
                 syncConv(oc.dm.id).then(toastLock);
             }, 800);
             if (st && st.device) toastLock(false);
         });
+    }
+
+    /** 此刻是否有弹窗遮罩盖着页面 */
+    function masked() {
+        var m = W.document.getElementById('owModalMask');
+        return !!m && m.style.display !== 'none';
     }
 
     /**
@@ -615,7 +624,7 @@
     W.OWED = {
         // 版本自检：浏览器控制台敲 OWED.v 应显示这个号。
         // 显示 undefined 就说明页面还在用旧的插件包（Ctrl+F5 硬刷新）。
-        v: '1.0.4',
+        v: '1.0.5',
         enable: enableFlow, disable: disableFlow,
         getKeys: function () { return keys; },
         // 弹窗按钮的回调（onclick 走全局作用域）
