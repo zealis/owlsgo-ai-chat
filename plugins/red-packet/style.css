@@ -373,7 +373,19 @@
 
 /* ---------- 发包弹窗 ---------- */
 
-.owrp-modal { position: relative; padding-bottom: 30px; }
+.owrp-modal { position: relative; padding-bottom: 0; }
+/* 底部按钮条做成「粘底」：窗口矮 / 浏览器缩放较大时弹窗内部要滚动，
+   按钮如果跟着内容走就会被弹窗下边缘裁掉一条边（站方截图就是这个）。
+   粘住后它始终完整可见，滚动内容从它下面穿过；间距由它自己的 padding-bottom 提供。 */
+.owrp-modal .ow-modal-actions {
+    position: -webkit-sticky;
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    margin-top: 16px;
+    padding: 10px 0 30px;
+    background: var(--ow-bg);
+}
 .owrp-modal h3 { margin-bottom: 12px; }
 
 .owrp-seg { margin-bottom: 10px; }
@@ -627,7 +639,8 @@
 
 @media (max-width: 480px) {
     /* 通用弹窗在 360px 屏上是满宽贴边（.ow-modal width:100%），这里收一档 */
-    .owrp-modal { width: 92%; padding: 18px 18px 26px; }
+    .owrp-modal { width: 92%; padding: 18px 18px 0; }
+    .owrp-modal .ow-modal-actions { padding: 10px 0 26px; }
     .owrp-card { width: 208px; padding: 10px; }
     .owrp-coin { width: 36px; height: 36px; font-size: 12px; }
     .owrp-seg .ow-seg-btn { padding: 0 4px; font-size: 12px; }
