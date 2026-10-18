@@ -733,11 +733,21 @@
     W.OWED = {
         // 版本自检：浏览器控制台敲 OWED.v 应显示这个号。
         // 显示 undefined 就说明页面还在用旧的插件包（Ctrl+F5 硬刷新）。
-        v: '1.0.9',
-        // 浏览器控制台敲 OWED.diagnose() 即可拿到全部现场状态，把结果发出去就能定位
+        v: '1.0.10',
+        /**
+         * 自检：控制台敲 OWED.diagnose() 回车。
+         * 结果会**自动打印并复制到剪贴板**（Chrome 控制台的 copy() 辅助）——
+         * 返回的是 Promise，直接粘给你看到的是 Promise 对象，得展开才看得到内容。
+         */
         diagnose: function () {
+            function report(out) {
+                var t = JSON.stringify(out);
+                try { W.console.log('[加密私聊自检] ' + t); } catch (e) { /* 无控制台环境 */ }
+                try { W.copy(t); } catch (e) { /* 非 Chrome / 无剪贴板权限 */ }
+                return out;
+            }
             return withTimeout(loadKeys(), 3000, 'IndexedDB 无响应').then(function () {
-                return {
+                return report({
                     版本: W.OWED.v,
                     模式: mode,
                     有本机密钥: !!keys,
@@ -751,11 +761,12 @@
                         return b ? getComputedStyle(b).display + ' | ' + b.className : '不在 DOM 里';
                     })(),
                     弹窗: masked() ? '开着' : '无',
+                    WebSocket: (W.OwChat && W.OwChat.rt && W.OwChat.rt.on) ? '已连接' : '未连接（发送回落 HTTP）',
                     环境: (W.isSecureContext ? 'https 安全上下文' : '非安全上下文（不能加密）')
                         + ' | WebCrypto ' + (W.OWEE.available() ? '可用' : '不可用')
-                };
+                });
             }).catch(function (e) {
-                return { 版本: W.OWED.v, 错误: (e && e.message) || String(e) };
+                return report({ 版本: W.OWED.v, 错误: (e && e.message) || String(e) });
             });
         },
         enable: enableFlow, disable: disableFlow,
