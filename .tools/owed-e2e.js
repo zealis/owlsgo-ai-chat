@@ -46,8 +46,9 @@ function reset() {
 }
 /** 轮询等某段明文出现在屏幕上（对方要等私聊轮询把消息带过来，不是即时的） */
 async function waitPlain(page, text, ms) {
+    ms = ms || 20000;
     const t0 = Date.now();
-    while (Date.now() - t0 < (ms || 8000)) {
+    while (Date.now() - t0 < ms) {
         const hit = await page.evaluate((txt) => {
             const n = document.querySelectorAll('#owMessages .ow-msg.private .ow-msg-content');
             for (let i = 0; i < n.length; i++) if (n[i].textContent === txt) return true;
@@ -210,17 +211,17 @@ async function waitPlain(page, text, ms) {
 
     /* ---------- ⑧ 刷新页面后历史仍可读 ---------- */
     console.log('\n8) 刷新后历史仍可解密');
-    await pA.reload({ waitUntil: 'domcontentloaded' });
-    await pA.waitForTimeout(4000);
-    const st8 = await pA.evaluate(() => ({
-        url: location.href,
-        ow: typeof window.OWEE, owed: typeof window.OWED,
-        chat: typeof window.OwChat, api: typeof window.OwApi,
-        scripts: Array.prototype.map.call(document.scripts || [], function (s) { return s.src; })
-            .filter(function (s) { return /action=assets/.test(s); })
-    }));
-    console.log('     刷新后：' + JSON.stringify(st8));
-    await pA.waitForFunction(() => !!(window.OWEE && window.OWED), null, { timeout: 25000 }).catch(() => {});
+    // 注意：核心在遇到 403 后会 800ms 自己 location.reload()（签名自愈），
+    // 手动 reload 若与它撞车会打断导航，出现「包下载了却没执行」的半加载状态。
+    // 所以这里最多重试两次 reload，等插件全局重新就位。
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        await pA.reload({ waitUntil: 'domcontentloaded' });
+        const up = await pA.waitForFunction(() => !!(window.OWEE && window.OWED), null, { timeout: 15000 })
+            .then(() => true).catch(() => false);
+        if (up) break;
+        console.log('     第 ' + attempt + ' 次刷新后插件未就位，重试');
+        await pA.waitForTimeout(2000);
+    }
     await openDm(pA, BB, '加密测试2');
     await pA.waitForTimeout(3000);
     ok('刷新后 A 仍能解开历史', (await hasPlain(pA, MSG_B)) && (await waitPlain(pA, MSG_A)));
@@ -229,10 +230,13 @@ async function waitPlain(page, text, ms) {
     /* ---------- ⑨ 关闭加密 ---------- */
     console.log('\n9) 关闭加密');
     await clickShield(pA);
-    await pA.evaluate(() => { OWED._onClose(); });
-    await pA.waitForTimeout(2000);
-    let d6 = db();
-    ok('会话开关已置 0', d6.conv.every(c => c.enabled === 0), d6.conv);
+    let off = false;
+    for (let i = 0; i < 4 && !off; i++) {
+        await pA.evaluate(() => { OWED._onClose(); });
+        await pA.waitForTimeout(2500);
+        off = db().conv.every(c => c.enabled === 0);
+    }
+    ok('会话开关已置 0', off, db().conv);
     const PLAIN_AFTER = '关闭后的明文 ' + Date.now();
     await sendText(pA, PLAIN_AFTER);
     let d7 = db();

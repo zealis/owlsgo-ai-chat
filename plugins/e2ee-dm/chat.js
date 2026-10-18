@@ -440,6 +440,10 @@
                     + '内容审核与管理员查阅都不再生效。</p>';
                 modal('开启加密私聊', body, '开启加密', 'OWED._onOpen', false);
             });
+        }).catch(function (e) {
+            // 本地存储被禁用（无痕 / 隐私模式）时 loadKeys 会直接失败，
+            // 以前这里没有任何 catch → 用户点十次也没反应
+            W.toast((e && e.message) || '开启失败，请刷新页面后重试');
         });
     }
 
@@ -447,6 +451,8 @@
         W.OwChat.closeModal();
         var peer = W.OwChat.dm && W.OwChat.dm.id;
         if (!peer) return;
+        // 密钥生成要走一遍 WebCrypto，慢的时候有一两秒 —— 不给反馈用户就会以为又没点上
+        W.toast('正在生成本设备的加密密钥…', 6000);
         var p = keys ? Promise.resolve(keys) : createKeys();
         p.then(function () {
             return startSession(peer).catch(function (e) {
@@ -507,6 +513,25 @@
         if (b) b.style.display = v ? '' : 'none';
     }
 
+    /**
+     * 登录后「每日签到」等插件会自动弹窗，遮罩盖住整个屏幕 ——
+     * 用户点盾牌的第一下其实落在遮罩上（弹窗被关掉），界面毫无变化，
+     * 看起来就是「点了开启加密没有任何反应」。已用真实点击复现确认。
+     * 这里在捕获阶段听遮罩点击：只有盾牌当前可用（在私聊里）时才提示，
+     * 不给自己站点加噪声。
+     */
+    function installMaskHint() {
+        W.document.addEventListener('click', function (e) {
+            if (mode === 'off') return;
+            var mask = W.document.getElementById('owModalMask');
+            if (!mask || mask.style.display === 'none') return;
+            if (e.target !== mask) return;                    // 点在弹窗内部，不归我管
+            var b = W.document.getElementById('owEDBtn');
+            if (!b || b.style.display === 'none') return;     // 不在私聊里，别添乱
+            W.toast('弹窗已关闭，请再点一次盾牌图标', 2600);
+        }, true);
+    }
+
     function bindBtn() {
         var b = W.document.getElementById('owEDBtn');
         if (!b) { setTimeout(bindBtn, 500); return; }
@@ -526,6 +551,7 @@
             if (mode === 'off') return;
             btnVisible(false);      // 先藏起来，等确认当前是私聊再显示
             watch();
+            installMaskHint();
             bindBtn();
             // 只在「切换了会话」时查一次状态，不做轮询 —— 本站是长轮询架构，
             // 每 2 秒打一个接口等于给每个用户凭空加 30 次/分钟的请求。
