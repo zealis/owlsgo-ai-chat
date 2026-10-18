@@ -107,6 +107,11 @@
     /* 提示/警示块底色（.ow-notice-warn 与各插件里的「待处理」高亮行） */
     --ow-warn-bg: #FFF7E6;
     --ow-warn-border: #FFE1B0;
+    /* v1.5.11：后台「插件列表」中**已启用**卡片的底色（站方定版 #F6FFED）。
+       原先靠标题右侧的「启用 / 未启用」徽标表达状态，徽标只有 10px 字，
+       扫一列插件时几乎读不出来 —— 改由整张卡片的底色承担，扫视即可分辨。
+       极浅的绿（对白底仅高 1 档），故未启用卡片保持原白底，两者仍分得开。 */
+    --ow-plug-on-bg: #F6FFED;
 }
 
 /* ---------- 分段控件（v1.3.25：日夜模式三选一） ----------
@@ -415,6 +420,8 @@ html[data-fontsize="comfortable"] .ow-card-name { font-size: 19px; }
     --ow-switch-off: #4A4A50;
     --ow-warn-bg: #3A2E12;          /* 浅黄底 → 深琥珀底，配 --ow-yellow 文字 */
     --ow-warn-border: #8A6D1A;
+    /* 深绿底：与浅色的 #F6FFED 同一语义（已启用），深底上取比主背景略亮一档的墨绿 */
+    --ow-plug-on-bg: #1E2A20;
 }
 /* 深色下少数**写死的浅色**需要反向调整。
    这些是当初按浅底设计的小块（@提及高亮、管理员/VIP 标签底、禁言底色等），
@@ -2509,6 +2516,12 @@ span.ow-panel-entry-ico.ow-avatar { width: 24px; height: 24px; line-height: 24px
 /* 插件卡片列表（v1.0.47）：名称+状态 / 标识·版本·来源·计数 / 说明 / 操作按钮 */
 .ow-plugin-list { display: flex; display: -webkit-flex; flex-direction: column; -webkit-flex-direction: column; gap: 10px; }
 .ow-plugin-card { background: var(--ow-bg); border: 1px solid var(--ow-border); border-radius: 8px; padding: 12px 14px; }
+/* v1.5.11：已启用 → 整卡换成浅绿底（--ow-plug-on-bg，浅色 #F6FFED）。
+   取代原先标题右侧的「启用 / 未启用」徽标：徽标字仅 10px，一列插件扫下来读不出来，
+   底色是一眼可辨的整片色块。边框也跟着走同色系一档，免得白底卡片插在绿底群里
+   显得像两张不同的组件。 */
+.ow-plugin-card.ow-plug-on { background: var(--ow-plug-on-bg); border-color: #D6E8C8; }
+[data-theme="dark"] .ow-plugin-card.ow-plug-on { border-color: #2E4034; }
 .ow-plugin-head { display: flex; display: -webkit-flex; align-items: center; -webkit-align-items: center; gap: 8px; }
 .ow-plugin-head b { font-size: 15px; color: var(--ow-text-title); }
 /* v1.2.57：有后台页的插件，标题可点直达设置页。用主色 + 手型

@@ -8094,13 +8094,15 @@
                         // 搜一个页面里不显示的字段（如 author）只会让人误猜。
                         var hay = (d.name + ' ' + d.id + ' ' + (d.description || '') + ' '
                                  + (d.source || '本地')).toLowerCase();
-                        h += '<div class="ow-plugin-card" data-owplug-k="' + esc(hay) + '">'
+                        h += '<div class="ow-plugin-card' + (d.enabled ? ' ow-plug-on' : '') + '" data-owplug-k="' + esc(hay) + '">'
                            + '<div class="ow-plugin-head">'
                            + (canOpen
                                ? '<b class="ow-plugin-title-link" title="打开「' + esc(d.name) + '」设置页"'
                                  + ' onclick="OwAdmin.pluginOpen(\'' + esc(d.id) + '\')">' + esc(d.name) + '</b>'
                                : '<b>' + esc(d.name) + '</b>')
-                           + (d.enabled ? '<span class="ow-tag ow-tag-green">启用</span>' : '<span class="ow-tag ow-tag-guest">未启用</span>') + '</div>'
+                           // v1.5.11：不再画「启用 / 未启用」徽标 —— 状态改由整卡底色承担
+                           // （.ow-plugin-card.ow-plug-on → #F6FFED），徽标字太小读不出来。
+                           + '</div>'
                            + '<div class="ow-plugin-meta">' + esc(d.id) + ' · v' + esc(d.version) + ' · ' + esc(d.source || '本地')
                            // 维护任务数放在最前：它是「这个插件会自己在后台动什么」的规模指标，
                            // 比「注册了几个函数」更值得管理员先看到（v1.1.13）
