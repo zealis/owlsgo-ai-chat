@@ -163,6 +163,7 @@ Plugin::route('plugin_e2ee_dm_state', function (array $ctx) {
     $me = (int)$actor['id'];
     $dev = owEDDevice($me);
     $peer = (int)($ctx['post']['peer_id'] ?? 0);
+    $peerDev = $peer > 0 ? owEDDevice($peer) : null;
     Api::json([
         'ok' => true,
         'mode' => owEDMode(),
@@ -173,6 +174,10 @@ Plugin::route('plugin_e2ee_dm_state', function (array $ctx) {
             'name' => (string)$dev['dev_name'],
         ] : null,
         'conv_enabled' => $peer > 0 ? owEDConvEnabled($me, $peer) : false,
+        // 对方当前生效的设备号：前端拿它和自己会话里记的 peerDev 比，
+        // 不一致就说明对方换过设备，必须丢掉旧会话重新取密钥包 ——
+        // 否则会一直加密给一台已经不存在的设备，新设备收不到、旧设备读得到。
+        'peer_dev' => $peerDev ? (string)$peerDev['dev_id'] : null,
     ]);
 });
 

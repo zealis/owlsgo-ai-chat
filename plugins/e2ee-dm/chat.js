@@ -202,6 +202,26 @@
         }).catch(function () { return false; });
     }
 
+    /**
+     * 会话切换时做一次对账：开关状态 + 对方设备号。
+     * 为什么必须对账：对方一旦换了设备，我们本地还挂着旧会话，
+     * 会继续把每条消息加密给一台服务端已经不认的设备 ——
+     * 新设备一条也收不到，旧设备反而全读得到（方向正好反了）。
+     */
+    function syncConv(peerId) {
+        var k = String(peerId);
+        return api('plugin_e2ee_dm_state', { peer_id: peerId }).then(function (r) {
+            convState[k] = !!r.conv_enabled;
+            var s = sessions[k];
+            if (s && r.peer_dev && s.peerDev && s.peerDev !== r.peer_dev) {
+                delete sessions[k];
+                saveSessions();
+                W.toast('对方已更换加密设备，下次发送时会重新建立会话', 3200);
+            }
+            return convState[k];
+        }).catch(function () { return false; });
+    }
+
     /* ===================== 发送 ===================== */
 
     var origSend = W.OwChat.send;
@@ -432,7 +452,7 @@
                 if (cur === lastPeer) return;
                 lastPeer = cur;
                 if (!cur) { toastLock(false); return; }
-                ensureConvState(oc.dm.id).then(toastLock);
+                syncConv(oc.dm.id).then(toastLock);
             }, 800);
             if (st && st.device) toastLock(false);
         });
