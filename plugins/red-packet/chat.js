@@ -142,18 +142,20 @@
         RP.isDm = !!OwChat.dm;          // 私聊视图：只给普通红包、不给个数
         if (RP.isDm) RP.kind = 'normal';
         OwChat.openModal(
-            '<h3>发红包</h3>'
+            '<div class="owrp-pane-body">'
+            + '<h3>发红包</h3>'
             + '<div class="ow-seg owrp-seg" id="owRpSeg">' + segHtml() + '</div>'
             + '<p class="owrp-tip" id="owRpTip">' + tipHtml() + '</p>'
             + '<div id="owRpFields">' + fieldsHtml() + '</div>'
             + '<div class="owrp-bal">账户余额 <b id="owRpBal">' + RP.balance + '</b> ' + esc(RP.pn) + '</div>'
             + '<div class="owrp-err" id="owRpErr"></div>'
-            + '<div class="ow-modal-actions owrp-actions">'
+            + '</div>'
+            + '<div class="owrp-pane-foot"><div class="ow-modal-actions owrp-actions">'
             + '<button class="ow-btn ow-btn-ghost owrp-rec" type="button" onclick="OwRP.records()">红包记录</button>'
             + '<button class="ow-btn ow-btn-ghost" type="button" onclick="OwChat.closeModal()">取消</button>'
             + '<button class="ow-btn ow-btn-primary" id="owRpSend" type="button" onclick="OwRP.submit()">塞钱进红包</button>'
-            + '</div>',
-            430, 'owrp-modal'
+            + '</div></div>',
+            430, 'owrp-modal owrp-pane'
         );
         onNum();
     }
@@ -704,24 +706,25 @@
 
         // p.mine = 是不是我发的（只影响标题文案）；r.claimed = 我领过没有。
         // 发包人本人也可以领一次，所以这里不再排除 p.mine。
+        var foot = '<div class="owrp-err" id="owRpPassErr"></div>'
+                 + '<div class="ow-modal-actions">'
+                 + '<button class="ow-btn ow-btn-ghost" type="button" onclick="OwChat.closeModal()">关闭</button>';
         if (!r.claimed && p.status === 'active') {
+            // 口令输入框跟着底栏走：弹窗再矮，「输口令 + 开」也永远在同一屏里
             if (p.kind === 'password') {
-                h += '<div class="ow-form-item" style="margin-top:12px"><label>领取口令</label>'
-                   + '<input class="ow-input" id="owRpPassIn" type="text" maxlength="20" autocomplete="off"'
-                   + ' onkeydown="if(event.key===\'Enter\')OwRP.claimWithPass(' + p.id + ')"></div>'
-                   + '<div class="owrp-err" id="owRpPassErr"></div>';
+                foot += '<input class="ow-input owrp-foot-pass" id="owRpPassIn" type="text" maxlength="20"'
+                      + ' autocomplete="off" placeholder="领取口令"'
+                      + ' onkeydown="if(event.key===\'Enter\')OwRP.claimWithPass(' + p.id + ')">';
             }
-            h += '<div class="ow-modal-actions">'
-               + '<button class="ow-btn ow-btn-ghost" type="button" onclick="OwChat.closeModal()">关闭</button>'
-               + '<button class="ow-btn ow-btn-primary" type="button" onclick="OwRP.claimWithPass(' + p.id + ')">开红包</button>'
-               + '</div>';
-        } else {
-            h += '<div class="ow-modal-actions">'
-               + '<button class="ow-btn ow-btn-ghost" type="button" onclick="OwChat.closeModal()">关闭</button>'
-               + '</div>';
+            foot += '<button class="ow-btn ow-btn-primary" type="button" onclick="OwRP.claimWithPass(' + p.id + ')">开红包</button>';
         }
+        foot += '</div>';
 
-        OwChat.openModal(h, 400, 'owrp-modal');
+        OwChat.openModal(
+            '<div class="owrp-pane-body">' + h + '</div>'
+            + '<div class="owrp-pane-foot">' + foot + '</div>',
+            400, 'owrp-modal owrp-pane'
+        );
 
         var list = r.claims || [];
         var box = $('owRpClaims');
@@ -785,7 +788,8 @@
 
     function recordsModal(tab) {
         OwChat.openModal(
-            '<h3>红包记录</h3>'
+            '<div class="owrp-pane-body">'
+            + '<h3>红包记录</h3>'
             + '<p class="owrp-tip">只显示最近 30 天的记录。</p>'
             + '<div class="ow-seg owrp-seg">'
             + '<button class="ow-seg-btn' + (tab !== 'sent' ? ' is-active' : '') + '" type="button"'
@@ -794,10 +798,11 @@
             + ' onclick="OwRP.recTab(\'sent\')">我发出的</button>'
             + '</div>'
             + '<div class="owrp-rec-list" id="owRpRecList">' + recRows(tab) + '</div>'
-            + '<div class="ow-modal-actions">'
+            + '</div>'
+            + '<div class="owrp-pane-foot"><div class="ow-modal-actions">'
             + '<button class="ow-btn ow-btn-ghost" type="button" onclick="OwChat.closeModal()">关闭</button>'
-            + '</div>',
-            400, 'owrp-modal'
+            + '</div></div>',
+            400, 'owrp-modal owrp-pane'
         );
     }
 

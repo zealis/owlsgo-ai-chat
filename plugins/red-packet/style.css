@@ -373,18 +373,44 @@
 
 /* ---------- 发包弹窗 ---------- */
 
-.owrp-modal { position: relative; padding-bottom: 0; }
-/* 底部按钮条做成「粘底」：窗口矮 / 浏览器缩放较大时弹窗内部要滚动，
-   按钮如果跟着内容走就会被弹窗下边缘裁掉一条边（站方截图就是这个）。
-   粘住后它始终完整可见，滚动内容从它下面穿过；间距由它自己的 padding-bottom 提供。 */
-.owrp-modal .ow-modal-actions {
-    position: -webkit-sticky;
-    position: sticky;
-    bottom: 0;
-    z-index: 2;
-    margin-top: 16px;
-    padding: 10px 0 30px;
+/* 弹窗骨架：正文区自己滚，按钮条固定在弹窗底部**外面**的篮子里。
+   粘底（sticky）在部分场景仍会被下边缘啃掉一像素边框（站方三次反馈），
+   改成「flex 列 + overflow:hidden + 内部滚动区」之后，按钮条根本不参与滚动，
+   窗口再矮、浏览器放大多少倍都不可能被裁。 */
+.owrp-modal { position: relative; }
+.owrp-modal.owrp-pane {
+    display: flex; display: -webkit-flex;
+    flex-direction: column; -webkit-flex-direction: column;
+    overflow: hidden;
+    padding: 0;
+    max-height: 85vh;
+}
+.owrp-pane-body {
+    -webkit-flex: 1 1 auto; flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 24px;
+}
+.owrp-pane-foot {
+    -webkit-flex: 0 0 auto; flex: 0 0 auto;
+    padding: 0 24px 24px;
     background: var(--ow-bg);
+}
+/* 弹窗成了 flex 容器，浮动关闭钮会变成一行 flex 项把内容顶下去 → 改绝对定位 */
+.owrp-pane .ow-modal-close {
+    position: absolute;
+    top: 16px; right: 16px;
+    z-index: 3;
+    float: none;
+}
+.owrp-pane .ow-modal-actions { margin-top: 0; }
+/* 详情弹窗底栏里的口令输入框：与按钮同一行，矮窗口也不用翻页 */
+.owrp-foot-pass {
+    width: auto; min-width: 120px; max-width: 150px;
+    height: 34px;
+    padding: 0 10px;
+    font-size: 13px;
 }
 .owrp-modal h3 { margin-bottom: 12px; }
 
@@ -639,8 +665,10 @@
 
 @media (max-width: 480px) {
     /* 通用弹窗在 360px 屏上是满宽贴边（.ow-modal width:100%），这里收一档 */
-    .owrp-modal { width: 92%; padding: 18px 18px 0; }
-    .owrp-modal .ow-modal-actions { padding: 10px 0 26px; }
+    .owrp-modal { width: 92%; }
+    .owrp-pane-body { padding: 18px; }
+    .owrp-pane-foot { padding: 0 18px 20px; }
+    .owrp-foot-pass { max-width: 110px; }
     .owrp-card { width: 208px; padding: 10px; }
     .owrp-coin { width: 36px; height: 36px; font-size: 12px; }
     .owrp-seg .ow-seg-btn { padding: 0 4px; font-size: 12px; }
