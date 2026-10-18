@@ -1604,6 +1604,14 @@
             } catch (e) {}
             var self = this;
 
+            /* 刷新要停在原来那个 rail 标签上。这里不能直接恢复：插件脚本排在
+               OwChat.init() 之后引入（见 index.php renderChat 收尾），此刻插件标签的
+               onShow 还没注册，切过去只会得到一块空面板。挂 DOMContentLoaded——
+               插件包是页面末尾的阻塞脚本，这个事件必然在它执行完之后才触发。 */
+            var restoreRailTab = function () { self.restoreTab(); };
+            if (d.readyState === 'loading' && d.addEventListener) d.addEventListener('DOMContentLoaded', restoreRailTab);
+            else setTimeout(restoreRailTab, 0);
+
             this.loadConversations();   // 会话列表（群聊+私聊聚合）——私聊路由要靠它取昵称
             this.renderConversations();
             // v1.3.52：通知标签的侧栏行首屏就渲染出来（红点数取自 boot，不必等接口）。
@@ -2480,6 +2488,7 @@
         _sigProbe: null,           // signature 批量接口是否可用（探测一次，缓存结果）
         _tabsExt: [],              // 插件扩展：{ id, label, onShow } 数组
         _tabsInited: false,        // 标签条事件是否已绑定（只绑一次）
+        railTabKey: 'owRailTab',   // 本机记住「刷新前停在哪个 rail 标签」的 sessionStorage 键
 
         /**
          * 插件扩展点：往侧栏标签条追加一个标签页。
@@ -2629,6 +2638,7 @@
             this.setSidebarCollapsed(false);
             if (tab === this.view) return;
             this.view = tab;
+            this._rememberTab(tab);   // 刷新要停在原处（见 _rememberTab）
             // 离开「联系人」标签时，好友通知页随之作废（顶栏那几样要还回房间）
             if (tab !== 'friends') this.exitFriendReqs();
             // 离开通知标签要先还原顶栏：标题、群聊信息按钮、延迟显示都属于房间，
@@ -2690,6 +2700,49 @@
                 if (nlist.classList) nlist.classList[isNotice ? 'add' : 'remove']('is-active');
             }
             if (panels) panels.style.display = (isCore || isNotice) ? 'none' : '';
+        },
+
+        /**
+         * 记住当前 rail 标签。与后台的 sessionStorage.owAdminPage 是同一类需求：
+         * 标签此前只是内存里的 this.view，刷新必然回到写死的 'chat'，
+         * 人在殿堂 / 时光机里按一次 F5 就被拽回消息页。
+         * 为什么用 sessionStorage 而不是 URL：标签是「视图」不是「文档」，
+         * 塞进 ?tab= 就要与 ?room= / ?dm= 做互斥清理，还会让分享链接替别人决定视图。
+         * 代价：只在当前标签页里有效，新开标签或重启浏览器仍从「消息」开始。
+         *
+         * ⚠️ 只存标签，**不要**顺手存 this.room 当作「刷新还是导航」的判据：
+         * 切到联系人 / 插件标签时 blankChatForFriends 会把 this.room 清成 0，
+         * 存下去就是 0，而下次开页 cfg.room 是真实群 id → 比对必然失败 → 恢复整个失效
+         * （2026-10-18 实测：殿堂标签刷新后照样掉回消息页）。
+         * 同一标签页里粘 ?room=9 分享链接会被拽回上一个视图，是这个取舍的代价：
+         * 极少发生、且点一次「消息」就回到该群（room 一直在 URL 里），不值得为它加状态。
+         */
+        _rememberTab: function (tab) {
+            try {
+                if (tab === 'chat') { w.sessionStorage.removeItem(this.railTabKey); return; }
+                w.sessionStorage.setItem(this.railTabKey, tab);
+            } catch (e) {}
+        },
+
+        /**
+         * 首屏恢复标签。**必须在插件包加载完之后调用**（挂载点见 init）：
+         * 插件脚本排在 OwChat.init() 之后（见 index.php renderChat 收尾），
+         * 抢在它前面恢复就只有按钮、没有 onShow，面板会落成「该标签页没有内容」的空态。
+         */
+        restoreTab: function () {
+            var self = this, tab = '';
+            try { tab = w.sessionStorage.getItem(this.railTabKey) || ''; } catch (e) { return; }
+            if (!tab || tab === this.view) return;
+            var drop = function () { try { w.sessionStorage.removeItem(self.railTabKey); } catch (e) {} };
+            // 入口必须真的在 DOM 里：游客没有联系人 / 通知标签，插件停用后它的
+            // data-tab 也不再由服务端渲染 —— 这时留在「消息」比切进空面板好。
+            var bar = $('owRail');
+            var btns = bar ? bar.getElementsByClassName('ow-rail-btn') : [], i, hit = false;
+            for (i = 0; i < btns.length; i++) {
+                if (btns[i].getAttribute('data-tab') === tab) { hit = true; break; }
+            }
+            if (!hit) { drop(); return; }
+            this.switchTab(tab);
         },
 
         /** 插件面板：在 #owSidePanels 里为该标签准备一个容器并回调插件填充 */

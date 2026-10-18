@@ -1559,7 +1559,7 @@ function renderInstall(string $err): void
        . '<div class="ow-form-item"><label>数据库密码</label><input class="ow-input" type="password" name="db_pass"></div></div>'
        . '<div class="ow-form-item"><label>管理员昵称</label><input class="ow-input" name="nickname" required placeholder="2-20 个字符"></div>'
        . '<div class="ow-form-item"><label>管理员邮箱</label><input class="ow-input" type="email" name="email" required></div>'
-       . '<div class="ow-form-item"><label>管理员密码</label><input class="ow-input" type="password" name="password" required></div>'
+       . '<div class="ow-form-item"><label>管理员密码</label><input class="ow-input" type="password" name="password" required autocomplete="new-password"></div>'
        . '<button type="submit" class="ow-btn ow-btn-primary ow-btn-block">开始安装</button>'
        . '<div id="owInstallMsg" class="ow-form-msg"></div></form></div>'
        . '<script>document.getElementById("owInstallForm").onsubmit=function(e){e.preventDefault();'
@@ -1626,7 +1626,10 @@ function renderAuth(string $mode): void
            . ($needMail ? '<div class="ow-form-item"><label>邮箱验证码</label><input class="ow-input" name="code" required></div>' : '')
            // 年龄限制：开启时要求选择出生日期（年/月/日，兼容不支持 date 类型的老浏览器）
            . ageFieldHtml()
-           . '<div class="ow-form-item"><label>密码</label><input class="ow-input" type="password" name="password" required placeholder="至少 6 位"></div>'
+           // 注册密码明文显示（不掩码）：这里设的就是以后唯一能用的那几个字符，
+           // 掩码换来的是「输入法吞字 / 浏览器自动填充改了值」而本人不知道，
+           // 上线后表现为「我没改过密码却登不进去」。找回密码/改密码仍保持掩码。
+           . '<div class="ow-form-item"><label>密码</label><input class="ow-input" type="text" name="password" required spellcheck="false" autocomplete="new-password" placeholder="至少 6 位"></div>'
            . $cvHtml
            . '<button class="ow-btn ow-btn-primary ow-btn-block" type="submit">注 册</button><div class="ow-form-msg"></div></form>'
            . '<div class="ow-auth-links"><a href="?page=login">已有账号，去登录</a><a href="?page=chat">游客登录</a></div>';
@@ -1653,7 +1656,7 @@ function renderAuth(string $mode): void
                . '<button type="button" class="ow-btn ow-btn-ghost" data-sendcode="reset">发验证码</button></div>'
                . '<p style="font-size:12px;color:var(--ow-text-sub);margin-top:4px">' . ow_mail_suffix_tip() . '</p></div>'
                . '<div class="ow-form-item"><label>邮箱验证码</label><input class="ow-input" name="code" required></div>'
-               . '<div class="ow-form-item"><label>新密码</label><input class="ow-input" type="password" name="password" required></div>'
+               . '<div class="ow-form-item"><label>新密码</label><input class="ow-input" type="password" name="password" required autocomplete="new-password"></div>'
                . $cvHtml
                . '<button class="ow-btn ow-btn-primary ow-btn-block" type="submit">重置密码</button><div class="ow-form-msg"></div></form>';
         }

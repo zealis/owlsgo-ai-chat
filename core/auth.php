@@ -270,9 +270,18 @@ class Auth
             Sec::loginFail($cntKey);
             Sec::log('login_fail', $identity);
             $left = 10 - Sec::loginFails($cntKey);
-            // ⚠️ 密码错时 $user 传 null：确认「账号存在」本身就是信息，
-            // 交给插件就能变成账号枚举的侧信道，宁可少给一个字段。
-            return $fail('fail', '邮箱或用户 ID 不正确，或密码错误' . ($left <= 3 ? "，剩余 $left 次尝试机会" : ''), null, $left);
+            $tail = $left <= 3 ? "，剩余 $left 次尝试机会" : '';
+            /* 两种失败必须分开报。合成一句「…或密码错误」的代价是现场级的：
+               管理员把昵称当登录名连撞 8 次，每次都被引导去怀疑「谁改了我的密码」，
+               而真实原因（昵称不是登录标识，见上方查人逻辑）在界面上永远看不到。
+               拆文案不新增账号枚举侧信道——发码口与注册口本来就直报
+               「该邮箱未注册」/「该邮箱已注册」（index.php send_code / register 分支）。
+               ⚠️ 密码错时 $user 仍传 null：确认「账号存在」本身就是信息，
+               交给插件就能变成侧信道，宁可少给一个字段。 */
+            if (!$user) {
+                return $fail('fail', '没有找到这个邮箱或用户 ID（昵称不能用于登录，请用注册邮箱或数字用户 ID）' . $tail, null, $left);
+            }
+            return $fail('fail', '密码错误' . $tail, null, $left);
         }
         if ((int)$user['status'] !== 1) return $fail('disabled', '账号已被禁用', $user);
         // 成功一次就把两种键一起清掉：否则用邮箱登录成功，`001` 那条计数会永远留着
