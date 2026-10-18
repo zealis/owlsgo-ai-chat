@@ -7923,51 +7923,23 @@
         },
 
         /* =====================================================================
-         * 仪表盘「当前时间」段码时钟（v1.4.3，站方参考 ChatNet 的数码管样式）
+         * 仪表盘「当前时间」时钟
          * ---------------------------------------------------------------------
-         * 零依赖：数字用内联 SVG 的七段斜角多边形画 —— 项目不引字体/图标库，
-         * 段码字体那条路走不通；SVG 吃 currentColor，深浅主题跟着令牌一起走。
+         * v1.4.3 用内联 SVG 画七段数码管；站方看了 1 与 4 两版的修法后定「干脆显示数字」，
+         * 所以段码那套（_segShapes / _digitSegs / _segSvg）整块删掉，改成直接排数字。
+         * 零依赖：不引字体文件 —— 字体栈按「有高对比衬线就用，没有退 Georgia / Times」排
+         * （Didot 是 macOS 现成的，Bodoni MT 常见于装了 Office 的 Windows），
+         * 退到底也是系统衬线，不会掉成黑体。
          * 每秒只重画「变了的那一位」（比 data-ch），整块 DOM 不重排；
          * 定时器由上面的 page() 路由器统一停表，切页不留尾巴。
          * =================================================================== */
         _clockTimer: null,
-        /* 数码管惯用段名：A 顶、G 中、D 底，B/C 右上右下、F/E 左上左下（viewBox 44×80） */
-        _segShapes: {
-            A: '7,2 37,2 42,7 37,12 7,12 2,7',
-            B: '37,12 42,17 42,30 37,35 32,30 32,17',
-            C: '37,45 42,50 42,63 37,68 32,63 32,50',
-            D: '7,68 37,68 42,73 37,78 7,78 2,73',
-            E: '7,45 12,50 12,63 7,68 2,63 2,50',
-            F: '7,12 12,17 12,30 7,35 2,30 2,17',
-            G: '7,35 37,35 42,40 37,45 7,45 2,40'
-        },
-        _digitSegs: ['ABCDEF', 'BC', 'ABGED', 'ABGCD', 'FGBC', 'AFGCD', 'AFGECD', 'ABC', 'ABCDEFG', 'ABCDFG'],
-        _segSvg: function (ch) {
-            /* 数字 1 只有右侧两笔（B/C）：照其余数字那样画，笔尖贴着格子右缘、左边空出一大块，
-               站方判它不好看。两笔之间那 10 单位的段码间隙留着也不像「1」—— 实测和冒号一个样。
-               所以这里把 B/C 并成一根竖笔（端点仍是段码的斜角），并整体居中：
-               笔身 x 32..42 → 平移 -15 后 17..27，正好落在 viewBox 中心 22。
-               这一格不画鬼影段（没有那圈灰框，读起来才是一支完整的「1」）；
-               格宽不变（32px 由 CSS 定），所以「1」出现/消失时整排字不会左右抖。 */
-            if (ch === '1') {
-                return '<svg class="ow-clock-d" viewBox="0 0 44 80" aria-hidden="true">'
-                     + '<polygon class="ow-seg ow-seg-on" transform="translate(-15 0)" points="37,12 42,17 42,63 37,68 32,63 32,17"/>'
-                     + '</svg>';
-            }
-            var lit = this._digitSegs[parseInt(ch, 10)] || '', h = '', k;
-            for (k in this._segShapes) {
-                if (!Object.prototype.hasOwnProperty.call(this._segShapes, k)) continue;
-                h += '<polygon class="ow-seg' + (lit.indexOf(k) >= 0 ? ' ow-seg-on' : '')
-                   + '" points="' + this._segShapes[k] + '"/>';
-            }
-            return '<svg class="ow-clock-d" viewBox="0 0 44 80" aria-hidden="true">' + h + '</svg>';
-        },
         clockHtml: function () {
             var face = '', i;
             for (i = 0; i < 6; i++) {
                 face += '<span class="ow-clock-slot" data-i="' + i + '"></span>';
-                // 冒号是两枚点（不是字符）：与段码同一视觉重量，也不会被行高拉偏
-                if (i === 1 || i === 3) face += '<span class="ow-clock-c"><i></i><i></i></span>';
+                // 冒号回到字符本身：数字既然用字体排，两枚点反而和字面的对比度接不上
+                if (i === 1 || i === 3) face += '<span class="ow-clock-c">:</span>';
             }
             // v1.4.4：星期条删了（站方判它是装饰）—— 日期行 + AM/PM 两枚角标足够
             return '<div class="ow-clock">'
@@ -7986,7 +7958,7 @@
                 el = slots[i];
                 if (el.getAttribute('data-ch') !== txt.charAt(i)) {
                     el.setAttribute('data-ch', txt.charAt(i));
-                    el.innerHTML = OwAdmin._segSvg(txt.charAt(i));
+                    el.textContent = txt.charAt(i);
                 }
             }
             var ap = $('owClockAp'); if (ap) ap.textContent = h < 12 ? 'AM' : 'PM';

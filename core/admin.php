@@ -176,6 +176,53 @@ class Admin
             return [false, '未知审核动作'];
         };
 
+        /**
+         * 撤销一条回收站记录（v1.4.5：从 case 'admin_room_trash_undo' 里原样抽出，
+         * 单条与批量共用 —— 恢复逻辑抄两份，改一份忘一份是迟早的事）。
+         * 顺序约束：恢复名称 / 头像 / 状态前，群聊必须仍存在
+         *（若已被删除，必须先撤销对应的「删除」记录）。
+         * @return array [bool, string]
+         */
+        $trashUndo = function (array $actor, int $tid): array {
+            $t = DB::one('SELECT * FROM room_review_trash WHERE id=?', [$tid]);
+            if (!$t) return [false, '回收站记录不存在'];
+            if ((int)$t['undone'] === 1) return [false, '该记录已撤销过'];
+            $before = json_decode((string)$t['before_data'], true) ?: [];
+            $roomId = (int)$t['room_id'];
+            $room = DB::one('SELECT id FROM rooms WHERE id=?', [$roomId]);
+            if ($t['action'] !== 'delete' && !$room) {
+                return [false, '该群聊已被删除，请先在回收站撤销对应的「删除」操作'];
+            }
+            if ($t['action'] === 'reset_name') {
+                DB::run('UPDATE rooms SET name=? WHERE id=?', [(string)$before['name'], $roomId]);
+            } elseif ($t['action'] === 'reset_avatar') {
+                $old = (string)$before['avatar'];
+                // 头像文件从回收目录移回
+                $trashFile = dirname(__DIR__) . '/data/avatar_trash/' . basename($old);
+                $dest = dirname(__DIR__) . '/' . $old;
+                if ($old !== '' && is_file($trashFile)) {
+                    $destDir = dirname($dest);
+                    if (!is_dir($destDir)) @mkdir($destDir, 0775, true);
+                    @rename($trashFile, $dest);
+                }
+                DB::run('UPDATE rooms SET avatar=? WHERE id=?', [$old, $roomId]);
+            } elseif ($t['action'] === 'toggle_status') {
+                DB::run('UPDATE rooms SET status=? WHERE id=?', [(int)$before['status'], $roomId]);
+            } elseif ($t['action'] === 'delete') {
+                if ($room) return [false, '该群聊已存在，无需恢复'];
+                if ($roomId === 1) return [false, '默认群聊不可恢复为删除前状态'];
+                $row = $before['row'] ?? null;
+                if (!is_array($row)) return [false, '快照数据缺失，无法恢复'];
+                $cols = array_keys($row);
+                DB::run('INSERT INTO rooms (' . implode(',', $cols) . ') VALUES (' . implode(',', array_fill(0, count($cols), '?')) . ')',
+                    array_values($row));
+                Plugin::fire('room.restored', [$roomId, $row, $actor]);
+            }
+            DB::run('UPDATE room_review_trash SET undone=1 WHERE id=?', [$tid]);
+            Sec::log('room_undo', (string)$roomId, ['act' => $t['action'], 'trash' => $tid]);
+            return [true, '已撤销'];
+        };
+
         self::requireAdmin($actor);
         $p = fn($k, $d = '') => trim((string)($_POST[$k] ?? $d));
 
@@ -319,12 +366,37 @@ class Admin
                     'msg' => '批量' . ($actB === 'delete' ? '删除' : '处置') . '：成功 ' . $okB . ' 条'
                         . ($failB ? '，失败 ' . $failB . ' 条（' . $lastMsg . '）' : '')]);
 
-            case 'admin_room_trash_list':            case 'admin_room_trash_list':
-                // 回收站：服务端分页
+            case 'admin_room_trash_list':
+                // 回收站：服务端分页 + 搜索（v1.4.5）。三个筛选条件都可空=不限：
+                //   kw     —— 群名模糊；纯数字时同时按群聊 ID 命中（「搜 12」既像群名也像 ID）
+                //   act    —— 处置类型白名单，非法值一律当「全部」（不给拼 SQL 留口子）
+                //   undone —— '0' 未撤销 / '1' 已撤销 / 其它 = 全部
+                // ⚠️ 条件值全走占位符；只有分页两个数字是 CAST 后拼进 LIMIT（? 占位的 LIMIT 不被 MySQL 接受）。
                 $pageT = max(1, (int)$p('page', '1'));
                 $sizeT = min(100, max(1, (int)$p('size', '20')));
-                $totalT = (int)DB::val('SELECT COUNT(*) FROM room_review_trash');
-                $rowsT = DB::all('SELECT * FROM room_review_trash ORDER BY id DESC LIMIT ' . $sizeT . ' OFFSET ' . (($pageT - 1) * $sizeT));
+                $wT = []; $argsT = [];
+                $kwT = trim((string)$p('kw', ''));
+                if ($kwT !== '') {
+                    if (preg_match('/^\d{1,10}$/', $kwT)) {
+                        $wT[] = '(room_id=? OR room_name LIKE ?)';
+                        $argsT[] = (int)$kwT; $argsT[] = '%' . $kwT . '%';
+                    } else {
+                        // ⚠️ 不做 % / _ 转义：MySQL 认反斜杠、SQLite 不认（要 ESCAPE 子句），
+                        // 两边写法不通用；这里是搜索框，通配符顶多让结果宽一点，不涉及越权。
+                        $wT[] = 'room_name LIKE ?';
+                        $argsT[] = '%' . $kwT . '%';
+                    }
+                }
+                $actT = (string)$p('act', '');
+                if (in_array($actT, ['reset_name', 'reset_avatar', 'toggle_status', 'delete'], true)) {
+                    $wT[] = 'action=?'; $argsT[] = $actT;
+                }
+                $undT = (string)$p('undone', '');
+                if ($undT === '0' || $undT === '1') { $wT[] = 'undone=?'; $argsT[] = (int)$undT; }
+                $whereT = $wT ? ' WHERE ' . implode(' AND ', $wT) : '';
+                $totalT = (int)DB::val('SELECT COUNT(*) FROM room_review_trash' . $whereT, $argsT);
+                $rowsT = DB::all('SELECT * FROM room_review_trash' . $whereT . ' ORDER BY id DESC LIMIT '
+                    . $sizeT . ' OFFSET ' . (($pageT - 1) * $sizeT), $argsT);
                 foreach ($rowsT as &$r) {
                     $r['before_data'] = json_decode((string)$r['before_data'], true) ?: new stdClass();
                 }
@@ -332,46 +404,46 @@ class Admin
                 Api::json(['ok' => true, 'data' => ['list' => $rowsT, 'total' => $totalT, 'page' => $pageT, 'size' => $sizeT]]);
 
             case 'admin_room_trash_undo':
-                // 撤销审核操作。顺序约束：恢复名称/头像/状态前，群聊必须仍存在
-                //（若已被删除，必须先撤销对应的「删除」记录）。
-                $tid = (int)$p('id', '0');
-                $t = DB::one('SELECT * FROM room_review_trash WHERE id=?', [$tid]);
-                if (!$t) Api::json(['ok' => false, 'msg' => '回收站记录不存在']);
-                if ((int)$t['undone'] === 1) Api::json(['ok' => false, 'msg' => '该记录已撤销过']);
-                $before = json_decode((string)$t['before_data'], true) ?: [];
-                $roomId = (int)$t['room_id'];
-                $room = DB::one('SELECT id FROM rooms WHERE id=?', [$roomId]);
-                if ($t['action'] !== 'delete' && !$room) {
-                    Api::json(['ok' => false, 'msg' => '该群聊已被删除，请先在回收站撤销对应的「删除」操作']);
+                // 单条撤销：逻辑在 $trashUndo（v1.4.5 抽出，与批量共用）
+                [$okU, $msgU] = $trashUndo($actor, (int)$p('id', '0'));
+                Api::json(['ok' => $okU, 'msg' => $msgU]);
+
+            case 'admin_room_trash_batch':
+                // 批量撤销（v1.4.5）：目前只有 undo 这一个动作，接口形状与 admin_room_batch 一致。
+                // ⚠️ 处理顺序固定「删除优先、各自按 id 升序」：单条撤销就有依赖 —— 群聊被删后，
+                // 必须先撤销「删除」把群恢复，同一群的名称 / 头像 / 封禁撤销才不会被「群聊不存在」挡掉。
+                // 若按勾选顺序处理，先点到的那条会把后面本该成功的挡在门外（用户看到的是「一半莫名失败」）。
+                $actBt = (string)$p('act', '');
+                if ($actBt !== 'undo') Api::json(['ok' => false, 'msg' => '不支持的批量动作']);
+                $idsBt = [];
+                foreach (explode(',', (string)$p('ids', '')) as $iBt) {
+                    $iBt = (int)trim($iBt);
+                    if ($iBt > 0) $idsBt[] = $iBt;
                 }
-                if ($t['action'] === 'reset_name') {
-                    DB::run('UPDATE rooms SET name=? WHERE id=?', [(string)$before['name'], $roomId]);
-                } elseif ($t['action'] === 'reset_avatar') {
-                    $old = (string)$before['avatar'];
-                    // 头像文件从回收目录移回
-                    $trashFile = dirname(__DIR__) . '/data/avatar_trash/' . basename($old);
-                    $dest = dirname(__DIR__) . '/' . $old;
-                    if ($old !== '' && is_file($trashFile)) {
-                        $destDir = dirname($dest);
-                        if (!is_dir($destDir)) @mkdir($destDir, 0775, true);
-                        @rename($trashFile, $dest);
-                    }
-                    DB::run('UPDATE rooms SET avatar=? WHERE id=?', [$old, $roomId]);
-                } elseif ($t['action'] === 'toggle_status') {
-                    DB::run('UPDATE rooms SET status=? WHERE id=?', [(int)$before['status'], $roomId]);
-                } elseif ($t['action'] === 'delete') {
-                    if ($room) Api::json(['ok' => false, 'msg' => '该群聊已存在，无需恢复']);
-                    if ($roomId === 1) Api::json(['ok' => false, 'msg' => '默认群聊不可恢复为删除前状态']);
-                    $row = $before['row'] ?? null;
-                    if (!is_array($row)) Api::json(['ok' => false, 'msg' => '快照数据缺失，无法恢复']);
-                    $cols = array_keys($row);
-                    DB::run('INSERT INTO rooms (' . implode(',', $cols) . ') VALUES (' . implode(',', array_fill(0, count($cols), '?')) . ')',
-                        array_values($row));
-                    Plugin::fire('room.restored', [$roomId, $row, $actor]);
+                $idsBt = array_values(array_unique($idsBt));
+                if (!$idsBt) Api::json(['ok' => false, 'msg' => '未选择回收站记录']);
+                if (count($idsBt) > 100) Api::json(['ok' => false, 'msg' => '单次最多批量撤销 100 条']);
+                $phBt = implode(',', array_fill(0, count($idsBt), '?'));
+                $preBt = DB::all('SELECT id, action FROM room_review_trash WHERE id IN (' . $phBt . ')', $idsBt);
+                $delBt = []; $othBt = [];
+                foreach ($preBt as $prBt) {
+                    if ($prBt['action'] === 'delete') $delBt[] = (int)$prBt['id'];
+                    else $othBt[] = (int)$prBt['id'];
                 }
-                DB::run('UPDATE room_review_trash SET undone=1 WHERE id=?', [$tid]);
-                Sec::log('room_undo', (string)$roomId, ['act' => $t['action'], 'trash' => $tid]);
-                Api::json(['ok' => true, 'msg' => '已撤销']);
+                sort($delBt); sort($othBt);
+                $okBt = 0; $failBt = 0; $lastBt = '';
+                foreach (array_merge($delBt, $othBt) as $tidBt) {
+                    [$ok2, $msg2] = $trashUndo($actor, $tidBt);
+                    if ($ok2) { $okBt++; } else { $failBt++; $lastBt = $msg2; }
+                }
+                // 勾选里已经不存在的记录（被人先撤销/清掉了）也算失败，别让人以为全成功
+                if (count($idsBt) > count($preBt)) {
+                    $failBt += count($idsBt) - count($preBt);
+                    $lastBt = '部分记录已不在回收站';
+                }
+                Api::json(['ok' => $okBt > 0,
+                    'msg' => '批量撤销：成功 ' . $okBt . ' 条'
+                        . ($failBt ? '，失败 ' . $failBt . ' 条（' . $lastBt . '）' : '')]);
 
             case 'admin_room_del':
                 $id = (int)$p('id');

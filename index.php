@@ -468,7 +468,7 @@ if ($action !== '') {
     // 校验：仅接受 POST + 一次性操作票据（先调 ?action=ticket 签发，用后即焚，防重放/防劫持）。
     $SENSITIVE = [
         'logout', 'msg_delete', 'recall', 'sticker_del',
-        'admin_room_del', 'admin_room_trash_undo', 'admin_room_batch',
+        'admin_room_del', 'admin_room_trash_undo', 'admin_room_trash_batch', 'admin_room_batch',
         'admin_ann_del', 'admin_word_del', 'admin_plugin_uninstall',
         // v1.1.11 群成员变更：邀请/移出/重置邀请码都会改变谁能进群，
         // 与 ban-manager 的禁言同属「谁能看到什么」的边界，一律走一次性票据。

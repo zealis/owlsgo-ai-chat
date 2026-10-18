@@ -2614,31 +2614,32 @@ span.ow-panel-entry-ico.ow-avatar { width: 24px; height: 24px; line-height: 24px
 /* 快捷访问跳过去后闪一下（一次性 keyframes，不改元素本身的状态 —— 摘掉类即恢复） */
 .ow-set-hit { animation: owSetHit 1.6s ease-out; }
 @keyframes owSetHit { 0% { box-shadow: 0 0 0 3px var(--ow-primary); border-radius: 6px; } 100% { box-shadow: 0 0 0 3px transparent; } }
-/* ---------- 仪表盘「当前时间」段码时钟（v1.4.3，站方参考 ChatNet 的数码管样式） ----------
-   v1.4.4 按站方要求改两处：**面板底走令牌**（浅色即白底深字，深色模式自动反相，
-   不再写死深色），并**删掉星期条**（那排 MON–SUN 只是把「今天星期几」再说一遍，
-   旁边日期行一眼可得 —— 属装饰）。
-   段码的「鬼影段」是未点亮段的淡影（装饰，不参与阅读）；日期与 AM 档用 --ow-text-sub，
+/* ---------- 仪表盘「当前时间」时钟（v1.4.3 段码数码管 → v1.5.1 站方定「干脆显示数字」） ----------
+   段码那套 SVG（含鬼影段、1 与 4 的补笔）整块删了，直接排数字。
+   字体栈不引任何字体文件：Didot（macOS 现成）→ Bodoni MT（装了 Office 的 Windows 常见）
+   → Playfair Display（有人本地装过）→ Georgia / Times New Roman 兜底，
+   退到底也是系统衬线，不会掉成黑体；参考样式就是这种高对比衬线字。
+   面板底与字色仍走令牌（浅色白底深字，深色自动反相）；日期与 AM 档用 --ow-text-sub，
    与 .ow-stat-l 同一对配色，对比度沿用令牌基线。 */
 .ow-clock {
     position: relative; background: var(--ow-surface); color: var(--ow-text-title);
     border: 1px solid var(--ow-border); border-radius: 8px;
-    padding: 16px 18px 34px; margin-bottom: 16px; overflow: hidden;
+    padding: 10px 18px 34px; margin-bottom: 16px; overflow: hidden;
 }
-.ow-clock-face { display: flex; align-items: center; justify-content: center; gap: 5px; }
-.ow-clock-slot { display: block; }
-.ow-clock-d { display: block; height: 58px; width: 32px; }
-.ow-clock-d .ow-seg { fill: currentColor; opacity: .1; }
-.ow-clock-d .ow-seg-on { opacity: 1; }
-/* 冒号用两枚点而非字符：与段码同一视觉重量，也不会被行高拉偏 */
-.ow-clock-c { display: flex; flex-direction: column; justify-content: center; gap: 15px; padding: 0 3px; }
-.ow-clock-c i { width: 6px; height: 6px; border-radius: 1px; background: currentColor; opacity: .75; }
+.ow-clock-face {
+    display: flex; align-items: baseline; justify-content: center;
+    font-family: "Didot", "Bodoni MT", "Playfair Display", Georgia, "Times New Roman", "Songti SC", serif;
+    font-size: 62px; line-height: 1.12; font-weight: 400;
+    /* lining-nums：别用旧式数字（3 4 5 7 9 会掉到基线下头，一排字上下乱跳）
+       tabular-nums：六位等宽，秒位跳动时整排不左右抖 */
+    font-variant-numeric: lining-nums tabular-nums;
+}
+.ow-clock-slot { display: block; width: .58em; text-align: center; }
+.ow-clock-c { display: block; width: .34em; text-align: center; }
 .ow-clock-ap { position: absolute; right: 18px; bottom: 12px; font-size: 13px; letter-spacing: 1px; color: var(--ow-text-sub); }
 .ow-clock-date { position: absolute; left: 18px; bottom: 12px; font-size: 12px; letter-spacing: .5px; color: var(--ow-text-sub); font-variant-numeric: tabular-nums; }
 @media (max-width: 720px) {
-    .ow-clock-d { height: 38px; width: 21px; }
-    .ow-clock-c { gap: 9px; }
-    .ow-clock-c i { width: 4px; height: 4px; }
+    .ow-clock-face { font-size: 40px; }
 }
 .ow-table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--ow-bg); }
 .ow-table th, .ow-table td { padding: 8px 10px; border-bottom: 1px solid var(--ow-border); text-align: left; }
