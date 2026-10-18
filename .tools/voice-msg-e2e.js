@@ -55,14 +55,13 @@ function ok(label, cond, extra) {
     //  · wss://localhost/ws —— ws 守护未启动
     //  · 「签名验证失败」403 —— 登录 / 换页瞬间用了上一页的旧密钥，
     //    核心 OwApi.onSignExpired 会自动刷新重试（既有行为，不是缺陷）
-    //  · refreshBotTags 的 appendChild TypeError —— **核心 chat.js 既有未修 bug**
-    //    （buildMessage 返回 {cls,html} 对象被当节点 appendChild），登记机器人时触发。
-    //    与本插件无关，按项目纪律不改核心，这里只作已知噪音放行。
     const NOISE = /WebSocket connection to|plugin_e2ee_dm_state/;
-    const KNOWN_CORE_BUG = /Failed to execute 'appendChild' on 'Node'/;
     const SIGN_RETRY = /签名验证失败/;
     // console 的 403 文本不带 URL，只靠 NOISE 认不出来 → 单独识别这一类
     const NOISE_TEXT = /Failed to load resource.*403/;
+    // 注：曾为「refreshBotTags 的 appendChild TypeError」（核心既有 bug，
+    // v1.5.9 已修，见 .tools/refresh-bots-test.js）开过白名单，现已撤掉 ——
+    // bug 修好之后还放行同类错误，等于把真错误重新藏起来。
     function watch(page, tag) {
         page.on('response', r => {
             if (r.status() < 400) return;
@@ -73,10 +72,7 @@ function ok(label, cond, extra) {
                 errs.push(`http ${r.status()} ${u} → ${t.slice(0, 140)}`);
             }).catch(() => {});
         });
-        page.on('pageerror', e => {
-            if (KNOWN_CORE_BUG.test(e.message)) return;   // 见上：核心既有 bug
-            errs.push(`pageerror[${tag}]: ${e.message}`);
-        });
+        page.on('pageerror', e => errs.push(`pageerror[${tag}]: ${e.message}`));
         page.on('console', m => {
             if (m.type() !== 'error') return;
             const txt = m.text();

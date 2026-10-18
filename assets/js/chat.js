@@ -3447,18 +3447,33 @@
         refreshBotTags: function () {
             var box = $('owMessages');
             if (!box || !box.children.length) return;
-            var nodes = box.children, i, m, frag = w.document.createDocumentFragment(), need = false, node;
+            var nodes = box.children, i, m, frag = w.document.createDocumentFragment(), need = false, node, b, div;
             for (i = 0; i < nodes.length; i++) {
                 node = nodes[i];
                 m = this.msgCache[parseInt(String(node.id).replace('owMsg', ''), 10)];
-                if (m) { frag.appendChild(this.buildMessage(m)); need = true; }
-                else frag.appendChild(node.cloneNode(true));   // 日期分隔条之类的非消息节点，原样留着
+                // buildMessage 返回的是 {cls, html} —— 必须自己建 div 再填，不能
+                // 直接 appendChild（那是对象不是节点，抛 NotFoundError: 参数 1 不是 Node）。
+                // 与 addMessage / addMessageBefore / addPending 三处同一套写法。
+                if (m) {
+                    b = this.buildMessage(m);
+                    div = w.document.createElement('div');
+                    div.className = b.cls;
+                    div.id = 'owMsg' + m.id;
+                    div.innerHTML = b.html;
+                    frag.appendChild(div);
+                    if (b.html.indexOf('ow-file-name') >= 0) scheduleFitFileName(div);
+                    need = true;
+                } else {
+                    frag.appendChild(node.cloneNode(true));   // 日期分隔条之类的非消息节点，原样留着
+                }
             }
             if (!need) return;                        // 一条消息都没有：别白清一次 DOM
             var keepTop = box.scrollTop;              // 重画会回到顶部，滚动位置要还回去
             box.innerHTML = '';
             box.appendChild(frag);
             box.scrollTop = keepTop;
+            // v1.2.18：文件名省略要在**入 DOM 之后**量宽，重画同理
+            if (box.getElementsByClassName) scheduleFitFileName(box);
         },
         _fireRoomSwitch: function () {
             for (var i = 0; i < this._roomSwitchHooks.length; i++) {
