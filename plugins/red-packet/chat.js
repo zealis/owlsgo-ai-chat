@@ -77,7 +77,9 @@
        ===================================================================== */
 
     function segHtml() {
-        var map = [['normal', '普通'], ['random', '随机'], ['password', '口令'], ['welfare', '福利']];
+        // 私聊只发普通红包：其它三种连标签都不渲染，免得点进去再被服务端拒
+        var map = RP.isDm ? [['normal', '普通']]
+                          : [['normal', '普通'], ['random', '随机'], ['password', '口令'], ['welfare', '福利']];
         var h = '';
         for (var i = 0; i < map.length; i++) {
             h += '<button class="ow-seg-btn' + (RP.kind === map[i][0] ? ' is-active' : '') + '"'
@@ -96,6 +98,12 @@
                + ' placeholder="支付宝口令：xxxxxx&#10;密钥：XXXX-XXXX-XXXX&#10;CDKey：ABCD-EFGH-IJKL"'
                + ' oninput="OwRP.onItems()"></textarea>'
                + '<div class="owrp-hint" id="owRpLines">共 0 条</div></div>';
+        } else if (RP.isDm) {
+            // 私聊红包：个数固定 1 份，只问总金额
+            h += '<div class="ow-form-item"><label>总金额（' + pn + '）</label>'
+               + '<input class="ow-input" id="owRpTotal" type="number" min="1" inputmode="numeric"'
+               + ' value="' + esc(RP.draft.total) + '" placeholder="0" oninput="OwRP.onNum()"></div>'
+               + '<div class="owrp-hint">私聊红包固定 1 份，直接发给对方</div>';
         } else {
             h += '<div class="owrp-row">'
                + '<div class="ow-form-item"><label>红包个数</label>'
@@ -120,6 +128,10 @@
     }
 
     function tipHtml() {
+        if (RP.isDm) {
+            return '私聊红包只能发普通红包，固定 1 份；红包总额将从你的账户中直接扣除，'
+                 + '对方点开即得。';
+        }
         return TIP[RP.kind].replace(/\{n\}/g, esc(RP.pn));
     }
 
@@ -127,6 +139,8 @@
         if (!OwChat.cfg.me) { toast('请先登录后再发红包'); return; }
         if (RP.dmCheck()) return;
         RP.busy = false;
+        RP.isDm = !!OwChat.dm;          // 私聊视图：只给普通红包、不给个数
+        if (RP.isDm) RP.kind = 'normal';
         OwChat.openModal(
             '<h3>发红包</h3>'
             + '<div class="ow-seg owrp-seg" id="owRpSeg">' + segHtml() + '</div>'
@@ -144,11 +158,12 @@
         onNum();
     }
 
-    /** 私聊 / 未进入群聊时不给发：先提示，避免填完表单才被服务端拒 */
+    /** 没有可用会话（未选房间、通知流里）就不给发：先提示，避免填完表单才被服务端拒 */
     RP.dmCheck = function () {
-        if (OwChat.noticeMode) { toast('请先回到群聊再发红包'); return true; }
-        if (!OwChat.dm && (parseInt(OwChat.room, 10) || 0) > 0) return false;
-        toast(OwChat.dm ? '私聊中不支持发红包，请在群聊里发' : '请先从左侧进入一个群聊');
+        if (OwChat.noticeMode) { toast('请先回到群聊或私聊再发红包'); return true; }
+        if (OwChat.dm) return false;                       // 私聊：可以发（只限普通红包）
+        if ((parseInt(OwChat.room, 10) || 0) > 0) return false;
+        toast('请先从左侧选择一个群聊或联系人');
         return true;
     };
 
@@ -240,6 +255,10 @@
 
         if (RP.kind === 'welfare') {
             if (countLines(items) < 1) { showErr('请至少填写一条福利内容（每行一条）'); return; }
+        } else if (RP.isDm) {
+            // 私聊：个数固定 1，只校验金额
+            if (tot < 1) { showErr('请填写红包总额'); return; }
+            if (tot > RP.balance) { showErr('余额不足，当前 ' + RP.balance + ' ' + RP.pn); return; }
         } else {
             if (cnt < 1) { showErr('请填写红包个数'); return; }
             if (tot < 1) { showErr('请填写红包总额'); return; }
@@ -257,8 +276,9 @@
 
         OwApi.post('plugin_red_packet_create', {
             kind: RP.kind,
-            room_id: (parseInt(OwChat.room, 10) || 0),
-            count: RP.kind === 'welfare' ? '' : cnt,
+            room_id: RP.isDm ? 0 : (parseInt(OwChat.room, 10) || 0),
+            to_user_id: RP.isDm ? (OwChat.dm && OwChat.dm.id) || 0 : 0,
+            count: (RP.kind === 'welfare' || RP.isDm) ? '' : cnt,
             total: RP.kind === 'welfare' ? '' : tot,
             password: RP.kind === 'password' ? pass : '',
             blessing: String(RP.draft.bless || '').replace(/^\s+|\s+$/g, ''),

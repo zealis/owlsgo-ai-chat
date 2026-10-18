@@ -44,7 +44,8 @@ function owRPBoot(): void
     // 表结构版本闸门：每次聊天页加载都跑 4 条 CREATE + 5 次索引探测太浪费
     //（MySQL 的 createIndex 还要查 information_schema）。版本一致时只留一条 SELECT；
     // 顺手探一下主表在不在 —— 只带 settings 的库还原会绕过建表，不能让插件带着空表跑。
-    if (DB::setting('owrp_schema', '') === '1') {
+    // v1.0.7 私聊红包：schema 升到 2，新增 to_user_id 列（存量库靠 ensureColumn 补）。
+    if (DB::setting('owrp_schema', '') === '2') {
         try {
             DB::val('SELECT id FROM plugin_red_packet LIMIT 1');
             return;
@@ -56,6 +57,7 @@ function owRPBoot(): void
     DB::run("CREATE TABLE IF NOT EXISTS plugin_red_packet (
         id {$id},
         room_id INT NOT NULL DEFAULT 0,
+        to_user_id INT NOT NULL DEFAULT 0,
         sender_id INT NOT NULL DEFAULT 0,
         sender_nick VARCHAR(60) NOT NULL DEFAULT '',
         kind VARCHAR(12) NOT NULL DEFAULT 'normal',
@@ -95,13 +97,17 @@ function owRPBoot(): void
     DB::createIndex('owrp_packet_sender', 'plugin_red_packet', 'sender_id,created_at');
     DB::createIndex('owrp_item_pid', 'plugin_red_packet_item', 'packet_id,claim_user');
 
+    // v1.0.7：私聊红包（room_id=0 + to_user_id）。存量库补列，新建库上面已带。
+    DB::ensureColumn('plugin_red_packet', 'to_user_id', 'int', '0');
+    DB::createIndex('owrp_packet_to', 'plugin_red_packet', 'to_user_id,created_at');
+
     // 插件配置（k-v）：单笔上限 / 有效期 / 个数上限
     DB::run("CREATE TABLE IF NOT EXISTS plugin_red_packet_cfg (
         k VARCHAR(64) PRIMARY KEY,
         v VARCHAR(255) NOT NULL DEFAULT ''
     )");
 
-    DB::setSetting('owrp_schema', '1');
+    DB::setSetting('owrp_schema', '2');
 }
 owRPBoot();   // 顶层建表是 PLUGIN.md 允许的副作用（与 chat-background / login-logs 同做法）
 
@@ -240,6 +246,22 @@ function owRPItemContent(int $itemId): string
 }
 
 /**
+ * 这个访问者有没有资格看/领这条红包。
+ *   · 群聊红包：与「能不能进这个群」同一口径（roomAccessOk），群对象由调用方缓存；
+ *   · 私聊红包（room_id=0）：只有发包人本人和接收人（to_user_id）看得见 ——
+ *     私聊消息本来就不对第三者可见，红包也不该例外。
+ */
+function owRPCanSee(array $p, array $actor): bool
+{
+    $uid = ($actor['kind'] ?? '') === 'user' ? (int)($actor['id'] ?? 0) : 0;
+    if ((int)$p['room_id'] === 0) {
+        return $uid > 0 && ($uid === (int)$p['sender_id'] || $uid === (int)$p['to_user_id']);
+    }
+    $room = Chat::room((int)$p['room_id']);
+    return $room && Chat::roomAccessOk($room, $actor);
+}
+
+/**
  * 领取一个红包。返回 [ok, msg, extra]
  * @param array  $actor 当前访问者
  * @param int    $pid   红包 ID
@@ -269,9 +291,8 @@ function owRPDoClaim(array $actor, int $pid, string $pass): array
     if ((int)$p['expire_at'] <= time()) return [false, '红包已过期', []];
     if ((int)$p['remain_cnt'] <= 0) return [false, '手慢了，红包已领完', []];
 
-    // 领取者必须进得去这个群（能看见消息却进不去，说明房间权限变了）
-    $room = Chat::room((int)$p['room_id']);
-    if (!$room || !Chat::roomAccessOk($room, $actor)) return [false, '你已不在该群聊中，无法领取', []];
+    // 领取者必须看得见这个红包（群聊看房间权限，私聊看是不是本人/对方）
+    if (!owRPCanSee($p, $actor)) return [false, '你无权领取这个红包', []];
 
     if ((string)$p['kind'] === 'password') {
         if ($pass === '') return [false, '请输入口令', []];
@@ -463,13 +484,28 @@ Plugin::route('plugin_red_packet_create', function (array $ctx) {
     $kind = (string)($post['kind'] ?? '');
     if (!isset($kinds[$kind])) Api::json(['ok' => false, 'msg' => '红包类型不正确']);
 
-    // 只能在群聊里发（私聊没有「多人抢」的语义，也避免与好友关系耦合）
-    $roomId = (int)($post['room_id'] ?? 0);
-    if ($roomId <= 0) Api::json(['ok' => false, 'msg' => '私聊中不支持发红包，请在群聊里发']);
-    $room = Chat::room($roomId);
-    if (!$room) Api::json(['ok' => false, 'msg' => '群聊不存在或已解散']);
-    if (!Chat::roomAccessOk($room, $actor)) Api::json(['ok' => false, 'msg' => '你已不在该群聊中']);
-    if (!Chat::isMember($room, $actor)) Api::json(['ok' => false, 'msg' => '请先加入该群聊后再发红包']);
+    // 群聊 / 私聊两条通道。私聊（v1.0.7 起）：只能发普通红包、个数固定 1 份，
+    // 且必须先互为好友（与核心 Chat::send 的私聊口径一致，这里提前判是为了给准话）。
+    $roomId   = (int)($post['room_id'] ?? 0);
+    $toUserId = (int)($post['to_user_id'] ?? 0);
+    $isDm     = ($roomId === 0);
+    $toNick   = '';
+    if ($isDm) {
+        if ($toUserId <= 0) Api::json(['ok' => false, 'msg' => '请选择要发送私聊红包的对象']);
+        if ($toUserId === $uid) Api::json(['ok' => false, 'msg' => '不能给自己发私聊红包']);
+        if ($kind !== 'normal') Api::json(['ok' => false, 'msg' => '私聊里只能发普通红包']);
+        $peer = DB::one('SELECT id, nickname FROM users WHERE id=? AND status=1', [$toUserId]);
+        if (!$peer) Api::json(['ok' => false, 'msg' => '对方不存在或已被禁用']);
+        if (!Chat::areFriends($uid, $toUserId)) {
+            Api::json(['ok' => false, 'msg' => '你们还不是好友，先加好友才能私聊发红包']);
+        }
+        $toNick  = (string)$peer['nickname'];
+    } else {
+        $room = Chat::room($roomId);
+        if (!$room) Api::json(['ok' => false, 'msg' => '群聊不存在或已解散']);
+        if (!Chat::roomAccessOk($room, $actor)) Api::json(['ok' => false, 'msg' => '你已不在该群聊中']);
+        if (!Chat::isMember($room, $actor)) Api::json(['ok' => false, 'msg' => '请先加入该群聊后再发红包']);
+    }
 
     $maxTotal = owRPCfgInt('max_total', 100000);
     $maxCnt   = owRPCfgInt('max_count', 100);
@@ -499,6 +535,8 @@ Plugin::route('plugin_red_packet_create', function (array $ctx) {
         $cnt = count($items);
         $total = 0;
     } else {
+        // 私聊红包不定义个数：固定 1 份（前端不渲染个数输入，这里也不信前端）
+        if ($isDm) $cnt = 1;
         if ($cnt < 1 || $cnt > $maxCnt) Api::json(['ok' => false, 'msg' => '红包个数需在 1 ~ ' . $maxCnt . ' 之间']);
         if ($total < 1) Api::json(['ok' => false, 'msg' => '请填写红包总金额']);
         if ($total > $maxTotal) Api::json(['ok' => false, 'msg' => '单个红包总额不能超过 ' . $maxTotal . ' ' . $pn]);
@@ -527,6 +565,7 @@ Plugin::route('plugin_red_packet_create', function (array $ctx) {
     $now = time();
     $pid = DB::insert('plugin_red_packet', [
         'room_id'      => $roomId,
+        'to_user_id'   => $isDm ? $toUserId : 0,
         'sender_id'    => $uid,
         'sender_nick'  => mb_substr((string)($actor['nickname'] ?? ''), 0, 40),
         'kind'         => $kind,
@@ -553,6 +592,8 @@ Plugin::route('plugin_red_packet_create', function (array $ctx) {
     $content = ($kind === 'welfare' ? '🎁 福利红包：' : '🧧 ') . $blessing;
     try {
         $res = Chat::send($actor, $roomId, 'text', $content, [
+            'to_user_id' => $isDm ? $toUserId : '',
+            'to_nickname' => $toNick,
             'client_id' => 'rp' . $pid . 'x' . bin2hex(random_bytes(4)),
         ]);
     } catch (Throwable $e) {
@@ -598,14 +639,10 @@ Plugin::route('plugin_red_packet_cards', function (array $ctx) {
 
     $claimed = $uid > 0 ? owRPClaimedMap($uid, array_column($rows, 'id')) : [];
     $items = [];
-    $roomCache = [];
     foreach ($rows as $p) {
-        // 消息 ID 是连号的，不校验房间就等于给了「猜别人的红包金额/祝福语」的接口。
-        // 判定与「能不能看见这个群」同一口径（canEnter），群对象在本次请求内缓存。
-        $rid = (int)$p['room_id'];
-        if (!array_key_exists($rid, $roomCache)) $roomCache[$rid] = Chat::room($rid);
-        $room = $roomCache[$rid];
-        if (!$room || !Chat::roomAccessOk($room, $actor)) continue;
+        // 消息 ID 是连号的，不校验可见性就等于给了「猜别人的红包金额/祝福语」的接口。
+        // 群聊走 roomAccessOk，私聊走「是不是本人/对方」（owRPCanSee）。
+        if (!owRPCanSee($p, $actor)) continue;
         $pid = (int)$p['id'];
         $items[(string)(int)$p['msg_id']] = owRPPayload($p, $uid, isset($claimed[$pid]), (int)($claimed[$pid] ?? 0));
     }
@@ -620,8 +657,7 @@ Plugin::route('plugin_red_packet_info', function (array $ctx) {
     $pid = (int)($ctx['post']['id'] ?? 0);
     $p = DB::one('SELECT * FROM plugin_red_packet WHERE id=?', [$pid]);
     if (!$p) Api::json(['ok' => false, 'msg' => '红包不存在']);
-    $room = Chat::room((int)$p['room_id']);
-    if (!$room || !Chat::roomAccessOk($room, $actor)) Api::json(['ok' => false, 'msg' => '你已不在该群聊中']);
+    if (!owRPCanSee($p, $actor)) Api::json(['ok' => false, 'msg' => '你无权查看这个红包']);
 
     $own = DB::one('SELECT * FROM plugin_red_packet_claim WHERE packet_id=? AND user_id=?', [$pid, $uid]);
     $claims = DB::all('SELECT c.amount, c.created_at, c.item_id, u.nickname
