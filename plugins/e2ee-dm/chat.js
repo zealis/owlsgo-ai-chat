@@ -20,12 +20,12 @@
 (function () {
     'use strict';
     var W = window;
-    if (!W.OWEE || !W.OWEE.available()) return;
-    if (!W.OwApi || !W.OwChat) return;
+    var started = false;
 
     var DBNAME = 'owee', STORE = 'kv';
     var keys = null;                 // {devId, identity, spk, opks, opkNext}
-    var sessions = {};               // peerUid -> {peer, peerDev, peerIk, ad, state, ekPub, setup:{spk,opk}, confirmed}
+    var sessions = {};               // peerUid -> 我发起的会话（发送用）
+    var recv = {};                   // peerUid -> 我接收的会话（解密对方消息用）
     var convState = {};              // peerUid -> true/false（会话是否已开启加密）
     var mode = null;                 // off | optin
     var dbp = null;                  // IndexedDB 连接
@@ -118,15 +118,28 @@
 
     /* ===================== 会话 ===================== */
 
+    /**
+     * 两条会话，不是一个会话：
+     *   sessions[peer] —— 我**发起**的会话（我点开启时建立），用来给对方发消息；
+     *   recv[peer]     —— 我**接收**的会话（从对方信封的握手字段重算），用来解对方的消息。
+     * 为什么必须分开：X3DH 是有方向的，A 拿 B 的密钥包建会话、B 也拿 A 的密钥包建会话，
+     * 得到的是两条互不相干的棘轮。若只留一个槽位，后建的那个会把前一个覆盖掉 ——
+     * 表现为「我自己发的消息对方收得到，对方发的我全解不开」。
+     */
     function saveSessions() {
-        var out = {};
-        for (var k in sessions) if (sessions.hasOwnProperty(k)) out[k] = sessions[k];
+        var out = { send: {}, recv: {} }, k;
+        for (k in sessions) if (sessions.hasOwnProperty(k)) out.send[k] = sessions[k];
+        for (k in recv) if (recv.hasOwnProperty(k)) out.recv[k] = recv[k];
         return idbSet('sessions', out);
     }
 
     function loadSessions() {
         return idbGet('sessions').then(function (s) {
-            sessions = s || {};
+            s = s || {};
+            // 兼容旧格式（曾经把两种会话混在一个对象里）：整体当作发送会话，
+            // 接收会话由下一条带握手字段的消息重建。
+            sessions = s.send || (s.recv ? {} : (s.peer ? {} : s));
+            recv = s.recv || {};
             return sessions;
         });
     }
@@ -171,7 +184,7 @@
                     peer: String(peerId), peerDev: env.s || '', peerIk: env.si,
                     ad: r.ad, state: st, ekPub: null, setup: null, confirmed: true
                 };
-                sessions[String(peerId)] = s;
+                recv[String(peerId)] = s;
                 return saveSessions().then(function () { return s; });
             });
         });
@@ -214,6 +227,7 @@
             var s = sessions[k];
             if (s && r.peer_dev && s.peerDev && s.peerDev !== r.peer_dev) {
                 delete sessions[k];
+                delete recv[k];
                 saveSessions();
                 W.toast('对方已更换加密设备，下次发送时会重新建立会话', 3200);
             }
@@ -223,8 +237,12 @@
 
     /* ===================== 发送 ===================== */
 
-    var origSend = W.OwChat.send;
-    W.OwChat.send = function (opt) {
+    /** 包住核心的 send：只拦「私聊 + 纯文字」，其余原样放行 */
+    function installSendHook() {
+        if (installSendHook.done) return;
+        installSendHook.done = true;
+        var origSend = W.OwChat.send;
+        W.OwChat.send = function (opt) {
         opt = opt || {};
         var oc = W.OwChat;
         var dm = oc.dm;
@@ -266,7 +284,8 @@
         }).catch(function (e) {
             W.toast((e && e.message) || '加密失败，请稍后重试');
         });
-    };
+        };
+    }
 
     /* ===================== 解密渲染 ===================== */
 
@@ -313,11 +332,14 @@
             }
             return loadKeys().then(function () {
                 if (!keys) throw new Error('本设备没有加密密钥（可能清理过浏览器数据或换了设备）');
-                var s = sessions[String(peer)];
+                var s = recv[String(peer)];
                 if (s && env.si && s.peerIk && env.si !== s.peerIk) {
                     // 对方身份密钥变了：可能是换设备，也可能是中间人。必须显式告警。
                     node.classList.add('owed-warn');
                 }
+                // 没有接收会话时，用信封里的握手字段现场重建一条（我就是收方）。
+                // 解不动且信封带握手字段 → 也重建一次：对方可能重新发起过会话，
+                // 旧的接收链已经对不上他的新棘轮。
                 var ready = s ? Promise.resolve(s) : adoptSession(env, peer);
                 return ready.then(function (ss) {
                     var item = env.m[keys.devId];
@@ -332,6 +354,18 @@
                         box.title = '端到端加密';
                     }, function (e) {
                         try { ss.state = JSON.parse(snap); } catch (x) {}
+                        if (env.si && env.ek && s) {
+                            // 带上握手字段却解不动：重建接收会话再试一次
+                            delete recv[String(peer)];
+                            return adoptSession(env, peer).then(function (ss2) {
+                                var it2 = env.m[keys.devId];
+                                return OWEE.decrypt(ss2.state, it2.h, it2.c).then(function (t2) {
+                                    node.classList.add('owed-ok');
+                                    box.textContent = t2;
+                                    box.title = '端到端加密';
+                                });
+                            });
+                        }
                         throw e;
                     });
                 });
@@ -415,14 +449,22 @@
         if (!peer) return;
         var p = keys ? Promise.resolve(keys) : createKeys();
         p.then(function () {
-            return startSession(peer);
-        }).then(function () {
-            return api('plugin_e2ee_dm_conv', { peer_id: peer, on: 1 });
-        }).then(function (r) {
-            if (!r.ok) throw new Error(r.msg || '开启失败');
-            convState[String(peer)] = true;
-            toastLock(true);
-            W.toast('已开启加密。请记住：换设备后此前的加密消息无法恢复', 4000);
+            return startSession(peer).catch(function (e) {
+                // 对方还没登记设备：本设备的密钥**已经登记成功**（createKeys 跑完了），
+                // 所以这里只是「会话还没建成」，要让用户知道下一步该干什么 ——
+                // 不说清楚的话，用户会以为自己点坏了，而其实只差对方也点一次。
+                W.toast((e && e.message) || '对方还没有启用加密私聊', 5000);
+                W.toast('请让对方也点一次输入框上方的盾牌图标，然后你再点一次', 5000);
+                return null;
+            });
+        }).then(function (s) {
+            if (!s) return null;                      // 上面已经提示过，不再往下开会话
+            return api('plugin_e2ee_dm_conv', { peer_id: peer, on: 1 }).then(function (r) {
+                if (!r.ok) throw new Error(r.msg || '开启失败');
+                convState[String(peer)] = true;
+                toastLock(true);
+                W.toast('已开启加密。请记住：换设备后此前的加密消息无法恢复', 4000);
+            });
         }).catch(function (e) {
             W.toast((e && e.message) || '开启失败');
         });
@@ -501,8 +543,46 @@
         });
     }
 
-    if (W.document.readyState === 'loading') W.document.addEventListener('DOMContentLoaded', init);
-    else init();
+    /**
+     * 浏览器不支持 WebCrypto（http 访问 / 太老的浏览器）时，不能像以前那样
+     * 直接 return —— 那会让盾牌按钮留在工具栏上却毫无反应，用户只会以为功能坏了。
+     * 这里把按钮标成不可用并写明原因。
+     */
+    function markUnsupported() {
+        (function poll() {
+            var b = W.document.getElementById('owEDBtn');
+            if (!b) { setTimeout(poll, 500); return; }
+            b.disabled = true;
+            b.style.opacity = '.45';
+            b.style.cursor = 'not-allowed';
+            b.title = '当前环境不支持加密：需要 HTTPS 或 localhost，且浏览器支持 WebCrypto';
+            b.setAttribute('aria-label', b.title);
+        })();
+    }
+
+    /**
+     * 等核心脚本就位。
+     * 刷新聊天页时，插件包可能排在核心 chat.js **之前**执行（登录后是 SPA 动态注入，
+     * 顺序与首屏不同）—— 以前这里直接 return，表现为「刷新页面后加密功能静默死亡」：
+     * 盾牌还在、点击毫无反应、历史消息全是密文。所以改成轮询等待，最多 10 秒。
+     */
+    function waitCore(tries) {
+        if (started) return;
+        if (W.OwApi && W.OwChat) { started = true; installSendHook(); init(); return; }
+        if (tries <= 0) { started = true; markUnsupported(); return; }
+        setTimeout(function () { waitCore(tries - 1); }, 100);
+    }
+
+    if (W.document.readyState === 'loading') {
+        W.document.addEventListener('DOMContentLoaded', function () {
+            if (!W.OWEE || !W.OWEE.available()) markUnsupported();
+            else waitCore(100);
+        });
+    } else if (!W.OWEE || !W.OWEE.available()) {
+        markUnsupported();
+    } else {
+        waitCore(100);
+    }
 
     W.OWED = {
         enable: enableFlow, disable: disableFlow,
