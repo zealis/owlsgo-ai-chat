@@ -30,7 +30,6 @@
     var mode = null;                 // off | optin
     var dbp = null;                  // IndexedDB 连接
     var pending = {};                // 并发解密去重
-    var armed = 0;                   // 二次确认的时间戳
 
     /* ===================== 存储 ===================== */
 
@@ -245,7 +244,7 @@
                 return;
             }
             return loadKeys().then(function () {
-                if (!keys) { W.toast('本设备没有加密密钥，请重新开启加密'); return; }
+                if (!keys) { W.toast('本设备还没有加密密钥，请点输入框上方的盾牌图标启用'); return; }
                 var sess = sessions[peer];
                 var ready = sess ? Promise.resolve(sess) : startSession(dm.id);
                 return ready.then(function (s) {
@@ -313,7 +312,7 @@
                 return 'done';
             }
             return loadKeys().then(function () {
-                if (!keys) throw new Error('本设备没有加密密钥');
+                if (!keys) throw new Error('本设备没有加密密钥（可能清理过浏览器数据或换了设备）');
                 var s = sessions[String(peer)];
                 if (s && env.si && s.peerIk && env.si !== s.peerIk) {
                     // 对方身份密钥变了：可能是换设备，也可能是中间人。必须显式告警。
@@ -322,7 +321,7 @@
                 var ready = s ? Promise.resolve(s) : adoptSession(env, peer);
                 return ready.then(function (ss) {
                     var item = env.m[keys.devId];
-                    if (!item) throw new Error('这条消息不是发给本设备的（可能来自旧设备）');
+                    if (!item) throw new Error('这条消息的密钥不在这台设备上（可能是在更换设备前加密的）');
                     // 解密会推进棘轮状态；失败必须回滚，否则一条坏消息会把整条接收链带偏
                     var snap = JSON.stringify(ss.state);
                     return OWEE.decrypt(ss.state, item.h, item.c).then(function (text) {
@@ -369,49 +368,85 @@
 
     /* ===================== 开关按钮 ===================== */
 
+    /* ===================== 开关（用户自己决定，服务端不强制） ===================== */
+
+    /**
+     * 自研弹窗（全站禁用浏览器原生对话框）。
+     * 按钮是 innerHTML 注入的字符串，回调只能写全局函数名。
+     */
+    function modal(title, body, okText, okCall, danger) {
+        W.OwChat.openModal(
+            '<h3>' + title + '</h3>' + body
+            + '<div class="ow-modal-actions">'
+            + '<button class="ow-btn" type="button" onclick="OwChat.closeModal()">取消</button>'
+            + '<button class="ow-btn ' + (danger ? 'ow-btn-danger' : 'ow-btn-primary')
+            + '" type="button" onclick="' + okCall + '">' + okText + '</button>'
+            + '</div>', 440);
+    }
+
+    /** 开启前必须把「换设备就再也读不到」说清楚 —— 这不是可选项，是这套方案的真实代价 */
     function enableFlow() {
         var oc = W.OwChat;
         if (!oc.dm || !oc.dm.id || oc.dm.kind !== 'user') { W.toast('请先打开一个私聊'); return; }
         var peer = oc.dm.id;
 
         loadKeys().then(function () {
-            var hasKeys = !!keys;
-            // 二次确认：换设备会让旧设备的密钥失效，必须有一步显式确认
-            if (!hasKeys || armed < Date.now() - 8000) {
-                armed = Date.now();
-                W.toast(hasKeys
-                    ? '再点一次开启加密：本设备将成为唯一能解密新消息的设备'
-                    : '再点一次开启加密：将生成本设备的密钥（私钥只存在这台设备上）', 4000);
-                return;
-            }
-            armed = 0;
-            var p = hasKeys ? Promise.resolve(keys) : createKeys();
-            p.then(function () {
-                return ensureConvState(peer);
-            }).then(function (on) {
+            ensureConvState(peer).then(function (on) {
                 if (on) { W.toast('该会话已开启加密'); return; }
-                return startSession(peer).then(function () {
-                    return api('plugin_e2ee_dm_conv', { peer_id: peer, on: 1 });
-                }).then(function (r) {
-                    if (!r.ok) throw new Error(r.msg || '开启失败');
-                    convState[String(peer)] = true;
-                    toastLock(true);
-                    W.toast('已开启加密：此后该会话只发送密文');
-                });
-            }).catch(function (e) {
-                W.toast((e && e.message) || '开启失败');
+                var first = !keys;
+                var body = ''
+                    + '<p class="ow-modal-desc">这个会话的消息在<b>这台设备的浏览器里</b>加密，'
+                    + '私钥只存在本机，服务器只保存密文，没有能解开它的东西。</p>'
+                    + '<p class="ow-modal-desc" style="color:var(--ow-red)">'
+                    + '换设备、清理浏览器数据、使用无痕窗口都会丢失密钥：此前的加密消息'
+                    + '<b>永久无法读取，也无法恢复</b>。</p>'
+                    + '<p class="ow-modal-desc">'
+                    + (first ? '本设备还没有加密密钥，点「开启加密」会现在生成一套。' : '')
+                    + '对方也必须启用加密才能互发。开启后，这个会话的敏感词过滤、'
+                    + '内容审核与管理员查阅都不再生效。</p>';
+                modal('开启加密私聊', body, '开启加密', 'OWED._onOpen', false);
             });
+        });
+    }
+
+    function doEnable() {
+        W.OwChat.closeModal();
+        var peer = W.OwChat.dm && W.OwChat.dm.id;
+        if (!peer) return;
+        var p = keys ? Promise.resolve(keys) : createKeys();
+        p.then(function () {
+            return startSession(peer);
+        }).then(function () {
+            return api('plugin_e2ee_dm_conv', { peer_id: peer, on: 1 });
+        }).then(function (r) {
+            if (!r.ok) throw new Error(r.msg || '开启失败');
+            convState[String(peer)] = true;
+            toastLock(true);
+            W.toast('已开启加密。请记住：换设备后此前的加密消息无法恢复', 4000);
+        }).catch(function (e) {
+            W.toast((e && e.message) || '开启失败');
         });
     }
 
     function disableFlow() {
         var oc = W.OwChat;
         if (!oc.dm || !oc.dm.id) return;
-        api('plugin_e2ee_dm_conv', { peer_id: oc.dm.id, on: 0 }).then(function (r) {
+        var body = ''
+            + '<p class="ow-modal-desc">已经加密的消息仍保留在你们各自的设备上，可以继续阅读。</p>'
+            + '<p class="ow-modal-desc">关闭后，新消息以<b>明文</b>发送并保存在服务器上：'
+            + '管理员可依法查阅，敏感词与内容审核恢复生效。</p>';
+        modal('关闭加密', body, '关闭加密', 'OWED._onClose', true);
+    }
+
+    function doDisable() {
+        W.OwChat.closeModal();
+        var peer = W.OwChat.dm && W.OwChat.dm.id;
+        if (!peer) return;
+        api('plugin_e2ee_dm_conv', { peer_id: peer, on: 0 }).then(function (r) {
             if (!r.ok) { W.toast(r.msg || '关闭失败'); return; }
-            convState[String(oc.dm.id)] = false;
+            convState[String(peer)] = false;
             toastLock(false);
-            W.toast('已关闭加密，此后的消息将以明文发送');
+            W.toast('已关闭加密，此后的消息以明文发送');
         });
     }
 
@@ -420,8 +455,14 @@
         if (!b) return;
         // classList.toggle 的第二个参数在老浏览器不生效，一律用 add/remove
         if (on) b.classList.add('on'); else b.classList.remove('on');
-        b.title = on ? '本会话已加密（点击关闭）' : '按会话开启加密';
+        b.title = on ? '本会话已加密（点击可关闭）' : '按会话开启加密';
         b.setAttribute('aria-label', b.title);
+    }
+
+    /** 盾牌按钮只在私聊里有意义：群聊/联系人页直接藏掉，别留个点了就报错的按钮 */
+    function btnVisible(v) {
+        var b = W.document.getElementById('owEDBtn');
+        if (b) b.style.display = v ? '' : 'none';
     }
 
     function bindBtn() {
@@ -441,6 +482,7 @@
     function init() {
         loadKeys().then(loadSessions).then(boot).then(function (st) {
             if (mode === 'off') return;
+            btnVisible(false);      // 先藏起来，等确认当前是私聊再显示
             watch();
             bindBtn();
             // 只在「切换了会话」时查一次状态，不做轮询 —— 本站是长轮询架构，
@@ -451,7 +493,8 @@
                 var cur = oc && oc.dm && oc.dm.id ? String(oc.dm.id) : '';
                 if (cur === lastPeer) return;
                 lastPeer = cur;
-                if (!cur) { toastLock(false); return; }
+                if (!cur) { btnVisible(false); return; }
+                btnVisible(true);
                 syncConv(oc.dm.id).then(toastLock);
             }, 800);
             if (st && st.device) toastLock(false);
@@ -461,5 +504,11 @@
     if (W.document.readyState === 'loading') W.document.addEventListener('DOMContentLoaded', init);
     else init();
 
-    W.OWED = { enable: enableFlow, disable: disableFlow, getKeys: function () { return keys; } };
+    W.OWED = {
+        enable: enableFlow, disable: disableFlow,
+        getKeys: function () { return keys; },
+        // 弹窗按钮的回调（onclick 走全局作用域）
+        _onOpen: doEnable,
+        _onClose: doDisable
+    };
 })();

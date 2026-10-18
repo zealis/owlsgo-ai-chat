@@ -461,11 +461,15 @@ Plugin::adminPage('e2ee-dm', '加密私聊', function () {
     echo '<div class="ow-card"><div class="ow-form-row">';
     echo '<div class="ow-form-item"><label>功能状态</label>'
         . '<label style="display:block;margin:4px 0"><input type="radio" name="owedMode" value="off"'
-        . ($mode === 'off' ? ' checked' : '') . '> 关闭（后台不显示任何入口）</label>'
+        . ($mode === 'off' ? ' checked' : '') . '> 关闭（前台不显示任何入口）</label>'
         . '<label style="display:block"><input type="radio" name="owedMode" value="optin"'
-        . ($mode === 'optin' ? ' checked' : '') . '> 允许用户按会话自行开启</label>'
-        . '<p style="font-size:12px">开启后用户可在私聊里主动开启加密；只有双方都登记了设备才允许开启。'
-        . '关闭后已有密文仍留在库里，但无法再解密（密钥只在用户设备上）。</p></div>';
+        . ($mode === 'optin' ? ' checked' : '') . '> 允许用户自行开启</label>'
+        . '<p style="font-size:12px">开关由用户自己掌握：后台只决定「给不给这个能力」，'
+        . '不指定任何会话必须加密。用户在私聊里点工具栏的盾牌按钮即可开启或关闭，'
+        . '任一方开启即对该会话生效，另一方随时可以关掉。'
+        . '密钥只存在用户设备上，所以换设备、清理浏览器数据后，此前的加密消息无法恢复 —— '
+        . '这是这套方案的固有代价，客服口径请照此说明。'
+        . '把状态切回「关闭」只是收掉入口，已有的密文仍留在库里，且只有当初那台设备能解开。</p></div>';
     echo '<div class="ow-form-item"><label>&nbsp;</label>'
         . '<button class="ow-btn ow-btn-primary" id="owedSaveMode">保存</button></div>';
     echo '</div></div>';
