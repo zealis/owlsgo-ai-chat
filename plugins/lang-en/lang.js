@@ -378,6 +378,22 @@
            经 notice.kinds 注册自己的模板，翻译口径一样：整句中文模板 => 英文模板） */
         '敏感词库有更新（{v}），可到「后台 → 插件管理 → 垃圾信息控制 → 违禁词库」点「在线下载」更新。':
             'The sensitive-word lexicon has an update ({v}). Download it under Admin → Plugins → Spam control → Banned-word lexicon.',
+        /* 插件注册的通知模板（notice.kinds）：积分到账（红包 / 签到 / 后台发放）。
+           口径同内置类型：整句中文模板 => 英文模板，{amount}/{unit} 等占位参数原样保留。 */
+        '你领取了 {sender} 的红包，获得 {amount} {unit}，当前余额 {balance} {unit}。':
+            "You opened {sender}'s red packet and received {amount} {unit}. Balance: {balance} {unit}.",
+        '你的红包已过期，剩余 {amount} {unit} 已退回，当前余额 {balance} {unit}。':
+            'Your red packet expired; the remaining {amount} {unit} was refunded. Balance: {balance} {unit}.',
+        '红包发送失败，{amount} {unit} 已退回，当前余额 {balance} {unit}。':
+            'The red packet failed to send; {amount} {unit} was refunded. Balance: {balance} {unit}.',
+        '红包余款 {amount} {unit} 已退回，当前余额 {balance} {unit}。':
+            'The leftover {amount} {unit} from your red packet was refunded. Balance: {balance} {unit}.',
+        '签到成功，获得 {points} {unit}，已连续签到 {streak} 天。':
+            'Checked in {streak} days in a row and received {points} {unit}.',
+        '管理员为你代签了 {day} 的签到，获得 {points} {unit}。':
+            'An administrator checked in for you on {day} and granted {points} {unit}.',
+        '管理员为你发放了 {points} {unit}，当前余额 {balance} {unit}。':
+            'An administrator granted you {points} {unit}. Balance: {balance} {unit}.',
         /* ---------- 违禁词库（v1.4.0）：接口盒子检测 + 本地词库 ---------- */
         '违禁词库': 'Banned-word lexicon',
         '接口 + 本地词库': 'API + local lexicon',

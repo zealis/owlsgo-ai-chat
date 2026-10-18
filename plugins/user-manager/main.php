@@ -82,8 +82,16 @@ Plugin::route('plugin_user_manager_save', function (array $ctx) use ($umGuard) {
     // 积分：允许单独调整（可为负数，但不接受非数字）
     if (isset($post['points']) && $post['points'] !== '') {
         $pts = (int)$post['points'];
+        $old = (int)DB::val('SELECT points FROM users WHERE id=?', [$id]);
         DB::run('UPDATE users SET points=? WHERE id=?', [$pts, $id]);
         Sec::log('admin_user_points', $actor['nickname'], ['id' => $id, 'points' => $pts]);
+        // 账上多出来的部分要通知本人（v1.0.2）：后台改积分是管理员单方面动作，
+        // 用户端在此之前没有任何感知。只在**增加**时发 —— 扣减不是「获得」，同值更不该刷一条。
+        if ($pts > $old) {
+            Notice::push($id, 'um_points_grant', [
+                'points' => $pts - $old, 'balance' => $pts, 'unit' => ow_points_name(),
+            ]);
+        }
     }
     // v1.2.43：等级编辑（依赖「等级信任」插件；未安装时钩子无人响应，$ok 保持 null）。
     // ⚠️ 必须区分「未安装」与「设置失败」：前者提示去装插件，后者才是真失败。
@@ -124,3 +132,14 @@ Plugin::sensitive('plugin_user_manager_status');   // 禁用账号：敏感（v1
 
 // 注册后台交互脚本（由 ?action=assets&type=js 合并输出，仅后台页面引入）
 Plugin::asset('js', 'user-manager/admin.js');
+
+/* ---------- 积分发放的通知模板（v1.0.2） ---------- */
+
+/**
+ * 规则：**只要用户账上的 {unit} 变多，就必须留一条系统通知**（PLUGIN.md「积分变动必须通知」）。
+ * 后台改积分是管理员单方面动作，用户端没有别的渠道知道 —— 充值、活动奖励、补偿都走这条。
+ * {unit} 由 push 时传 ow_points_name()，站点把「积分」改名成金币/星光时文案自动跟随。
+ */
+Plugin::on('notice.kinds', function (array &$kinds) {
+    $kinds['um_points_grant'] = '管理员为你发放了 {points} {unit}，当前余额 {balance} {unit}。';
+});

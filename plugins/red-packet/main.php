@@ -26,6 +26,9 @@
  *     条件 UPDATE 扣减余量（SQLite / MySQL / PostgreSQL 语义一致），
  *     抢不到就回滚并提示手慢了。
  *   · 文案不写死「积分」：一律走 ow_points_name()（后台可改名）。
+ *   · 积分到账必有系统通知（v1.0.4）：领到红包、到期退回、撤销退回、余款退回四条路径
+ *     都会 Notice::push 一条（模板经 notice.kinds 注册）—— 这些钱的到账都发生在别人的
+ *     请求或维护任务里，用户端没有别的感知渠道。见文件「系统通知（积分到账）」一节。
  *   · 样式只引用 --ow-* 变量，深浅两套主题自动跟随；移动端弹窗 92% 宽。
  */
 if (!defined('OWLSGO_VERSION')) exit;   // 禁止直接 HTTP 访问本文件
@@ -155,6 +158,23 @@ function owRPAvatar(int $uid): string
 }
 
 /**
+ * 退款到账通知（发包人）。$status 取 expired / void / leftover。
+ * 通知是旁路留痕：Notice::push 自身吞异常，绝不会影响退款主流程。
+ */
+function owRPNotifyRefund(int $uid, int $back, string $status = 'expired'): void
+{
+    if ($uid <= 0 || $back <= 0) return;
+    $kind = 'rp_refund_expired';
+    if ($status === 'void') $kind = 'rp_refund_void';
+    elseif ($status === 'leftover') $kind = 'rp_refund_leftover';
+    Notice::push($uid, $kind, [
+        'amount'  => $back,
+        'balance' => owRPBalance($uid),
+        'unit'    => ow_points_name(),
+    ]);
+}
+
+/**
  * 退还剩余积分并把红包收尾（只对仍在进行中的包生效，天然幂等）。
  * $status：expired（到期）/ void（发送失败撤销）
  */
@@ -167,6 +187,7 @@ function owRPRefundPoints(int $pid, string $status = 'expired'): void
     $back = (int)$p['remain_total'];
     if ($back > 0 && (string)$p['kind'] !== 'welfare') {
         DB::run('UPDATE users SET points=points+? WHERE id=?', [$back, (int)$p['sender_id']]);
+        owRPNotifyRefund((int)$p['sender_id'], $back, $status);
     }
 }
 
@@ -361,6 +382,17 @@ function owRPDoClaim(array $actor, int $pid, string $pass): array
     if ($amount > 0) DB::run('UPDATE users SET points=points+? WHERE id=?', [$amount, $uid]);
     DB::run('UPDATE plugin_red_packet_claim SET amount=?, item_id=? WHERE id=?', [$amount, $itemId, $claimId]);
 
+    // ④ 到账通知（v1.0.4）：这是「获得积分」，按 PLUGIN.md 的硬性要求必须留一条系统通知。
+    //    福利红包 amount = 0，不涉及积分变动，不发通知（内容已在返回里给到领取者）。
+    if ($amount > 0) {
+        Notice::push($uid, 'rp_claimed', [
+            'sender'  => mb_substr((string)$p['sender_nick'], 0, 20),
+            'amount'  => $amount,
+            'balance' => owRPBalance($uid),
+            'unit'    => ow_points_name(),
+        ]);
+    }
+
     $fresh = DB::one('SELECT * FROM plugin_red_packet WHERE id=?', [$pid]);
     return [true, 'ok', [
         'already' => false,
@@ -370,6 +402,23 @@ function owRPDoClaim(array $actor, int $pid, string $pass): array
         'balance' => owRPBalance($uid),
     ]];
 }
+
+/* ============================ 系统通知（积分到账） ============================ */
+
+/**
+ * 积分变动通知模板（v1.0.4）。
+ *
+ * 规则：**只要用户账上的 {unit} 变多，就必须留一条系统通知**（PLUGIN.md「积分变动必须通知」）。
+ * 红包的钱几乎全是「异步到账」的 —— 别人领走了你的包、包到期退回余款、发包失败撤销，
+ * 这些动作发生在别人的请求或维护任务里，用户端没有任何感知，通知是唯一可靠的对账入口。
+ * {unit} 由 push 时传 ow_points_name()，站点把「积分」改名成金币/星光时文案自动跟随。
+ */
+Plugin::on('notice.kinds', function (array &$kinds) {
+    $kinds['rp_claimed']         = '你领取了 {sender} 的红包，获得 {amount} {unit}，当前余额 {balance} {unit}。';
+    $kinds['rp_refund_expired']  = '你的红包已过期，剩余 {amount} {unit} 已退回，当前余额 {balance} {unit}。';
+    $kinds['rp_refund_void']     = '红包发送失败，{amount} {unit} 已退回，当前余额 {balance} {unit}。';
+    $kinds['rp_refund_leftover'] = '红包余款 {amount} {unit} 已退回，当前余额 {balance} {unit}。';
+});
 
 /* ============================ 工具栏入口 / 样式 ============================ */
 
@@ -767,6 +816,7 @@ Plugin::cron('expire_and_purge', 3600, function () {
         $back = (int)$r['remain_total'];
         if ($back > 0 && (string)$r['kind'] !== 'welfare') {
             DB::run('UPDATE users SET points=points+? WHERE id=?', [$back, (int)$r['sender_id']]);
+            owRPNotifyRefund((int)$r['sender_id'], $back, 'expired');   // 退款到账必须通知发包人
             $refunded += $back;
         }
     }
@@ -781,6 +831,7 @@ Plugin::cron('expire_and_purge', 3600, function () {
         if ($st->rowCount() < 1) continue;
         if ($back > 0 && (string)$r['kind'] !== 'welfare') {
             DB::run('UPDATE users SET points=points+? WHERE id=?', [$back, (int)$r['sender_id']]);
+            owRPNotifyRefund((int)$r['sender_id'], $back, 'leftover');   // 余款退回同样要留痕
             $refunded += $back;
         }
     }

@@ -249,6 +249,62 @@ var pn = (w.OwAdmin && OwAdmin.pointsName) ? OwAdmin.pointsName() : '积分';
 - 名称只在「用户看见的名词」处替换。数据库字段（`users.points`）、日志 key（`points` / `cost`）、
   内部注释照旧 —— 那是**数据结构**，跟着改名会把库和旧日志一起弄乱。
 
+## 积分到账必须发系统通知（v1.5.7 起）
+
+**硬性要求：任何让 `users.points` 变大的动作，都必须给本人 `Notice::push` 一条系统通知。**
+
+理由不是「体验更好」，而是**用户端没有别的感知渠道**：积分到账几乎都是异步的 ——
+别人领走了你的红包、红包到期退余款、维护任务补退、管理员后台发放 —— 用户不刷新页面、
+不盯余额就永远不知道钱到了。少一条通知，就是一笔对不上账的余额。
+
+### 写法（三件套，缺一不可）
+
+```php
+// ① main.php 顶层注册模板（v1.3.171 起插件类型不用再改核心，见「通知类型注册」）
+Plugin::on('notice.kinds', function (array &$kinds) {
+    $kinds['my_plugin_grant'] = '你获得 {amount} {unit}，当前余额 {balance} {unit}。';
+});
+
+// ② 加积分的同一处（UPDATE 之后）push 一条
+DB::run('UPDATE users SET points=points+? WHERE id=?', [$amount, $uid]);
+Notice::push($uid, 'my_plugin_grant', [
+    'amount'  => $amount,
+    'balance' => (int)DB::val('SELECT points FROM users WHERE id=?', [$uid]),
+    'unit'    => ow_points_name(),      // ③ 名词走统一出口，别写死「积分」（见上一节）
+]);
+```
+
+- **`{unit}` 占位必须传 `ow_points_name()`**：模板是固定字符串，站点把「积分」改成金币 / 星光后，
+  文案要跟着变。写死「积分」等于把上一节的约定从后门放回来；
+- **模板要能整句翻译**：插件自己的 `lang.js` 里补一条「中文模板 => 英文模板」（占位符原样保留），
+  与内置类型同一条路（lang-en 里 `rp_claimed` / `shc_checkin` / `um_points_grant` 就是例子）；
+- **通知是旁路留痕**：`Notice::push` 自己吞异常，不要 try/catch 包它，更不要因为通知失败回滚加分。
+
+### 该发 / 不该发
+
+| 场景 | 是否通知 | 说明 |
+| --- | --- | --- |
+| 领取红包、签到、抽奖、任务奖励到账 | 发 | 用户「获得」了东西，必须留痕 |
+| 到期退款、撤销退款、维护任务补退 | 发 | 钱是异步回来的，不发就没人知道 |
+| 管理员后台把积分调高 | 发 | 只发**差额**，后台动作用户看不见 |
+| 管理员把积分调低 / 设成同一个值 | 不发 | 不是「获得」；同值刷一条纯属噪音 |
+| 同一请求内的失败回滚（扣了又立刻退回） | 不发 | 用户在同一响应里已看到结果，再发一条自相矛盾 |
+| 单纯查询、展示余额 | 不发 | 不是变动 |
+
+减少积分（扣费）不做强制要求 —— 扣费都有即时可见的操作结果，需要留痕的走插件自己的记录表或 `Sec::log`。
+
+### 自查
+
+新增或修改积分逻辑后，跑一遍这两条：
+
+```bash
+grep -n "points=points+" plugins/*/main.php          # 每一处加分后面都必须跟一条 Notice::push
+grep -n "notice.kinds" plugins/*/main.php            # 有 push 就必须有对应模板注册
+```
+
+当前全站加分点：红包 `red-packet`（领取 / 到期退回 / 撤销退回 / 余款退回）、
+签到 `starlight-hall`（普通签到 / 补签 / 管理员代签）、后台发放 `user-manager`。
+
 ## 头像相关（v1.3.11 起）
 
 头像是「风格 + 种子」的生成结果（DiceBear 10.x），核心字段 `users.avatar_type` / `avatar_style` /

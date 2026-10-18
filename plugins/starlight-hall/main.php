@@ -1848,6 +1848,22 @@ function owSHCSetCfg(string $k, string $v): void
     unset($GLOBALS['_owSHCCfg'][$k]);      // 立刻失效，同请求内后续读取拿到新值
 }
 
+/* ============================ 系统通知（签到到账） ============================ */
+
+/**
+ * 签到发积分的通知模板（v1.1.5）。
+ *
+ * 规则：**只要用户账上的 {unit} 变多，就必须留一条系统通知**（PLUGIN.md「积分变动必须通知」）。
+ * 签到的积分虽然由用户自己点出来（面板上也有结果提示），但「管理员代签」这条路径是
+ * 完全异步的 —— 被代签的人不刷新面板就不知道钱到账了；统一走通知，三条入口口径一致。
+ * {unit} 由 push 时传 ow_points_name()，站点把「积分」改名成金币/星光时文案自动跟随。
+ */
+Plugin::on('notice.kinds', function (array &$kinds) {
+    $kinds['shc_checkin']       = '签到成功，获得 {points} {unit}，已连续签到 {streak} 天。';
+    // 管理员代签是**别人替他点的**：同一句「签到成功」会让用户以为是自己签的，语气对不上
+    $kinds['shc_checkin_admin'] = '管理员为你代签了 {day} 的签到，获得 {points} {unit}。';
+});
+
 /* ============================ 数据读写（签到子系统） ============================ */
 
 /** 取用户行；不存在则按「从未签到」创建 */
@@ -1925,7 +1941,16 @@ function owSHCSign(int $uid, string $day, string $kind = 'normal', bool $reward 
     DB::run('UPDATE plugin_checkin_user SET total_days=total_days+1, streak=?, max_streak=?,'
         . ' points=points+?, last_day=?, updated_at=? WHERE user_id=?',
         [$strk, $max, $gain, $day, $now, $uid]);
-    if ($gain > 0) DB::run('UPDATE users SET points=points+? WHERE id=?', [$gain, $uid]);
+    if ($gain > 0) {
+        DB::run('UPDATE users SET points=points+? WHERE id=?', [$gain, $uid]);
+        // 到账通知（v1.1.5）：普通签到 / 补签 / 管理员代签三条入口都走这里，口径只写一份。
+        // 补签是 reward=false（$gain=0）—— 没发钱就不该发通知。
+        // 代签另用一条模板：钱不是他自己点出来的。
+        $adminSign = ($kind === 'admin');
+        Notice::push($uid, $adminSign ? 'shc_checkin_admin' : 'shc_checkin', $adminSign
+            ? ['points' => $gain, 'day' => $day, 'unit' => ow_points_name()]
+            : ['points' => $gain, 'streak' => $strk, 'unit' => ow_points_name()]);
+    }
 
     return [
         'ok' => true, 'msg' => 'ok', 'points' => $gain, 'streak' => $strk,
