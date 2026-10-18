@@ -40,9 +40,27 @@
         dbp = new Promise(function (res, rej) {
             if (!W.indexedDB) return rej(new Error('浏览器不支持本地存储'));
             var r = W.indexedDB.open(DBNAME, 1);
+            var settled = false;
+            // onblocked：别的标签页正开着更高版本的库，open 既不 success 也不 error ——
+            // 不兜底的话下面整条 Promise 永远挂着，用户点了永远没反应（最难查的那种哑巴）。
+            // 超时兜底同因：某些隐私模式下 IndexedDB 会既不回调也不报错。
+            var bail = setTimeout(function () {
+                if (settled) return;
+                settled = true;
+                dbp = null;                    // 别让一次偶发失败把整个会话的存储判死
+                rej(new Error('本机密钥存储无响应（可能是无痕 / 隐私窗口，或另一个标签页正在占用）'));
+            }, 4000);
+            var done = function (fn, v) {
+                if (settled) return;
+                settled = true;
+                clearTimeout(bail);
+                if (fn === rej) dbp = null;    // 同上：失败后允许下次重开
+                fn(v);
+            };
             r.onupgradeneeded = function () { r.result.createObjectStore(STORE); };
-            r.onsuccess = function () { dbp = Promise.resolve(r.result); res(r.result); };
-            r.onerror = function () { rej(r.error); };
+            r.onsuccess = function () { done(res, r.result); };
+            r.onerror = function () { done(rej, r.error || new Error('无法打开本机密钥存储')); };
+            r.onblocked = function () { done(rej, new Error('本机密钥存储被另一个标签页占用，请关掉本页重试')); };
         });
         return dbp;
     }
@@ -422,14 +440,31 @@
             + '</div>', 440);
     }
 
+    /** 给任意异步流程加个硬上限：挂住了也要给出原因，不能让人对着界面干瞪眼 */
+    function withTimeout(p, ms, msg) {
+        return new Promise(function (res, rej) {
+            var done = false;
+            var t = setTimeout(function () { if (done) return; done = true; rej(new Error(msg)); }, ms);
+            Promise.resolve(p).then(function (v) {
+                if (done) return; done = true; clearTimeout(t); res(v);
+            }, function (e) {
+                if (done) return; done = true; clearTimeout(t); rej(e);
+            });
+        });
+    }
+
     /** 开启前必须把「换设备就再也读不到」说清楚 —— 这不是可选项，是这套方案的真实代价 */
     function enableFlow() {
         var oc = W.OwChat;
         if (!oc.dm || !oc.dm.id || oc.dm.kind !== 'user') { W.toast('请先打开一个私聊'); return; }
         var peer = oc.dm.id;
+        // 先给一声回执：后面要读本地存储、问服务端，任何一步慢了用户都不该以为没点上
+        W.toast('正在检查本机密钥…', 1800);
 
-        loadKeys().then(function () {
-            ensureConvState(peer).then(function (on) {
+        withTimeout(loadKeys().then(function () {
+            return ensureConvState(peer);
+        }), 8000, '本机密钥存储无响应，请检查是否用了无痕 / 隐私窗口')
+            .then(function (on) {
                 if (on) { W.toast('该会话已开启加密'); return; }
                 var first = !keys;
                 var body = ''
@@ -443,12 +478,11 @@
                     + '对方也必须启用加密才能互发。开启后，这个会话的敏感词过滤、'
                     + '内容审核与管理员查阅都不再生效。</p>';
                 modal('开启加密私聊', body, '开启加密', 'OWED._onOpen', false);
+            }).catch(function (e) {
+                // 本地存储被禁用（无痕 / 隐私模式）、被别的标签页占用、或整体超时，
+                // 以前这些都会表现成「点了没反应」
+                W.toast((e && e.message) || '开启失败，请刷新页面后重试', 5000);
             });
-        }).catch(function (e) {
-            // 本地存储被禁用（无痕 / 隐私模式）时 loadKeys 会直接失败，
-            // 以前这里没有任何 catch → 用户点十次也没反应
-            W.toast((e && e.message) || '开启失败，请刷新页面后重试');
-        });
     }
 
     function doEnable() {
@@ -458,26 +492,27 @@
         // 密钥生成要走一遍 WebCrypto，慢的时候有一两秒 —— 不给反馈用户就会以为又没点上
         W.toast('正在生成本设备的加密密钥…', 6000);
         var p = keys ? Promise.resolve(keys) : createKeys();
-        p.then(function () {
-            return startSession(peer).catch(function (e) {
-                // 对方还没登记设备：本设备的密钥**已经登记成功**（createKeys 跑完了），
-                // 所以这里只是「会话还没建成」，要让用户知道下一步该干什么 ——
-                // 不说清楚的话，用户会以为自己点坏了，而其实只差对方也点一次。
-                W.toast((e && e.message) || '对方还没有启用加密私聊', 5000);
-                W.toast('请让对方也点一次输入框上方的盾牌图标，然后你再点一次', 5000);
-                return null;
+        withTimeout(p, 15000, '生成本机密钥超时，请确认浏览器支持 WebCrypto 且不是无痕窗口')
+            .then(function () {
+                return startSession(peer).catch(function (e) {
+                    // 对方还没登记设备：本设备的密钥**已经登记成功**（createKeys 跑完了），
+                    // 所以这里只是「会话还没建成」，要让用户知道下一步该干什么 ——
+                    // 不说清楚的话，用户会以为自己点坏了，而其实只差对方也点一次。
+                    W.toast((e && e.message) || '对方还没有启用加密私聊', 5000);
+                    W.toast('请让对方也点一次输入框上方的盾牌图标，然后你再点一次', 5000);
+                    return null;
+                });
+            }).then(function (s) {
+                if (!s) return null;                      // 上面已经提示过，不再往下开会话
+                return api('plugin_e2ee_dm_conv', { peer_id: peer, on: 1 }).then(function (r) {
+                    if (!r.ok) throw new Error(r.msg || '开启失败');
+                    convState[String(peer)] = true;
+                    toastLock(true);
+                    W.toast('已开启加密。请记住：换设备后此前的加密消息无法恢复', 4000);
+                });
+            }).catch(function (e) {
+                W.toast((e && e.message) || '开启失败', 5000);
             });
-        }).then(function (s) {
-            if (!s) return null;                      // 上面已经提示过，不再往下开会话
-            return api('plugin_e2ee_dm_conv', { peer_id: peer, on: 1 }).then(function (r) {
-                if (!r.ok) throw new Error(r.msg || '开启失败');
-                convState[String(peer)] = true;
-                toastLock(true);
-                W.toast('已开启加密。请记住：换设备后此前的加密消息无法恢复', 4000);
-            });
-        }).catch(function (e) {
-            W.toast((e && e.message) || '开启失败');
-        });
     }
 
     function disableFlow() {
@@ -698,7 +733,31 @@
     W.OWED = {
         // 版本自检：浏览器控制台敲 OWED.v 应显示这个号。
         // 显示 undefined 就说明页面还在用旧的插件包（Ctrl+F5 硬刷新）。
-        v: '1.0.7',
+        v: '1.0.9',
+        // 浏览器控制台敲 OWED.diagnose() 即可拿到全部现场状态，把结果发出去就能定位
+        diagnose: function () {
+            return withTimeout(loadKeys(), 3000, 'IndexedDB 无响应').then(function () {
+                return {
+                    版本: W.OWED.v,
+                    模式: mode,
+                    有本机密钥: !!keys,
+                    设备号: keys ? keys.devId : null,
+                    发送会话: Object.keys(sessions).length,
+                    接收会话: Object.keys(recv).length,
+                    会话开关: convState,
+                    当前私聊: (W.OwChat && W.OwChat.dm) ? W.OwChat.dm.id : null,
+                    按钮: (function () {
+                        var b = W.document.getElementById('owEDBtn');
+                        return b ? getComputedStyle(b).display + ' | ' + b.className : '不在 DOM 里';
+                    })(),
+                    弹窗: masked() ? '开着' : '无',
+                    环境: (W.isSecureContext ? 'https 安全上下文' : '非安全上下文（不能加密）')
+                        + ' | WebCrypto ' + (W.OWEE.available() ? '可用' : '不可用')
+                };
+            }).catch(function (e) {
+                return { 版本: W.OWED.v, 错误: (e && e.message) || String(e) };
+            });
+        },
         enable: enableFlow, disable: disableFlow,
         getKeys: function () { return keys; },
         // 弹窗按钮的回调（onclick 走全局作用域）
