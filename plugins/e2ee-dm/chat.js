@@ -21,6 +21,7 @@
     'use strict';
     var W = window;
     var started = false;
+    var unsupported = false;   // WebCrypto 不可用（http 访问 / 老浏览器）
 
     var DBNAME = 'owee', STORE = 'kv';
     var keys = null;                 // {devId, identity, spk, opks, opkNext}
@@ -532,16 +533,54 @@
         }, true);
     }
 
-    function bindBtn() {
-        var b = W.document.getElementById('owEDBtn');
-        if (!b) { setTimeout(bindBtn, 500); return; }
-        b.onclick = function () {
+    /**
+     * 点盾牌：挂在 document 上的**事件委托**，不直接绑 onclick。
+     * 直接绑有个致命弱点 —— SPA 重渲染会把 #owToolFirst 整段替换，
+     * 新节点身上没有 onclick，按钮「看起来正常」但点了毫无反应。
+     * 委托绑在 document 上，换多少个节点都不受影响。
+     * 用捕获阶段还能抢在别的处理器之前。
+     */
+    function installBtnClick() {
+        W.document.addEventListener('click', function (e) {
+            var t = e.target;
+            if (!t || !t.closest) return;
+            if (!t.closest('#owEDBtn')) return;
+            e.preventDefault();
+            e.stopPropagation();
+            if (unsupported) {
+                W.toast('当前环境不支持加密：需要用 HTTPS 或 localhost 访问，且浏览器要支持 WebCrypto', 4000);
+                return;
+            }
             var oc = W.OwChat;
-            if (!oc.dm) { W.toast('请先打开一个私聊'); return; }
+            if (!oc || !oc.dm || !oc.dm.id) { W.toast('请先打开一个私聊'); return; }
             ensureConvState(oc.dm.id).then(function (on) {
                 if (on) disableFlow(); else enableFlow();
             });
-        };
+        }, true);
+    }
+
+    /**
+     * 第二个入口：消息头像右键菜单里加「加密私聊」。
+     * 工具栏那条路只要出任何意外（遮罩、布局挤压、被别的插件重写工具栏），
+     * 这条路依然独立可用 —— 同一套功能，不多一份逻辑。
+     */
+    function installCtxMenu() {
+        if (typeof W.OwChat.onMsgCtx !== 'function') return;
+        W.OwChat.onMsgCtx(function (items, m) {
+            if (mode === 'off' || unsupported) return;
+            if (!m || m.recalled || m.mine || !m.uid) return;
+            var uid = parseInt(m.uid, 10) || 0;
+            var dm = W.OwChat.dm;
+            if (!dm || parseInt(dm.id, 10) !== uid) return;   // 只在与他人的私聊里给
+            items.push({
+                t: '加密私聊设置',
+                run: function () {
+                    ensureConvState(uid).then(function (on) {
+                        if (on) disableFlow(); else enableFlow();
+                    });
+                }
+            });
+        });
     }
 
     /* ===================== 启动 ===================== */
@@ -552,7 +591,7 @@
             btnVisible(false);      // 先藏起来，等确认当前是私聊再显示
             watch();
             installMaskHint();
-            bindBtn();
+            installCtxMenu();
             // 只在「切换了会话」时查一次状态，不做轮询 —— 本站是长轮询架构，
             // 每 2 秒打一个接口等于给每个用户凭空加 30 次/分钟的请求。
             var lastPeer = '', shown = false;
@@ -585,15 +624,15 @@
      * 用户点了照样是零反馈。改成保留点击、点了告诉他原因。
      */
     function markUnsupported() {
+        unsupported = true;
+        // 点击由 installBtnClick 的委托统一处理（它会读 unsupported 标志给提示），
+        // 这里只负责置灰 + 写明原因；不再直接绑 onclick（节点被换掉就失效）。
         (function poll() {
             var b = W.document.getElementById('owEDBtn');
             if (!b) { setTimeout(poll, 500); return; }
             b.classList.add('owed-off');
             b.title = '当前环境不支持加密：需要 HTTPS 或 localhost，且浏览器需支持 WebCrypto';
             b.setAttribute('aria-label', b.title);
-            b.onclick = function () {
-                W.toast('当前环境不支持加密：需要用 HTTPS 或 localhost 访问，且浏览器要支持 WebCrypto', 4000);
-            };
         })();
     }
 
@@ -610,6 +649,9 @@
         setTimeout(function () { waitCore(tries - 1); }, 100);
     }
 
+    // 点击委托无条件装上：不支持加密的环境里也要能点出原因，否则又是个哑巴按钮
+    installBtnClick();
+
     if (W.document.readyState === 'loading') {
         W.document.addEventListener('DOMContentLoaded', function () {
             if (!W.OWEE || !W.OWEE.available()) markUnsupported();
@@ -624,7 +666,7 @@
     W.OWED = {
         // 版本自检：浏览器控制台敲 OWED.v 应显示这个号。
         // 显示 undefined 就说明页面还在用旧的插件包（Ctrl+F5 硬刷新）。
-        v: '1.0.5',
+        v: '1.0.6',
         enable: enableFlow, disable: disableFlow,
         getKeys: function () { return keys; },
         // 弹窗按钮的回调（onclick 走全局作用域）
