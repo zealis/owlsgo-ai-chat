@@ -284,6 +284,14 @@
             } else {
                 try { OwChat.loadConversations(); } catch (e) {}
             }
+            /* 竞态兜底（站方实测：发完显示的是纯文字，刷新才变卡）：
+               服务端在 Chat::send 之后就 nudge 推送，推送可能**早于**本响应到达 ——
+               那一刻红包行的 msg_id 还没回填，扫描问服务端得到「不是红包」，
+               于是把这条消息打上 data-owrp=0 永久跳过。拿到 msg_id 后这里强制重画一次。 */
+            if (r.card && r.card.msg_id) {
+                var el = d.getElementById('owMsg' + r.card.msg_id);
+                if (el) { el.setAttribute('data-owrp', ''); paint(el, r.card); }
+            }
             schedule();
         });
     };
@@ -418,17 +426,17 @@
              +       '<span class="owrp-env-who">' + esc(p.sender) + ' 的红包</span></div>'
              +     '<div class="owrp-env-bless">' + esc(p.blessing) + '</div>'
              +     '<div class="owrp-env-tag">' + esc(p.kind_name) + '</div>'
-             +     (p.kind === 'password'
-                      ? '<div class="owrp-env-pass"><input class="owrp-env-input" id="owRpEnvPass" type="text"'
-                        + ' maxlength="20" autocomplete="off" placeholder="请输入口令"'
-                        + ' onkeydown="if(event.key===\'Enter\')OwRP.envClaim()"></div>'
-                      : '')
              +   '</div>'
              +   '<div class="owrp-env-bottom">'
              +     '<div class="owrp-env-coin-wrap"><div class="owrp-env-coin" id="owRpEnvCoin" role="button"'
              +       ' tabindex="0" aria-label="开红包" onclick="OwRP.envClaim()"'
              +       ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();OwRP.envClaim();}">开</div></div>'
              +     '<div class="owrp-env-hint" id="owRpEnvHint">' + hint + '</div>'
+             +     (p.kind === 'password'
+                      ? '<div class="owrp-env-pass"><input class="owrp-env-input" id="owRpEnvPass" type="text"'
+                        + ' maxlength="20" autocomplete="off" placeholder="请输入口令"'
+                        + ' onkeydown="if(event.key===\'Enter\')OwRP.envClaim()"></div>'
+                      : '')
              +     '<div class="owrp-env-err" id="owRpEnvErr"></div>'
              +   '</div>'
              + '</div>'

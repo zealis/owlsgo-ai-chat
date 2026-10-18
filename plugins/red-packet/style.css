@@ -229,7 +229,7 @@
     opacity: .82;
 }
 
-.owrp-env-pass { margin-top: 14px; }
+.owrp-env-pass { margin-top: 12px; }
 .owrp-env-input {
     width: 100%;
     max-width: 236px;
@@ -335,9 +335,45 @@
 }
 .owrp-env-btn:active { opacity: .82; }
 
+
+/* ---------- 动画 ----------
+   点「开」时铜钱旋转（等待服务端回包），拆开后结果从下方轻轻弹入。
+   只动 transform/opacity，不触发布局；prefers-reduced-motion 下全部关闭。 */
+@keyframes owrp-panel-in {
+    from { opacity: 0; -webkit-transform: translateY(10px) scale(.96); transform: translateY(10px) scale(.96); }
+    to   { opacity: 1; -webkit-transform: none; transform: none; }
+}
+@keyframes owrp-spin {
+    from { -webkit-transform: rotateY(0deg); transform: rotateY(0deg); }
+    to   { -webkit-transform: rotateY(360deg); transform: rotateY(360deg); }
+}
+@keyframes owrp-pop {
+    from { opacity: 0; -webkit-transform: translateY(10px) scale(.96); transform: translateY(10px) scale(.96); }
+    to   { opacity: 1; -webkit-transform: none; transform: none; }
+}
+.owrp-env { -webkit-animation: owrp-panel-in .22s ease-out both; animation: owrp-panel-in .22s ease-out both; }
+.owrp-env-coin.is-busy {
+    -webkit-animation: owrp-spin .7s linear infinite;
+    animation: owrp-spin .7s linear infinite;
+}
+.owrp-env-body.is-result .owrp-env-top {
+    -webkit-animation: owrp-pop .30s ease-out both; animation: owrp-pop .30s ease-out both;
+}
+.owrp-env-body.is-result .owrp-env-bottom {
+    -webkit-animation: owrp-pop .30s ease-out both; animation: owrp-pop .30s ease-out both;
+    -webkit-animation-delay: .06s; animation-delay: .06s;
+}
+@media (prefers-reduced-motion: reduce) {
+    .owrp-env, .owrp-env-coin.is-busy,
+    .owrp-env-body.is-result .owrp-env-top,
+    .owrp-env-body.is-result .owrp-env-bottom {
+        -webkit-animation: none; animation: none;
+    }
+}
+
 /* ---------- 发包弹窗 ---------- */
 
-.owrp-modal { position: relative; }
+.owrp-modal { position: relative; padding-bottom: 30px; }
 .owrp-modal h3 { margin-bottom: 12px; }
 
 .owrp-seg { margin-bottom: 10px; }
@@ -591,7 +627,7 @@
 
 @media (max-width: 480px) {
     /* 通用弹窗在 360px 屏上是满宽贴边（.ow-modal width:100%），这里收一档 */
-    .owrp-modal { width: 92%; padding: 18px; }
+    .owrp-modal { width: 92%; padding: 18px 18px 26px; }
     .owrp-card { width: 208px; padding: 10px; }
     .owrp-coin { width: 36px; height: 36px; font-size: 12px; }
     .owrp-seg .ow-seg-btn { padding: 0 4px; font-size: 12px; }
