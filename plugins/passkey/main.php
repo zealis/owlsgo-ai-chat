@@ -101,6 +101,9 @@ function owPkCoseToPem(array $cose): ?string
 /** 按 COSE alg 校验签名（ES* 的签名是 DER 编码的 ECDSA-Sig-Value，openssl 直接吃） */
 function owPkVerifySig(int $alg, string $pem, string $data, string $sig): bool
 {
+    // openssl 是 PHP 内置扩展，但个别精简编译会裁掉 —— 没有它整条链路不能跑，
+    // 这里失败而不是抛 Error，调用方会走到统一的「验证未通过」提示。
+    if (!function_exists('openssl_verify')) return false;
     $algs = [
         -7   => OPENSSL_ALGO_SHA256,   // ES256
         -35  => OPENSSL_ALGO_SHA384,   // ES384
@@ -298,19 +301,42 @@ function owPkCheckClientData(string $json, string $expectType, string $expectCha
 /** 下发一条挑战（写进会话），返回 base64url 文本 */
 function owPkChallengeSet(string $scene, array $extra = []): string
 {
-    $raw = random_bytes(32);
-    $_SESSION['owpk_chal'] = ['c' => owPkB64u($raw), 'scene' => $scene, 'at' => time()] + $extra;
-    return owPkB64u($raw);
+    $c = owPkB64u(random_bytes(32));
+    $now = time();
+    $list = $_SESSION['owpk_chals'] ?? [];
+    if (!is_array($list)) $list = [];
+    // 只留 5 分钟内、最近 4 条 —— 面板被重复渲染 / 用户连点「添加」时会连开两条挑战，
+    // 单槽位实现下后一条会把前一条顶掉，表现为「点了添加却提示验证数据不合法」。
+    $list = array_values(array_filter($list, fn($x) => is_array($x) && $now - (int)($x['at'] ?? 0) <= 300));
+    $list[] = ['c' => $c, 'scene' => $scene, 'at' => $now] + $extra;
+    if (count($list) > 4) $list = array_slice($list, -4);
+    $_SESSION['owpk_chals'] = $list;
+    return $c;
 }
 
-/** 取出并立即作废挑战（一次性，失败也不留） */
-function owPkChallengeTake(string $scene, int $ttl = 300): ?array
+/**
+ * 按「场景 + 挑战值」核销一条挑战（一次性，用过即从会话里删掉）。
+ * $given 为空时退回「该场景最近一条」—— 仅供不支持先读 clientData 的调用方使用。
+ */
+function owPkChallengeTake(string $scene, string $given = '', int $ttl = 300): ?array
 {
-    $s = $_SESSION['owpk_chal'] ?? null;
-    unset($_SESSION['owpk_chal']);
-    if (!is_array($s) || (string)($s['scene'] ?? '') !== $scene) return null;
-    if (time() - (int)($s['at'] ?? 0) > $ttl) return null;
-    return $s;
+    $list = $_SESSION['owpk_chals'] ?? null;
+    if (!is_array($list)) return null;
+    $now = time();
+    $hit = null;
+    $keep = [];
+    foreach ($list as $x) {
+        if (!is_array($x)) continue;
+        if ($now - (int)($x['at'] ?? 0) > $ttl) continue;
+        if ($hit === null && (string)($x['scene'] ?? '') === $scene
+            && ($given === '' || hash_equals((string)$x['c'], $given))) {
+            $hit = $x;
+            continue;               // 命中即作废，不留在会话里（防重放）
+        }
+        $keep[] = $x;
+    }
+    $_SESSION['owpk_chals'] = $keep;
+    return $hit;
 }
 
 /** 已登录用户守卫 */
@@ -406,7 +432,13 @@ function owPkFinishLogin(int $uid): array
 
 /** 登录页 / 前台：当前站点能不能用通行密钥（登录页据此决定要不要出按钮） */
 Plugin::route('plugin_passkey_config', function (array $ctx): void {
-    Api::json(['ok' => true, 'enabled' => owPkEnabled(), 'secure' => owPkSecure()]);
+    Api::json([
+        'ok'      => true,
+        'enabled' => owPkEnabled(),
+        'secure'  => owPkSecure(),
+        // 精简编译裁掉 openssl 时前端不出按钮，免得用户点了必然失败
+        'openssl' => function_exists('openssl_verify'),
+    ]);
 });
 
 /* ---------- 5.1 登录：取挑战 ---------- */
@@ -414,6 +446,7 @@ Plugin::route('plugin_passkey_config', function (array $ctx): void {
 Plugin::route('plugin_passkey_login_options', function (array $ctx): void {
     owPkSession();
     if (!owPkEnabled()) Api::json(['ok' => false, 'msg' => '站点未开启通行密钥登录']);
+    if (!function_exists('openssl_verify')) Api::json(['ok' => false, 'msg' => '服务器未启用 openssl 扩展，无法使用通行密钥']);
     if (!owPkSecure()) Api::json(['ok' => false, 'msg' => '当前环境不支持通行密钥（需要 HTTPS 访问）']);
     if (Sec::loginLocked('passkey|' . Sec::ip())) {
         Api::json(['ok' => false, 'msg' => '尝试次数过多，请稍后再试']);
@@ -458,10 +491,12 @@ Plugin::route('plugin_passkey_login_finish', function (array $ctx): void {
     $ipKey = 'passkey|' . Sec::ip();
     if (Sec::loginLocked($ipKey)) Api::json(['ok' => false, 'msg' => '尝试次数过多，请 15 分钟后再试']);
 
-    $chal = owPkChallengeTake('login');
+    $post  = $ctx['post'];
+    $clientJson = owPkB64uDecode((string)($post['clientDataJSON'] ?? ''));
+    $cdRaw = json_decode($clientJson, true);
+    $chal = is_array($cdRaw) ? owPkChallengeTake('login', (string)($cdRaw['challenge'] ?? '')) : null;
     if (!$chal) Api::json(['ok' => false, 'msg' => '验证已过期，请重新点击「使用通行密钥登录」']);
 
-    $post  = $ctx['post'];
     $rawId = owPkB64uDecode((string)($post['rawId'] ?? ($post['id'] ?? '')));
     if ($rawId === '') Api::json(['ok' => false, 'msg' => '凭据格式不正确']);
     $row = DB::one('SELECT * FROM plugin_passkey WHERE id_hash=?', [hash('sha256', $rawId)]);
@@ -471,7 +506,6 @@ Plugin::route('plugin_passkey_login_finish', function (array $ctx): void {
         Api::json(['ok' => false, 'msg' => '这台设备上没有该账号的通行密钥，请改用密码登录']);
     }
 
-    $clientJson = owPkB64uDecode((string)($post['clientDataJSON'] ?? ''));
     $authData   = owPkB64uDecode((string)($post['authenticatorData'] ?? ''));
     $sig        = owPkB64uDecode((string)($post['signature'] ?? ''));
     $cd = owPkCheckClientData($clientJson, 'webauthn.get', (string)$chal['c']);
@@ -542,6 +576,7 @@ Plugin::route('plugin_passkey_add_options', function (array $ctx): void {
     owPkSession();
     $actor = owPkActorUser($ctx);
     if (!owPkEnabled()) Api::json(['ok' => false, 'msg' => '站点未开启通行密钥登录']);
+    if (!function_exists('openssl_verify')) Api::json(['ok' => false, 'msg' => '服务器未启用 openssl 扩展，无法使用通行密钥']);
     if (!owPkSecure()) Api::json(['ok' => false, 'msg' => '当前环境不支持通行密钥（需要 HTTPS 访问）']);
 
     $uid = (int)$actor['id'];
@@ -628,8 +663,10 @@ Plugin::route('plugin_passkey_add_finish', function (array $ctx): void {
         Api::json(['ok' => false, 'msg' => '账号密码不正确']);
     }
 
-    // 2) 挑战（一次性）
-    $chal = owPkChallengeTake('register');
+    // 2) 挑战（一次性，按值核销 —— 连开两条也不会互相顶掉）
+    $clientJson = owPkB64uDecode((string)($post['clientDataJSON'] ?? ''));
+    $cdRaw = json_decode($clientJson, true);
+    $chal = is_array($cdRaw) ? owPkChallengeTake('register', (string)($cdRaw['challenge'] ?? '')) : null;
     if (!$chal) Api::json(['ok' => false, 'msg' => '添加超时，请重新点击「添加通行密钥」']);
     if ((int)($chal['uid'] ?? 0) !== $uid) Api::json(['ok' => false, 'msg' => '会话不匹配，请重试']);
 
@@ -637,7 +674,6 @@ Plugin::route('plugin_passkey_add_finish', function (array $ctx): void {
     if (!is_array($att) || !isset($att['authData']) || !is_string($att['authData'])) {
         Api::json(['ok' => false, 'msg' => '凭据格式不正确']);
     }
-    $clientJson = owPkB64uDecode((string)($post['clientDataJSON'] ?? ''));
     if (!owPkCheckClientData($clientJson, 'webauthn.create', (string)$chal['c'])) {
         Api::json(['ok' => false, 'msg' => '验证数据不合法，请重试']);
     }

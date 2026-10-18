@@ -102,7 +102,7 @@
         if (!form || $('owpkLogin')) return;
         w.OwApi.post('plugin_passkey_config', {}, function (r) {
             if (!r || !r.ok || !r.enabled) return;
-            if (!r.secure || !webauthnOk()) return;   // 非 HTTPS / 老浏览器：不摆一个点了就报错的按钮
+            if (!r.secure || !r.openssl || !webauthnOk()) return;   // 非 HTTPS / 老浏览器 / 服务端缺 openssl：不摆一个点了就报错的按钮
             mountLogin(form);
         });
     }
@@ -179,8 +179,10 @@
                     userHandle: res.userHandle ? bufToB64u(res.userHandle) : ''
                 }, function (rr) {
                     if (rr && rr.ok) {
+                        // 稍等一下再跳：这一跳会带着新会话 cookie 打开聊天页，
+                        // 马上跳会让首屏那几个签名请求赶在 cookie 落地之前发出（表现为 403 签名失败）
                         setTip('验证通过，正在进入…');
-                        w.location.href = '?page=chat';
+                        w.setTimeout(function () { w.location.href = '?page=chat'; }, 600);
                         return;
                     }
                     setBusy(false);
