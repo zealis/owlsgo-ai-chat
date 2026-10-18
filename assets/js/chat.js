@@ -3780,15 +3780,12 @@
                 }
                 return h;
             };
-            /* v1.2.19：群名称改为**可选**，留空由服务端补「<昵称>的群聊」。
-               前端这里只负责把「留空会得到什么」讲清楚 —— 不要等到创建完
-               才发现群叫了个自己没写的名字。 */
-            var me0 = this.cfg.me || {};
-            var autoName = ((me0.nickname || '') || '我') + '的群聊';
+            /* v1.5.10：建群弹窗**不再问群名称**（站方：不需要定义群聊名称就直接创建，
+               建完可以去群聊设置里改）。服务端从 v1.2.19 起就支持留空自动命名
+               「<昵称>的群聊」，所以这里只是把输入框撤掉、name 不提交 = 走默认名。
+               创建成功的 toast 回显的是服务端给的群名，用户当场就知道群叫什么。 */
             this.openModal(
                 '<h3>创建群聊</h3>'
-                + '<div class="ow-form-item"><label>群名称（可选）</label><input class="ow-input" id="owRCName" maxlength="30"'
-                + ' placeholder="留空默认「' + esc(autoName) + '」"></div>'
                 + '<div class="ow-form-item"><label>类型</label><select class="ow-input" id="owRCType">'
                 + opts(TYPE, ['public', 'password', 'role'], 'public') + '</select></div>'
                 + '<div class="ow-form-item" id="owRCPassRow" style="display:none"><label>房间密码</label><input class="ow-input" type="password" id="owRCPass" placeholder="密码群必须设置密码"></div>'
@@ -3895,22 +3892,14 @@
                         + esc(gateInfo.reason || '当前无法创建群聊') + '</span>';
                     return;
                 }
-                var name = $('owRCName').value.replace(/^\s+|\s+$/g, '');
-                /* v1.2.19：空 = 合法（走默认名）；填了才校验长度。
-                   ⚠️ 不能写成 `name.length < 2` —— 那会把「留空」也判成非法，
-                   与「可选」的设计直接矛盾。 */
-                if (name !== '' && (name.length < 2 || name.length > 30)) {
-                    msg.innerHTML = '<span style="color:var(--ow-red)">群名称需 2-30 个字符，'
-                        + '或留空自动命名为「' + esc(autoName) + '」</span>';
-                    return;
-                }
                 var t = typeSel.value;
                 if (t === 'password' && !$('owRCPass').value) {
                     msg.innerHTML = '<span style="color:var(--ow-red)">密码群必须设置密码</span>'; return;
                 }
                 msg.innerHTML = '创建中…';
+                // name 不提交：服务端按「留空」补默认名（见 room_create）
                 OwApi.post('room_create', {
-                    name: name, type: t, password: $('owRCPass') ? $('owRCPass').value : '',
+                    type: t, password: $('owRCPass') ? $('owRCPass').value : '',
                     min_role: $('owRCRole').value,
                     // v1.1.11：公开性开关。传 '0'/'1' 字符串，服务端按 === '0' 归一
                     description: $('owRCDesc').value,
