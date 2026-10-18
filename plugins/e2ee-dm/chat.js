@@ -474,6 +474,7 @@
             W.toast('站点未开启加密私聊，请让管理员在后台「加密私聊」里选择「允许用户自行开启」', 5000);
             return;
         }
+        mark('进入 enableFlow');
         // 先给一声回执：后面要读本地存储、问服务端，任何一步慢了用户都不该以为没点上
         W.toast('正在检查本机密钥…', 1800);
 
@@ -481,6 +482,7 @@
             return ensureConvState(peer);
         }), 8000, '本机密钥存储无响应，请检查是否用了无痕 / 隐私窗口')
             .then(function (on) {
+                mark('④ 状态就绪，开关=' + (on ? '已开启' : '未开启'));
                 if (on) { W.toast('该会话已开启加密'); return; }
                 var first = !keys;
                 var body = ''
@@ -493,6 +495,7 @@
                     + (first ? '本设备还没有加密密钥，点「开启加密」会现在生成一套。' : '')
                     + '对方也必须启用加密才能互发。开启后，这个会话的敏感词过滤、'
                     + '内容审核与管理员查阅都不再生效。</p>';
+                mark('⑤ 弹窗已打开');
                 modal('开启加密私聊', body, '开启加密', 'OWED._onOpen', false);
             }).catch(function (e) {
                 // 本地存储被禁用（无痕 / 隐私模式）、被别的标签页占用、或整体超时，
@@ -506,6 +509,7 @@
         var peer = W.OwChat.dm && W.OwChat.dm.id;
         if (!peer) return;
         // 密钥生成要走一遍 WebCrypto，慢的时候有一两秒 —— 不给反馈用户就会以为又没点上
+        mark('⑥ doEnable 已进入');
         W.toast('正在生成本设备的加密密钥…', 6000);
         var p = keys ? Promise.resolve(keys) : createKeys();
         withTimeout(p, 15000, '生成本机密钥超时，请确认浏览器支持 WebCrypto 且不是无痕窗口')
@@ -522,6 +526,7 @@
                 if (!s) return null;                      // 上面已经提示过，不再往下开会话
                 return api('plugin_e2ee_dm_conv', { peer_id: peer, on: 1 }).then(function (r) {
                     if (!r.ok) throw new Error(r.msg || '开启失败');
+                    mark('⑦ 会话已开启');
                     convState[String(peer)] = true;
                     toastLock(true);
                     W.toast('已开启加密。请记住：换设备后此前的加密消息无法恢复', 4000);
@@ -622,21 +627,39 @@
         };
     }
 
+    /* ===================== 执行轨迹（排查用，出错时一眼看到卡在哪一步） ===================== */
+
+    var trace = [];
+    function mark(s) {
+        trace.push(s);
+        if (trace.length > 14) trace.shift();
+    }
+
     function installBtnClick() {
         W.document.addEventListener('click', function (e) {
             var t = e.target;
-            if (!t || !t.closest) return;
+            if (!t || !t.closest) { mark('点到了非元素'); return; }
             if (!t.closest('#owEDBtn')) return;
             e.preventDefault();
             e.stopPropagation();
+            mark('① 盾牌被点击');
             if (unsupported) {
+                mark('× 环境不支持');
                 W.toast('当前环境不支持加密：需要用 HTTPS 或 localhost 访问，且浏览器要支持 WebCrypto', 4000);
                 return;
             }
             var oc = W.OwChat;
-            if (!oc || !oc.dm || !oc.dm.id) { W.toast('请先打开一个私聊'); return; }
+            if (!oc || !oc.dm || !oc.dm.id) {
+                mark('× 当前不在私聊');
+                W.toast('请先打开一个私聊'); return;
+            }
+            mark('② 对话对象 id=' + oc.dm.id + ' kind=' + (oc.dm.kind || '(空)'));
             ensureConvState(oc.dm.id).then(function (on) {
+                mark('③ 开关状态=' + (on ? '已开启' : '未开启'));
                 if (on) disableFlow(); else enableFlow();
+            }, function (err) {
+                mark('× 开关查询失败：' + ((err && err.message) || err));
+                W.toast('无法查询加密状态，请稍后重试');
             });
         }, true);
     }
@@ -777,7 +800,7 @@
     W.OWED = {
         // 版本自检：浏览器控制台敲 OWED.v 应显示这个号。
         // 显示 undefined 就说明页面还在用旧的插件包（Ctrl+F5 硬刷新）。
-        v: '1.1.1',
+        v: '1.1.2',
         /**
          * 自检：控制台敲 OWED.diagnose() 回车。
          * 结果会**自动打印并复制到剪贴板**（Chrome 控制台的 copy() 辅助）——
@@ -806,6 +829,7 @@
                     })(),
                     弹窗: masked() ? '开着' : '无',
                     WebSocket: (W.OwChat && W.OwChat.rt && W.OwChat.rt.on) ? '已连接' : '未连接（发送回落 HTTP）',
+                    执行轨迹: trace.slice(),
                     环境: (W.isSecureContext ? 'https 安全上下文' : '非安全上下文（不能加密）')
                         + ' | WebCrypto ' + (W.OWEE.available() ? '可用' : '不可用')
                 });
