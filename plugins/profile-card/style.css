@@ -1,0 +1,138 @@
+/* ==========================================================================
+ * 用户名片插件（profile-card）样式
+ *
+ * 两部分：
+ *   ① 资料卡「名片」布局 —— 由核心 onCardRendered 注入的 .owpc-banner 节点 +
+ *      弹窗上的 .owpc-card 类驱动（JS 只插节点，不写一行布局）
+ *   ② 左侧「名片」面板
+ *
+ * 约定：全部走核心 --ow-* 变量，零硬编码色值；前缀 owpc-；
+ *      不覆盖核心通用类（改动一律限定在 .ow-modal.owpc-card 作用域内）。
+ * ========================================================================== */
+
+/* ===================== ① 资料卡：横幅 + 头像叠压 ===================== */
+
+/* 原标题「用户资料」收起来：横幅卡的标题就是横幅本身，
+   再压一行文字会破坏顶部的干净留白（✕ 关闭按钮保留，见下）。 */
+.ow-modal.owpc-card > h3 { display: none; }
+
+/* 关闭按钮浮到横幅右上角（Discord 式）：给一圈同色底 + 轻投影，
+   压在任何颜色的横幅图上都保证可见（不改核心 .ow-modal-close 的布局，只加外观）。 */
+.ow-modal.owpc-card .ow-modal-close {
+    position: relative;
+    z-index: 3;
+    width: 28px;
+    height: 28px;
+    line-height: 28px;
+    text-align: center;
+    border-radius: 50%;
+    background: var(--ow-surface);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, .18);
+}
+
+/* 横幅区：向弹窗四边出血（抵消 .ow-modal 的 24px 内边距，与 .ow-card > .ow-list-head
+   同一手法），顶部两角继承弹窗 10px 圆角。
+   默认背景 = --ow-surface（浅色主题即白色，与卡面融为一体；深色主题随卡面走），
+   有图时 cover 居中裁剪。 */
+.ow-modal.owpc-card .owpc-banner {
+    height: 96px;
+    margin: -24px -24px 0;
+    background-color: var(--ow-surface);
+    background-position: center center;
+    background-repeat: no-repeat;
+    background-size: cover;
+    border-radius: 10px 10px 0 0;
+}
+
+/* 头部改纵排：头像独占一行并上移压住横幅，昵称 / 身份标签 / ID 整体落到头像下方。
+   只作用于 .ow-modal.owpc-card 内的资料卡，不碰其它弹窗的 .ow-card-head。 */
+.ow-modal.owpc-card .ow-card-head {
+    -webkit-flex-direction: column;
+    flex-direction: column;
+    align-items: flex-start;
+    -webkit-align-items: flex-start;
+    gap: 2px;
+    margin-bottom: 14px;
+}
+.ow-modal.owpc-card .ow-card-id { width: 100%; }
+
+/* 头像（自己的卡片是 .ow-set-avatar-btn 壳）上移压横幅；
+   白描边环在有图时把头像从背景里剥出来，无图（默认白）时与卡面同色自然隐形。
+   ⚠️ 用 box-shadow 而不是 border：不改布局盒尺寸，不会把后面的文字推走。 */
+.ow-modal.owpc-card .ow-card-head > .ow-avatar,
+.ow-modal.owpc-card .ow-card-head > .ow-set-avatar-btn {
+    margin-top: -34px;
+    position: relative;
+    z-index: 1;
+    box-shadow: 0 0 0 4px var(--ow-surface);
+}
+
+/* 窄屏：横幅与叠压幅度等比收一档（弹窗内边距移动端不变，-24px 出血照旧成立） */
+@media (max-width: 720px) {
+    .ow-modal.owpc-card .owpc-banner { height: 76px; }
+    .ow-modal.owpc-card .ow-card-head > .ow-avatar,
+    .ow-modal.owpc-card .ow-card-head > .ow-set-avatar-btn { margin-top: -28px; }
+}
+
+/* ===================== ② 「名片」面板 ===================== */
+
+.owpc-panel { padding: 16px; max-width: 520px; }
+
+/* 预览 = 迷你资料卡：同一套「横幅 + 头像叠压」语言，所见即所得 */
+.owpc-preview {
+    border: 1px solid var(--ow-border);
+    border-radius: 10px;
+    background: var(--ow-surface);
+    overflow: hidden;
+    margin-bottom: 14px;
+}
+.owpc-preview-banner {
+    height: 88px;
+    background-color: var(--ow-surface);
+    background-position: center center;
+    background-repeat: no-repeat;
+    background-size: cover;
+}
+.owpc-preview-body {
+    display: flex;
+    display: -webkit-flex;
+    align-items: flex-end;
+    -webkit-align-items: flex-end;
+    gap: 12px;
+    padding: 0 16px 14px;
+    margin-top: -26px;
+}
+.owpc-preview-body .ow-avatar {
+    -webkit-flex-shrink: 0;
+    flex-shrink: 0;
+    box-shadow: 0 0 0 3px var(--ow-surface);
+}
+.owpc-preview-meta { min-width: 0; padding-bottom: 2px; }
+.owpc-preview-name {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--ow-text-title);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.owpc-preview-state { font-size: 12px; color: var(--ow-text-sub); margin-top: 2px; }
+
+/* 操作行：按钮组 + 链接输入行，全部复用核心 .ow-btn / .ow-input */
+.owpc-row {
+    display: flex;
+    display: -webkit-flex;
+    align-items: center;
+    -webkit-align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+.owpc-row .ow-input { -webkit-flex: 1 1 auto; flex: 1 1 auto; min-width: 0; }
+.owpc-tip { font-size: 12px; color: var(--ow-text-sub); line-height: 1.6; margin: 4px 0 0; }
+
+/* 窄屏：链接行的输入框独占一行，按钮落到下一行（不挤成两条细条） */
+@media (max-width: 720px) {
+    .owpc-panel { padding: 12px; }
+    .owpc-row { -webkit-flex-wrap: wrap; flex-wrap: wrap; }
+    .owpc-row .ow-input { -webkit-flex: 1 1 100%; flex: 1 1 100%; }
+}

@@ -2566,6 +2566,38 @@
             return out;
         },
 
+        /* ---------- 资料卡渲染完成扩展点（v1.5.17） ----------
+           需求：资料卡要支持「顶部横幅背景图 + 头像叠压」这类**头部装饰**
+           （见 profile-card 插件）。onCardMetaTop 只能在 .ow-card-meta 顶部加行、
+           #owCardExtras 只能在卡片末尾加内容，都动不了卡片头部的结构。
+           做法：核心把资料卡渲染完（openModal 之后）再 fire 本钩子，把弹窗 DOM
+           与卡片数据交给插件做**增量装饰** —— 插件不必复刻核心 HTML。
+           ⚠️ 单个插件抛错只丢弃它自己那一段，不影响其他插件与核心渲染。
+           @example
+           OwChat.onCardRendered(function (modal, u) {
+               var b = document.createElement('div');
+               b.className = 'owpc-banner';
+               modal.insertBefore(b, modal.querySelector('.ow-card-head'));
+           });
+        */
+        _cardRendered: [],
+        /**
+         * 注册资料卡渲染完成回调。
+         * @param {Function} fn  fn(modal, userCardData)；modal = #owModal 弹窗节点
+         */
+        onCardRendered: function (fn) {
+            if (typeof fn !== 'function') return;
+            this._cardRendered.push(fn);
+        },
+
+        /** 触发资料卡渲染完成回调（按注册顺序；单个插件抛错只丢弃它那一段） */
+        fireCardRendered: function (modal, u) {
+            var list = this._cardRendered, i;
+            for (i = 0; i < list.length; i++) {
+                try { list[i](modal, u); } catch (e) {}
+            }
+        },
+
         /**
          * 绑定一级导航条 rail 的点击（委托，只绑一次；插件后加的入口也自动生效）。
          * v1.3.4：控件由侧栏顶部的横向标签条（#owSideTabs）改为最左侧图标条（#owRail），
@@ -4894,6 +4926,10 @@
                     + '<div id="owCardExtras"></div>'
                     + (acts ? '<div class="ow-modal-actions">' + acts + '</div>' : '')
                 );
+                // v1.5.17：资料卡渲染完成 —— 让插件装饰卡片（如顶部横幅背景图）。
+                // onCardMetaTop / #owCardExtras 都动不了头部结构，故在 openModal 之后
+                // 把渲染结果与卡片数据交给插件做增量 DOM（详见 onCardRendered 注释）。
+                self.fireCardRendered($('owModal'), u);
             });
         },
 
