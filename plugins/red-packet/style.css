@@ -104,34 +104,33 @@
     letter-spacing: -.5px;
 }
 
-/* ---------- 开红包全屏页 ----------
-   点卡片**不直接领取**，先进这一页；点中间的「开」才真正拆。
-   整页只用 --ow-red / --ow-bg / --ow-text 三个变量：
-   浅色 = 红底白字，深色 = 珊瑚底近黑字，两个主题都不需要额外的覆盖块。 */
+/* ---------- 开红包弹窗（点卡片先到这，再点「开」才领取） ----------
+   不是全屏页：遮罩直接用核心的 .ow-modal-mask（半透明 + 模糊 + 居中 + 20px 留白），
+   中间是一张 340px 宽的红信封卡。配色仍然只有 --ow-red / --ow-bg / --ow-text：
+   浅色 = 红底白字，深色 = 珊瑚底近黑字，两个主题都不用另写覆盖块。 */
+
+.owrp-env-mask { z-index: 300; }   /* 压住右键菜单/其它浮层，普通弹窗是 100 */
 
 .owrp-env {
-    position: fixed;
-    left: 0; top: 0; right: 0; bottom: 0;
-    z-index: 300;
-    display: flex; display: -webkit-flex;
-    align-items: center; -webkit-align-items: center;
-    justify-content: center; -webkit-justify-content: center;
+    position: relative;
+    width: 340px;
+    max-width: 100%;
+    height: 520px;
+    max-height: 84vh;
     overflow: hidden;
+    border-radius: 12px;
     background: var(--ow-red);
     color: var(--ow-bg);
     text-align: center;
     -webkit-tap-highlight-color: transparent;
 }
 
-/* 背景那一枚大字「福」+ 底部的弧形色带，都是纯装饰。
-   字号用 vh 撑满全屏（老内核不认 vh 时退回 320px）：字符越大，笔画越稀，
-   压在正文后面才像水印而不是一块脏底。 */
+/* 背景那一枚大字「福」+ 底部弧形色带，都是纯装饰 */
 .owrp-env-fu {
     position: absolute;
-    left: 50%; top: 50%;
-    -webkit-transform: translate(-50%, -46%); transform: translate(-50%, -46%);
-    font-size: 320px;
-    font-size: 46vh;
+    left: 50%; top: 52%;
+    -webkit-transform: translate(-50%, -50%); transform: translate(-50%, -50%);
+    font-size: 230px;
     font-weight: 700;
     line-height: 1;
     color: var(--ow-bg);
@@ -142,17 +141,15 @@
 .owrp-env::after {
     content: '';
     position: absolute;
-    left: -12%; right: -12%; bottom: -16%;
-    height: 42%;
+    left: -20%; right: -20%; bottom: -64px;
+    height: 190px;
     background: var(--ow-bg);
     opacity: .07;
     border-radius: 50% 50% 0 0;
     pointer-events: none;
 }
 
-/* 上（谁的红包 / 祝福 / 类型）与下（铜钱 + 提示）两段分开摆：
-   中间整块留给「福」水印，铜钱落在下方三分之一处 —— 与常见红包页的构图一致，
-   也避免正文直接压在笔画最密的地方。 */
+/* 上（谁的红包 / 祝福 / 类型）与下（铜钱 + 提示）两段分开摆，中间留给「福」 */
 .owrp-env-body {
     position: relative;
     z-index: 2;
@@ -161,37 +158,36 @@
     align-items: center; -webkit-align-items: center;
     justify-content: space-between; -webkit-justify-content: space-between;
     width: 100%;
-    max-width: 460px;
     height: 100%;
-    padding: 15vh 28px 11vh;
+    padding: 30px 24px 26px;
     box-sizing: border-box;
     text-align: center;
 }
 .owrp-env-top, .owrp-env-bottom { width: 100%; }
 
-/* 拆开后的结果态：整块居中（金额是主角），按钮压在下面 */
+/* 结果态整块居中（金额是主角），按钮跟在下面 */
 .owrp-env-body.is-result {
     justify-content: center; -webkit-justify-content: center;
     overflow-y: auto;
 }
 .owrp-env-body.is-result .owrp-env-bless {
-    font-size: 18px;
+    font-size: 17px;
     font-weight: 400;
     opacity: .88;
 }
-.owrp-env-body.is-result .owrp-env-bottom { margin-top: 34px; }
+.owrp-env-body.is-result .owrp-env-bottom { margin-top: 26px; }
 
 .owrp-env-x {
     position: absolute;
     z-index: 3;
-    top: 12px; right: 12px;
-    width: 40px; height: 40px;
+    top: 7px; right: 7px;
+    width: 34px; height: 34px;
     border: 0;
     border-radius: 50%;
     background: transparent;
     color: var(--ow-bg);
     opacity: .72;
-    font-size: 20px;
+    font-size: 17px;
     line-height: 1;
     cursor: pointer;
 }
@@ -201,31 +197,31 @@
     display: flex; display: -webkit-flex;
     align-items: center; -webkit-align-items: center;
     justify-content: center; -webkit-justify-content: center;
-    gap: 10px; -webkit-gap: 10px;
-    margin-bottom: 18px;
+    gap: 9px; -webkit-gap: 9px;
+    margin-bottom: 14px;
 }
 .owrp-env-av {
     -webkit-flex: none; flex: none;
     display: inline-block;
-    width: 38px; height: 38px;
+    width: 34px; height: 34px;
     border-radius: 50%;
     overflow: hidden;
     background: var(--ow-bg);
     line-height: 0;
 }
 .owrp-env-av img { display: block; width: 100%; height: 100%; border-radius: 50%; }
-.owrp-env-who { font-size: 15px; }
+.owrp-env-who { font-size: 14px; }
 
 .owrp-env-bless {
-    font-size: 26px;
+    font-size: 22px;
     font-weight: 600;
     line-height: 1.35;
     word-break: break-word;
 }
 .owrp-env-tag {
     display: inline-block;
-    margin-top: 14px;
-    padding: 3px 12px;
+    margin-top: 10px;
+    padding: 2px 11px;
     border: 1px solid currentColor;
     border-radius: 999px;
     font-size: 12px;
@@ -233,11 +229,11 @@
     opacity: .82;
 }
 
-.owrp-env-pass { margin-top: 20px; }
+.owrp-env-pass { margin-top: 14px; }
 .owrp-env-input {
     width: 100%;
-    max-width: 260px;
-    height: 38px;
+    max-width: 236px;
+    height: 36px;
     padding: 0 12px;
     box-sizing: border-box;
     background: transparent;
@@ -252,16 +248,15 @@
 .owrp-env-input::placeholder { color: currentColor; opacity: .55; }
 .owrp-env-input:focus { border-width: 2px; }
 
-.owrp-env-coin-wrap { margin-top: 0; }
 .owrp-env-coin {
     display: inline-flex; display: -webkit-inline-flex;
     align-items: center; -webkit-align-items: center;
     justify-content: center; -webkit-justify-content: center;
-    width: 92px; height: 92px;
+    width: 78px; height: 78px;
     border-radius: 50%;
     background: var(--ow-bg);
     color: var(--ow-red);
-    font-size: 32px;
+    font-size: 28px;
     font-weight: 600;
     line-height: 1;
     cursor: pointer;
@@ -274,39 +269,39 @@
 .owrp-env-coin.is-busy { opacity: .7; pointer-events: none; }
 
 .owrp-env-hint {
-    margin-top: 16px;
-    font-size: 13px;
+    margin-top: 12px;
+    font-size: 12.5px;
     line-height: 1.6;
     opacity: .82;
     word-break: break-word;
 }
 .owrp-env-err {
-    min-height: 18px;
-    margin-top: 6px;
-    font-size: 12.5px;
+    min-height: 17px;
+    margin-top: 5px;
+    font-size: 12px;
     font-weight: 600;
 }
 
 .owrp-env-amt {
-    margin-top: 16px;
-    font-size: 54px;
+    margin-top: 12px;
+    font-size: 44px;
     font-weight: 700;
     line-height: 1.1;
 }
 .owrp-env-amt small {
     margin-left: 4px;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 400;
     opacity: .85;
 }
 .owrp-env-item {
-    margin: 16px auto 0;
-    max-width: 300px;
-    padding: 14px;
-    border-radius: 10px;
+    margin: 12px auto 0;
+    max-width: 250px;
+    padding: 12px;
+    border-radius: 9px;
     background: var(--ow-bg);
     color: var(--ow-text);
-    font-size: 14px;
+    font-size: 13px;
     line-height: 1.6;
     text-align: left;
     word-break: break-all;
@@ -317,17 +312,17 @@
     display: flex; display: -webkit-flex;
     justify-content: center; -webkit-justify-content: center;
     flex-wrap: wrap; -webkit-flex-wrap: wrap;
-    gap: 10px; -webkit-gap: 10px;
+    gap: 8px; -webkit-gap: 8px;
 }
 .owrp-env-btn {
-    min-width: 112px;
-    height: 40px;
-    padding: 0 18px;
+    min-width: 100px;
+    height: 36px;
+    padding: 0 16px;
     border: 1px solid currentColor;
-    border-radius: 20px;
+    border-radius: 18px;
     background: transparent;
     color: inherit;
-    font-size: 14px;
+    font-size: 13px;
     font-family: inherit;
     line-height: 1;
     cursor: pointer;
@@ -603,10 +598,12 @@
     .owrp-detail-amt { font-size: 26px; }
     .owrp-result-amt { font-size: 28px; }
     .owrp-actions .ow-btn { font-size: 13px; }
-    /* 开红包全屏页：小屏收字号，铜钱仍然是视觉中心 */
-    .owrp-env-fu { font-size: 230px; font-size: 38vh; }
-    .owrp-env-bless { font-size: 22px; }
-    .owrp-env-coin { width: 84px; height: 84px; font-size: 30px; }
-    .owrp-env-body { padding: 12vh 22px 9vh; }
-    .owrp-env-amt { font-size: 40px; }
+    /* 开红包弹窗：小屏收字号与留白，铜钱仍然是视觉中心 */
+    .owrp-env { height: 480px; max-height: 82vh; }
+    .owrp-env-fu { font-size: 190px; }
+    .owrp-env-bless { font-size: 20px; }
+    .owrp-env-coin { width: 72px; height: 72px; font-size: 26px; }
+    .owrp-env-body { padding: 26px 18px 22px; }
+    .owrp-env-amt { font-size: 38px; }
+    .owrp-env-item { max-width: 100%; }
 }

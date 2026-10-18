@@ -142,7 +142,7 @@ function owRPBalance(int $uid): int
     return (int)DB::val('SELECT points FROM users WHERE id=?', [$uid]);
 }
 
-/** 发包人头像（开红包全屏页要显示「谁的红包」）。同一请求内按 uid 缓存，避免批量查询时 N+1。 */
+/** 发包人头像（开红包弹窗要显示「谁的红包」）。同一请求内按 uid 缓存，避免批量查询时 N+1。 */
 function owRPAvatar(int $uid): string
 {
     static $cache = [];

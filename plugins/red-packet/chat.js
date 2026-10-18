@@ -381,10 +381,10 @@
        ===================================================================== */
 
     /**
-     * 点卡片：进行中且没领过 → 打开「开红包」全屏页（**不直接领取**，还需点一下「开」）；
+     * 点卡片：进行中且没领过 → 打开「开红包」弹窗（**不直接领取**，还需点一下「开」）；
      * 已领 / 已领完 / 已过期 → 详情。
      * 为什么要多一步：卡在聊天流里、又贴着输入框，误触一下就把红包拆了是不可接受的；
-     * 全屏页同时把「谁的红包 / 祝福语 / 类型 / 金额或份数」摆清楚，再让用户自己按「开」。
+     * 弹窗同时把「谁的红包 / 祝福语 / 类型 / 金额或份数」摆清楚，再让用户自己按「开」。
      */
     RP.open = function (id) {
         var p = RP.byId[id];
@@ -392,9 +392,9 @@
         loadDetail(id);
     };
 
-    /* ---------- 开红包全屏页 ---------- */
+    /* ---------- 开红包弹窗 ---------- */
 
-    /** 全屏页骨架（未拆状态）：谁的红包、祝福语、类型、口令输入（口令红包）、铜钱「开」 */
+    /** 弹窗骨架（未拆状态）：谁的红包、祝福语、类型、口令输入（口令红包）、铜钱「开」 */
     function envHtml(p) {
         var pn = esc(p.points_name || RP.pn);
         var av = p.sender_avatar
@@ -409,7 +409,8 @@
             var per = Math.floor((parseInt(p.total, 10) || 0) / Math.max(1, parseInt(p.cnt, 10) || 1));
             hint = '点击开启，领取 ' + per + ' ' + pn;
         }
-        return '<button class="owrp-env-x" type="button" aria-label="关闭" onclick="OwRP.closeEnv()">✕</button>'
+        return '<div class="owrp-env" role="dialog" aria-modal="true" aria-label="开红包">'
+             + '<button class="owrp-env-x" type="button" aria-label="关闭" onclick="OwRP.closeEnv()">✕</button>'
              + '<div class="owrp-env-fu" aria-hidden="true">福</div>'
              + '<div class="owrp-env-body" id="owRpEnvBody">'
              +   '<div class="owrp-env-top">'
@@ -430,6 +431,7 @@
              +     '<div class="owrp-env-hint" id="owRpEnvHint">' + hint + '</div>'
              +     '<div class="owrp-env-err" id="owRpEnvErr"></div>'
              +   '</div>'
+             + '</div>'
              + '</div>';
     }
 
@@ -437,13 +439,19 @@
         RP.closeEnv();
         RP.env = p;
         var el = d.createElement('div');
-        el.className = 'owrp-env';
+        // 复用核心的 .ow-modal-mask（遮罩色 / 模糊 / 居中 / 20px 留白都在核心样式里），
+        // 只把层级抬到 300，保证压住聊天页的右键菜单与其它浮层。
+        el.className = 'ow-modal-mask owrp-env-mask';
         el.id = 'owRpEnv';
-        el.setAttribute('role', 'dialog');
-        el.setAttribute('aria-modal', 'true');
+        el.style.display = 'flex';
         el.innerHTML = envHtml(p);
+        // 点遮罩空白处关闭；点面板内部不关（避免误触铜钱时连带关闭）
+        el.onclick = function (e) {
+            e = e || w.event;
+            if ((e.target || e.srcElement) === el) RP.closeEnv();
+        };
         d.body.appendChild(el);
-        // 全屏页期间锁住页面滚动（关闭时原样还原，别把别人的 inline 值覆盖掉）
+        // 弹窗期间锁住页面滚动（关闭时原样还原，别把别人的 inline 值覆盖掉）
         RP._envOverflow = d.documentElement.style.overflow;
         d.documentElement.style.overflow = 'hidden';
         if (d.addEventListener) d.addEventListener('keydown', envKeydown, false);
@@ -472,7 +480,7 @@
         if (el) el.textContent = msg || '';
     }
 
-    /** 点「开」：口令红包先取口令，其余直接请求；成功后在同一个全屏页里翻到结果态 */
+    /** 点「开」：口令红包先取口令，其余直接请求；成功后在同一个弹窗里翻到结果态 */
     RP.envClaim = function () {
         var p = RP.env;
         if (!p || RP.busy) return;
@@ -506,7 +514,7 @@
         });
     };
 
-    /** 拆开后的结果态（仍在全屏页里，点「收下」才回聊天） */
+    /** 拆开后的结果态（仍在弹窗里，点「收下」才回聊天） */
     function envResult(r) {
         var body = $('owRpEnvBody');
         if (!body) return;
@@ -539,7 +547,7 @@
         }
     }
 
-    /** 从全屏页跳到详情（收起全屏页，避免两层浮层叠着） */
+    /** 从弹窗跳到详情（收起弹窗，避免两层浮层叠着） */
     RP.envDetail = function () {
         var p = RP.env;
         RP.closeEnv();
@@ -566,7 +574,7 @@
 
     /**
      * 领取请求。$fail(msg) 失败回调、$ok(r) 成功回调（不传就走原来的结果弹窗）。
-     * 全屏页与详情弹窗共用这一条链路，避免两套「领取 → 记账 → 重画卡片」逻辑漂移。
+     * 弹窗与详情弹窗共用这一条链路，避免两套「领取 → 记账 → 重画卡片」逻辑漂移。
      */
     function doClaim(id, pass, fail, ok) {
         if (RP.busy) return;
