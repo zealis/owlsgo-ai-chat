@@ -125,6 +125,7 @@
         posts: {},          // pid → 波文数据（点赞/评论后局部更新用，不重画整张卡）
         busy: false,
         _titleBefore: '',
+        _barDisp: '',       // 进入时输入栏原有的 display（离开时还原）
 
         /* ---------- rail 入口 ---------- */
         onShow: function (panel) {
@@ -159,6 +160,14 @@
             OwChat.applyInputGate('notice');
             var input = $('owInput');
             if (input) input.placeholder = '浏览波文时不能聊天，回「消息」继续聊';
+            /* v1.4.5：整条输入栏直接收起（站方要求）—— 只禁用输入框的话，底下还杵着
+               一条灰栏，在「看波文」的语境里全是噪音。把留给它的高度让给时间流。
+               ⚠️ 必须记住进入前的 display 再还原：核心在窄屏/切会话时也动过它的显隐。 */
+            var bar = d.querySelector('.ow-inputbar');
+            if (bar && bar.style.display !== 'none') {
+                this._barDisp = bar.style.display || '';
+                bar.style.display = 'none';
+            }
             OwChat._fireViewChange();
 
             var box = $('owMessages');
@@ -178,6 +187,10 @@
             var lt = $('owLatency'); if (lt) lt.style.display = '';
             var nm = $('owRoomName');
             if (nm && this._titleBefore != null) nm.textContent = this._titleBefore;
+            // 输入栏显隐还原（进入时藏起来的那条）
+            var bar = d.querySelector('.ow-inputbar');
+            if (bar) bar.style.display = this._barDisp || '';
+            this._barDisp = '';
             var box = $('owMessages');
             if (box) box.innerHTML = '';   // 与 blankChatForFriends 同口径：不留残影
         },
