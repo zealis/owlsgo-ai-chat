@@ -514,23 +514,18 @@ Plugin::sensitive('plugin_e2ee_dm_setmode');
 
 /* ===================== 资源 ===================== */
 
-/**
- * 工具栏的「加密」开关。只在私聊里可见（chat.js 按当前会话切换 .on 与标题）。
- * 用盾牌图标：OW_ICONS 里没有 lock，硬塞一个未注册的图标名会渲染成空白按钮。
+/*
+ * 入口不再放工具栏：改到消息顶栏「可发言」标签**右侧**，图标 + 文字一起，
+ * 由 chat.js 注入（顶栏是服务端静态渲染的，没有 collect 钩子可插）。
+ * 服务端只负责把图标 SVG 交给前端，避免前端再抄一份图标路径。
  */
-Plugin::on('chat.toolbar', function (): string {
-    if (owEDMode() === 'off') return '';
-    return '<button class="ow-icon-btn owed-btn" id="owEDBtn" type="button"'
-        . ' title="按会话开启加密" aria-label="按会话开启加密">'
-        . ow_icon('shield', 16) . '</button>';
+Plugin::on('page.head', function () {
+    $v = rawurlencode(OWLSGO_VERSION);
+    echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=e2ee-dm&file=style.css&v=' . $v . '">' . "\n";
+    echo '<script>window.OWED_ICON=' . json_encode(ow_icon('shield', 13), JSON_UNESCAPED_UNICODE) . ';</script>' . "\n";
 });
 
 Plugin::asset('js', 'e2ee-dm/js/owce.js');
 Plugin::asset('js', 'e2ee-dm/chat.js');
 Plugin::asset('js', 'e2ee-dm/admin.js');
 Plugin::asset('css', 'e2ee-dm/style.css');
-
-Plugin::on('page.head', function () {
-    $v = rawurlencode(OWLSGO_VERSION);
-    echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=e2ee-dm&file=style.css&v=' . $v . '">' . "\n";
-});

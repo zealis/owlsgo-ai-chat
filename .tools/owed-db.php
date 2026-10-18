@@ -6,6 +6,7 @@
  */
 error_reporting(E_ALL & ~E_DEPRECATED);
 $root = $argv[1] ?? dirname(__DIR__);
+$uids = array_slice($argv, 2);   // 只统计这几个用户的预密钥消耗（站方自己的用量不能算进断言）
 $root = rtrim($root, '/\\');
 $CFG = require $root . '/core/config.php';
 require $root . '/core/db.php';
@@ -13,8 +14,8 @@ DB::init($CFG);
 
 $out = [
     'devices' => DB::all('SELECT user_id, dev_id, dev_name, created_at FROM plugin_e2ee_devices ORDER BY id'),
-    'opk_left' => (int)DB::val('SELECT COUNT(*) FROM plugin_e2ee_opk WHERE used=0'),
-    'opk_used' => (int)DB::val('SELECT COUNT(*) FROM plugin_e2ee_opk WHERE used=1'),
+    'opk_left' => (int)DB::val('SELECT COUNT(*) FROM plugin_e2ee_opk WHERE used=0' . ($uids ? ' AND user_id IN (' . implode(',', array_map('intval', $uids)) . ')' : '')),
+    'opk_used' => (int)DB::val('SELECT COUNT(*) FROM plugin_e2ee_opk WHERE used=1' . ($uids ? ' AND user_id IN (' . implode(',', array_map('intval', $uids)) . ')' : '')),
     'conv' => DB::all('SELECT conv, enabled, enabled_by FROM plugin_e2ee_conv'),
     'enc_msgs' => DB::all('SELECT msg_id, conv, from_uid, to_uid, dev_from FROM plugin_e2ee_msg ORDER BY id'),
     'mode' => (string)DB::setting('plugin_e2ee_dm_mode', 'off'),

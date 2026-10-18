@@ -441,15 +441,36 @@
     /**
      * 自研弹窗（全站禁用浏览器原生对话框）。
      * 按钮是 innerHTML 注入的字符串，回调只能写全局函数名。
+     * 弹窗内留了一块状态区：执行中的提示和失败原因都显示在这里 ——
+     * 早先是一开就把弹窗关掉、只留两条一闪而过的 toast，
+     * 用户看到的现象是「弹窗刚出来就没了」（被当成"频繁退出"报上来）。
      */
     function modal(title, body, okText, okCall, danger) {
         W.OwChat.openModal(
             '<h3>' + title + '</h3>' + body
+            + '<p class="ow-modal-desc owed-modal-msg" id="owEDMsg" style="display:none"></p>'
             + '<div class="ow-modal-actions">'
             + '<button class="ow-btn" type="button" onclick="OwChat.closeModal()">取消</button>'
             + '<button class="ow-btn ' + (danger ? 'ow-btn-danger' : 'ow-btn-primary')
-            + '" type="button" onclick="' + okCall + '">' + okText + '</button>'
+            + '" type="button" id="owEDOkBtn" data-label="' + okText + '" onclick="' + okCall + '">' + okText + '</button>'
             + '</div>', 440);
+    }
+
+    /** 在弹窗内写一行提示（err=true 时用警示色） */
+    function modalMsg(text, err) {
+        var p = W.document.getElementById('owEDMsg');
+        if (!p) return;
+        p.style.display = '';
+        p.className = 'ow-modal-desc owed-modal-msg' + (err ? ' is-err' : '');
+        p.textContent = text || '';
+    }
+
+    /** 执行中：按钮置灰并改文案，防重复提交 */
+    function modalBusy(on) {
+        var b = W.document.getElementById('owEDOkBtn');
+        if (!b) return;
+        b.disabled = !!on;
+        b.textContent = on ? '处理中…' : (b.getAttribute('data-label') || '');
     }
 
     /** 给任意异步流程加个硬上限：挂住了也要给出原因，不能让人对着界面干瞪眼 */
@@ -505,35 +526,37 @@
     }
 
     function doEnable() {
-        W.OwChat.closeModal();
+        mark('⑥ doEnable 已进入');
         var peer = W.OwChat.dm && W.OwChat.dm.id;
         // 不在私聊时也必须出声 —— 早先这里是裸 return，点了完全没反应
-        if (!peer) { W.toast('当前不在私聊，请先打开一个私聊', 4000); return; }
-        // 密钥生成要走一遍 WebCrypto，慢的时候有一两秒 —— 不给反馈用户就会以为又没点上
-        mark('⑥ doEnable 已进入');
-        W.toast('正在生成本设备的加密密钥…', 6000);
+        if (!peer) { modalMsg('当前不在私聊，请先打开一个私聊再开启', true); return; }
+        // ⚠ 弹窗**不关**：进度和失败原因都写在弹窗里。
+        //   早先一进来就 closeModal()，只剩两条一闪而过的 toast ——
+        //   用户看到的现象是「弹窗刚出来就没了」，被当成"频繁退出"报上来。
+        modalMsg('正在生成本设备的加密密钥…', false);
+        modalBusy(true);
         var p = keys ? Promise.resolve(keys) : createKeys();
         withTimeout(p, 15000, '生成本机密钥超时，请确认浏览器支持 WebCrypto 且不是无痕窗口')
             .then(function () {
                 return startSession(peer).catch(function (e) {
                     // 对方还没登记设备：本设备的密钥**已经登记成功**（createKeys 跑完了），
-                    // 所以这里只是「会话还没建成」，要让用户知道下一步该干什么 ——
-                    // 不说清楚的话，用户会以为自己点坏了，而其实只差对方也点一次。
-                    W.toast((e && e.message) || '对方还没有启用加密私聊', 5000);
-                    W.toast('请让对方也点一次输入框上方的盾牌图标，然后你再点一次', 5000);
+                    // 所以这里只是「会话还没建成」，要让用户知道下一步该干什么。
+                    modalMsg('对方还没有启用加密私聊：\n请让对方也在顶栏点一次「端到端加密」，然后你再点一次。', true);
                     return null;
                 });
             }).then(function (s) {
-                if (!s) return null;                      // 上面已经提示过，不再往下开会话
+                if (!s) { modalBusy(false); return null; }
                 return api('plugin_e2ee_dm_conv', { peer_id: peer, on: 1 }).then(function (r) {
                     if (!r.ok) throw new Error(r.msg || '开启失败');
                     mark('⑦ 会话已开启');
                     convState[String(peer)] = true;
-                    toastLock(true);
+                    paintTag(true);
+                    W.OwChat.closeModal();
                     W.toast('已开启加密。请记住：换设备后此前的加密消息无法恢复', 4000);
                 });
             }).catch(function (e) {
-                W.toast((e && e.message) || '开启失败', 5000);
+                modalMsg((e && e.message) || '开启失败，请稍后重试', true);
+                modalBusy(false);
             });
     }
 
@@ -548,37 +571,33 @@
     }
 
     function doDisable() {
-        W.OwChat.closeModal();
+        mark('⑧ doDisable 已进入');
         var peer = W.OwChat.dm && W.OwChat.dm.id;
-        if (!peer) { W.toast('当前不在私聊', 3000); return; }
+        if (!peer) { modalMsg('当前不在私聊', true); return; }
+        modalMsg('正在关闭…', false);
+        modalBusy(true);
         api('plugin_e2ee_dm_conv', { peer_id: peer, on: 0 }).then(function (r) {
-            if (!r.ok) { W.toast(r.msg || '关闭失败'); return; }
+            if (!r.ok) { modalMsg(r.msg || '关闭失败，请稍后重试', true); modalBusy(false); return; }
             convState[String(peer)] = false;
-            toastLock(false);
+            paintTag(false);
+            W.OwChat.closeModal();
             W.toast('已关闭加密，此后的消息以明文发送');
         });
     }
 
-    function toastLock(on) {
-        var b = W.document.getElementById('owEDBtn');
-        if (!b) return;
-        // classList.toggle 的第二个参数在老浏览器不生效，一律用 add/remove
-        if (on) b.classList.add('on'); else b.classList.remove('on');
-        b.title = on ? '本会话已加密（点击可关闭）' : '按会话开启加密';
-        b.setAttribute('aria-label', b.title);
-    }
+    function toastLock(on) { paintTag(on); }
 
-    /** 盾牌按钮只在私聊里有意义：群聊/联系人页直接藏掉，别留个点了就报错的按钮 */
+    /** 顶栏标签只在私聊里有意义：群聊/联系人页直接藏掉，别留个点了就报错的入口 */
     function btnVisible(v) {
-        var b = W.document.getElementById('owEDBtn');
+        var b = W.document.getElementById('owEDTag');
         if (b) b.style.display = v ? '' : 'none';
     }
 
     /**
      * 登录后「每日签到」等插件会自动弹窗，遮罩盖住整个屏幕 ——
-     * 用户点盾牌的第一下其实落在遮罩上（弹窗被关掉），界面毫无变化，
+     * 用户点标签的第一下其实落在遮罩上（弹窗被关掉），界面毫无变化，
      * 看起来就是「点了开启加密没有任何反应」。已用真实点击复现确认。
-     * 这里在捕获阶段听遮罩点击：只有盾牌当前可用（在私聊里）时才提示，
+     * 这里在捕获阶段听遮罩点击：只有标签当前可用（在私聊里）时才提示，
      * 不给自己站点加噪声。
      */
     function installMaskHint() {
@@ -587,9 +606,9 @@
             var mask = W.document.getElementById('owModalMask');
             if (!mask || mask.style.display === 'none') return;
             if (e.target !== mask) return;                    // 点在弹窗内部，不归我管
-            var b = W.document.getElementById('owEDBtn');
+            var b = W.document.getElementById('owEDTag');
             if (!b || b.style.display === 'none') return;     // 不在私聊里，别添乱
-            W.toast('弹窗已关闭，请再点一次盾牌图标', 2600);
+            W.toast('弹窗已关闭，请再点一次顶栏的「端到端加密」', 2600);
         }, true);
     }
 
@@ -636,14 +655,49 @@
         if (trace.length > 14) trace.shift();
     }
 
+    /* ===================== 顶栏开关标签 ===================== */
+
+    /**
+     * 「端到端加密」标签：注入到消息顶栏「可发言」标签**右侧**，图标 + 文字。
+     * 为什么放这儿而不是工具栏：工具栏那个纯图标按钮用户找不到（站内已因此
+     * 被误报多次「点击没用」）；顶栏与「可发言」并列，位置固定、文字直说。
+     */
+    function installTopbarTag() {
+        var anchor = W.document.getElementById('owSpeakTag');
+        if (!anchor) { setTimeout(installTopbarTag, 500); return; }
+        if (W.document.getElementById('owEDTag')) return;
+        var el = W.document.createElement('button');
+        el.type = 'button';
+        el.id = 'owEDTag';
+        el.className = 'ow-tag ow-tag-e2ee';
+        el.style.display = 'none';
+        el.innerHTML = (W.OWED_ICON || '') + '<span class="owed-tag-text">端到端加密</span>';
+        anchor.parentNode.insertBefore(el, anchor.nextSibling);
+    }
+
+    /** 标签文案/配色随会话开关走：未开启灰色，开启后品牌蓝 */
+    function paintTag(on) {
+        var el = W.document.getElementById('owEDTag');
+        if (!el) return;
+        var t = el.querySelector('.owed-tag-text');
+        if (t) t.textContent = on ? '加密已开启' : '端到端加密';
+        el.className = 'ow-tag ow-tag-e2ee' + (on ? ' is-on' : '');
+        el.title = on ? '本会话已端到端加密，点击可关闭' : '点击为本会话开启端到端加密';
+    }
+
+    /**
+     * 点标签：开启 / 关闭。
+     * 点击统一走 document 委托（与 installBtnClick 同一处），理由见那里：
+     * 绑在节点上会随顶栏重渲染丢掉。
+     */
     function installBtnClick() {
         W.document.addEventListener('click', function (e) {
             var t = e.target;
-            if (!t || !t.closest) { mark('点到了非元素'); return; }
-            if (!t.closest('#owEDBtn')) return;
+            if (!t || !t.closest) return;
+            if (!t.closest('#owEDTag')) return;
             e.preventDefault();
             e.stopPropagation();
-            mark('① 盾牌被点击');
+            mark('① 端到端加密标签被点击');
             if (unsupported) {
                 mark('× 环境不支持');
                 W.toast('当前环境不支持加密：需要用 HTTPS 或 localhost 访问，且浏览器要支持 WebCrypto', 4000);
@@ -652,7 +706,7 @@
             var oc = W.OwChat;
             if (!oc || !oc.dm || !oc.dm.id) {
                 mark('× 当前不在私聊');
-                W.toast('请先打开一个私聊'); return;
+                W.toast('端到端加密只作用于私聊，请先打开一个私聊'); return;
             }
             mark('② 对话对象 id=' + oc.dm.id + ' kind=' + (oc.dm.kind || '(空)'));
             ensureConvState(oc.dm.id).then(function (on) {
@@ -723,6 +777,7 @@
             return;
         }
         setup.done = true;
+        installTopbarTag();   // 顶栏「可发言」右侧的开关标签（图标 + 文字）
         btnVisible(false);      // 先藏起来，等确认当前是私聊再显示
         watch();
         installMaskHint();
@@ -762,7 +817,7 @@
         // 点击由 installBtnClick 的委托统一处理（它会读 unsupported 标志给提示），
         // 这里只负责置灰 + 写明原因；不再直接绑 onclick（节点被换掉就失效）。
         (function poll() {
-            var b = W.document.getElementById('owEDBtn');
+            var b = W.document.getElementById('owEDTag');
             if (!b) { setTimeout(poll, 500); return; }
             b.classList.add('owed-off');
             b.title = '当前环境不支持加密：需要 HTTPS 或 localhost，且浏览器需支持 WebCrypto';
@@ -801,7 +856,7 @@
     W.OWED = {
         // 版本自检：浏览器控制台敲 OWED.v 应显示这个号。
         // 显示 undefined 就说明页面还在用旧的插件包（Ctrl+F5 硬刷新）。
-        v: '1.1.3',
+        v: '1.2.0',
         /**
          * 自检：控制台敲 OWED.diagnose() 回车。
          * 结果会**自动打印并复制到剪贴板**（Chrome 控制台的 copy() 辅助）——
@@ -824,8 +879,8 @@
                     接收会话: Object.keys(recv).length,
                     会话开关: convState,
                     当前私聊: (W.OwChat && W.OwChat.dm) ? W.OwChat.dm.id : null,
-                    按钮: (function () {
-                        var b = W.document.getElementById('owEDBtn');
+                    标签: (function () {
+                        var b = W.document.getElementById('owEDTag');
                         return b ? getComputedStyle(b).display + ' | ' + b.className : '不在 DOM 里';
                     })(),
                     弹窗: masked() ? '开着' : '无',

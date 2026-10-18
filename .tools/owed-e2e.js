@@ -34,8 +34,9 @@ function ok(label, cond, extra) {
     if (cond) { pass++; console.log('  [OK]   ' + label); }
     else { fail++; console.log('  [FAIL] ' + label + (extra !== undefined ? '  → ' + JSON.stringify(extra) : '')); }
 }
+let UIDS = [];
 function db() {
-    return JSON.parse(execFileSync(PHP, [path.join(ROOT, '.tools/owed-db.php'), WWW], { encoding: 'utf8' }));
+    return JSON.parse(execFileSync(PHP, [path.join(ROOT, '.tools/owed-db.php'), WWW].concat(UIDS), { encoding: 'utf8' }));
 }
 function ids() {
     return JSON.parse(execFileSync(PHP, [path.join(ROOT, '.tools/owed-e2e-setup.php'), 'setup', WWW], { encoding: 'utf8' }).trim());
@@ -63,6 +64,7 @@ async function waitPlain(page, text, ms) {
 (async () => {
     reset();
     const { a: A, b: BB } = ids();
+    UIDS = [A, BB];
     console.log('测试账号：A=' + A + '  B=' + BB);
 
     const browser = await chromium.launch({ channel: 'chrome' });
@@ -106,7 +108,7 @@ async function waitPlain(page, text, ms) {
     }
     async function clickShield(page) {
         await closeAnyModal(page);
-        await page.click('#owEDBtn');
+        await page.click('#owEDTag');
         await page.waitForTimeout(400);
         return page.evaluate(() => {
             const m = document.getElementById('owModal');
@@ -156,7 +158,7 @@ async function waitPlain(page, text, ms) {
     await closeAnyModal(pA);
     await pA.waitForTimeout(1400);
     const gA = await pA.evaluate(() => {
-        const b = document.getElementById('owEDBtn');
+        const b = document.getElementById('owEDTag');
         return b ? getComputedStyle(b).display : 'absent';
     });
     ok('关掉弹窗后私聊里盾牌可见', gA !== 'none' && gA !== 'absent', gA);
@@ -171,7 +173,8 @@ async function waitPlain(page, text, ms) {
     await pA.waitForTimeout(2500);
     let d1 = db();
     ok('A 的设备已登记（密钥留在本机）', d1.devices.some(x => x.user_id === A), d1.devices);
-    ok('会话尚未开启（对方没设备）', d1.conv.length === 0, d1.conv);
+    const convOf = (db2) => db2.conv.filter(c => c.conv === 'u' + A + ':u' + BB);
+    ok('会话尚未开启（对方没设备）', convOf(d1).length === 0, convOf(d1));
     ok('没有消耗一次性预密钥', d1.opk_used === 0, d1.opk_used);
 
     /* ---------- ③ B 点：成功 ---------- */
@@ -182,7 +185,7 @@ async function waitPlain(page, text, ms) {
     await pB.waitForTimeout(3000);
     let d2 = db();
     ok('B 的设备已登记', d2.devices.some(x => x.user_id === BB), d2.devices);
-    ok('会话开关已置 1', d2.conv.some(c => c.enabled === 1), d2.conv);
+    ok('会话开关已置 1', convOf(d2).some(c => c.enabled === 1), convOf(d2));
     ok('消耗了一枚一次性预密钥', d2.opk_used >= 1, { used: d2.opk_used, left: d2.opk_left });
     await pB.screenshot({ path: path.join(OUT, 'owed-2-b-enabled.png') });
 
@@ -255,9 +258,9 @@ async function waitPlain(page, text, ms) {
     for (let i = 0; i < 4 && !off; i++) {
         await clickModal(pA, true);
         await pA.waitForTimeout(2500);
-        off = db().conv.every(c => c.enabled === 0);
+        off = convOf(db()).every(c => c.enabled === 0);
     }
-    ok('会话开关已置 0', off, db().conv);
+    ok('会话开关已置 0', off, convOf(db()));
     // 关不掉时，后面两条断言没有意义（消息仍会加密），标成跳过而不是失败：
     // 这是站点在小 FPM 池下被长轮询占满、接口 403 造成的测试环境抖动，不是功能回归
     if (!off) {

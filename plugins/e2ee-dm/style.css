@@ -1,5 +1,42 @@
 /* 加密私聊：只加两种视觉状态，不覆盖核心通用类 */
 
+/* 顶栏「端到端加密」开关标签：与「可发言」并列，图标 + 文字直说 */
+.ow-tag-e2ee {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 22px;
+    padding: 0 10px;
+    border: 1px solid var(--ow-line, #e5e5e5);
+    border-radius: 11px;
+    background: var(--ow-bg-2, #f7f7f7);
+    color: var(--ow-text-sub, #999);
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.ow-tag-e2ee:hover { border-color: #00A0E9; color: #00A0E9; }
+.ow-tag-e2ee.is-on {
+    background: rgba(0, 160, 233, .10);
+    border-color: #00A0E9;
+    color: #00A0E9;
+}
+.ow-tag-e2ee .ow-ico { flex: none; }
+
+/* 弹窗内的状态行：进度与失败原因都留在这里，不再只靠一闪而过的 toast */
+.owed-modal-msg {
+    margin: 0 0 12px;
+    padding: 8px 10px;
+    border-radius: 4px;
+    background: var(--ow-bg-2, #f7f7f7);
+    white-space: pre-line;
+}
+.owed-modal-msg.is-err {
+    background: rgba(228, 68, 85, .08);
+    color: var(--ow-red, #e44);
+}
+
 /* 工具栏盾牌：未开启时与普通图标按钮一致，开启后填充品牌蓝 */
 .owed-btn.on {
     color: #00A0E9;
