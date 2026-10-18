@@ -142,6 +142,18 @@ function owRPBalance(int $uid): int
     return (int)DB::val('SELECT points FROM users WHERE id=?', [$uid]);
 }
 
+/** 发包人头像（开红包全屏页要显示「谁的红包」）。同一请求内按 uid 缓存，避免批量查询时 N+1。 */
+function owRPAvatar(int $uid): string
+{
+    static $cache = [];
+    if ($uid <= 0) return '';
+    if (!array_key_exists($uid, $cache)) {
+        $u = DB::one('SELECT * FROM users WHERE id=?', [$uid]);
+        $cache[$uid] = $u ? Auth::avatarUrlFor($u, (string)$uid) : '';
+    }
+    return $cache[$uid];
+}
+
 /**
  * 退还剩余积分并把红包收尾（只对仍在进行中的包生效，天然幂等）。
  * $status：expired（到期）/ void（发送失败撤销）
@@ -177,6 +189,7 @@ function owRPPayload(array $p, int $uid, bool $claimed = false, int $myAmount = 
         'status_text'=> owRPStatusText($st),
         'sender'     => (string)$p['sender_nick'],
         'sender_id'  => (int)$p['sender_id'],
+        'sender_avatar' => owRPAvatar((int)$p['sender_id']),
         'mine'       => $uid > 0 && $uid === (int)$p['sender_id'],
         'claimed'    => $claimed,
         'my_amount'  => $myAmount,

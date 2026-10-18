@@ -380,34 +380,171 @@
        四、领取 / 详情 / 记录
        ===================================================================== */
 
-    /** 点卡片：没领过且还在进行中就直接拆（发包人本人也一样）；其余看详情 */
+    /**
+     * 点卡片：进行中且没领过 → 打开「开红包」全屏页（**不直接领取**，还需点一下「开」）；
+     * 已领 / 已领完 / 已过期 → 详情。
+     * 为什么要多一步：卡在聊天流里、又贴着输入框，误触一下就把红包拆了是不可接受的；
+     * 全屏页同时把「谁的红包 / 祝福语 / 类型 / 金额或份数」摆清楚，再让用户自己按「开」。
+     */
     RP.open = function (id) {
         var p = RP.byId[id];
-        if (p && !p.claimed && p.status === 'active') {
-            if (p.kind === 'password') { askPass(id); return; }
-            doClaim(id, '', null);
-            return;
-        }
+        if (p && !p.claimed && p.status === 'active') { openEnv(p); return; }
         loadDetail(id);
     };
 
-    function askPass(id) {
-        OwChat.openModal(
-            '<h3>请输入口令</h3>'
-            + '<p class="ow-modal-desc">口令由发红包的人设置，输入正确才能领取。</p>'
-            + '<div class="ow-form-item"><label>口令</label>'
-            + '<input class="ow-input" id="owRpPassIn" type="text" maxlength="20" autocomplete="off"'
-            + ' onkeydown="if(event.key===\'Enter\')OwRP.claimWithPass(' + id + ')"></div>'
-            + '<div class="owrp-err" id="owRpPassErr"></div>'
-            + '<div class="ow-modal-actions">'
-            + '<button class="ow-btn ow-btn-ghost" type="button" onclick="OwChat.closeModal()">取消</button>'
-            + '<button class="ow-btn ow-btn-primary" type="button" onclick="OwRP.claimWithPass(' + id + ')">开红包</button>'
-            + '</div>',
-            380, 'owrp-modal'
-        );
-        var el = $('owRpPassIn');
-        if (el) { try { el.focus(); } catch (e) {} }
+    /* ---------- 开红包全屏页 ---------- */
+
+    /** 全屏页骨架（未拆状态）：谁的红包、祝福语、类型、口令输入（口令红包）、铜钱「开」 */
+    function envHtml(p) {
+        var pn = esc(p.points_name || RP.pn);
+        var av = p.sender_avatar
+            ? '<span class="owrp-env-av"><img src="' + esc(p.sender_avatar) + '" alt=""></span>'
+            : '';
+        var hint;
+        if (p.kind === 'welfare') {
+            hint = '点击开启，抽取一条福利';
+        } else if (p.kind === 'random') {
+            hint = '点击开启，拼手气领 ' + pn;
+        } else {
+            var per = Math.floor((parseInt(p.total, 10) || 0) / Math.max(1, parseInt(p.cnt, 10) || 1));
+            hint = '点击开启，领取 ' + per + ' ' + pn;
+        }
+        return '<button class="owrp-env-x" type="button" aria-label="关闭" onclick="OwRP.closeEnv()">✕</button>'
+             + '<div class="owrp-env-fu" aria-hidden="true">福</div>'
+             + '<div class="owrp-env-body" id="owRpEnvBody">'
+             +   '<div class="owrp-env-top">'
+             +     '<div class="owrp-env-head">' + av
+             +       '<span class="owrp-env-who">' + esc(p.sender) + ' 的红包</span></div>'
+             +     '<div class="owrp-env-bless">' + esc(p.blessing) + '</div>'
+             +     '<div class="owrp-env-tag">' + esc(p.kind_name) + '</div>'
+             +     (p.kind === 'password'
+                      ? '<div class="owrp-env-pass"><input class="owrp-env-input" id="owRpEnvPass" type="text"'
+                        + ' maxlength="20" autocomplete="off" placeholder="请输入口令"'
+                        + ' onkeydown="if(event.key===\'Enter\')OwRP.envClaim()"></div>'
+                      : '')
+             +   '</div>'
+             +   '<div class="owrp-env-bottom">'
+             +     '<div class="owrp-env-coin-wrap"><div class="owrp-env-coin" id="owRpEnvCoin" role="button"'
+             +       ' tabindex="0" aria-label="开红包" onclick="OwRP.envClaim()"'
+             +       ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();OwRP.envClaim();}">开</div></div>'
+             +     '<div class="owrp-env-hint" id="owRpEnvHint">' + hint + '</div>'
+             +     '<div class="owrp-env-err" id="owRpEnvErr"></div>'
+             +   '</div>'
+             + '</div>';
     }
+
+    function openEnv(p) {
+        RP.closeEnv();
+        RP.env = p;
+        var el = d.createElement('div');
+        el.className = 'owrp-env';
+        el.id = 'owRpEnv';
+        el.setAttribute('role', 'dialog');
+        el.setAttribute('aria-modal', 'true');
+        el.innerHTML = envHtml(p);
+        d.body.appendChild(el);
+        // 全屏页期间锁住页面滚动（关闭时原样还原，别把别人的 inline 值覆盖掉）
+        RP._envOverflow = d.documentElement.style.overflow;
+        d.documentElement.style.overflow = 'hidden';
+        if (d.addEventListener) d.addEventListener('keydown', envKeydown, false);
+        var inp = $('owRpEnvPass');
+        if (inp) { try { inp.focus(); } catch (e) {} }
+    }
+
+    function envKeydown(e) {
+        e = e || w.event;
+        if (e && e.key === 'Escape') RP.closeEnv();
+    }
+
+    RP.closeEnv = function () {
+        var el = $('owRpEnv');
+        if (el && el.parentNode) el.parentNode.removeChild(el);
+        RP.env = null;
+        if (RP._envOverflow !== undefined) {
+            d.documentElement.style.overflow = RP._envOverflow;
+            RP._envOverflow = undefined;
+        }
+        if (d.removeEventListener) d.removeEventListener('keydown', envKeydown, false);
+    };
+
+    function envErr(msg) {
+        var el = $('owRpEnvErr');
+        if (el) el.textContent = msg || '';
+    }
+
+    /** 点「开」：口令红包先取口令，其余直接请求；成功后在同一个全屏页里翻到结果态 */
+    RP.envClaim = function () {
+        var p = RP.env;
+        if (!p || RP.busy) return;
+        var pass = '', inp = $('owRpEnvPass');
+        if (p.kind === 'password') {
+            pass = inp ? String(inp.value || '').replace(/^\s+|\s+$/g, '') : '';
+            if (pass === '') {
+                envErr('请输入口令');
+                if (inp) { try { inp.focus(); } catch (e) {} }
+                return;
+            }
+        }
+        envErr('');
+        var coin = $('owRpEnvCoin');
+        if (coin) { coin.className = 'owrp-env-coin is-busy'; coin.innerHTML = '···'; }
+        doClaim(p.id, pass, function (msg) {
+            var c = $('owRpEnvCoin');
+            if (c) { c.className = 'owrp-env-coin'; c.innerHTML = '开'; }
+            var isPass = p.kind === 'password' && String(msg).indexOf('口令') >= 0;
+            // 非口令类失败（被别人抢完 / 已过期）：卡片状态已经变了，
+            // 清掉缓存并把 data-owrp 摘掉，让它重新问一次服务端（铜钱位会变成「查看」）。
+            if (!isPass && p.msg_id) {
+                delete RP.cards[p.msg_id];
+                var mEl = d.getElementById('owMsg' + p.msg_id);
+                if (mEl) mEl.setAttribute('data-owrp', '');
+                schedule();
+            }
+            envErr(isPass ? '口令不正确' : (msg || '没能打开，请稍后再试'));
+        }, function (r) {
+            envResult(r);
+        });
+    };
+
+    /** 拆开后的结果态（仍在全屏页里，点「收下」才回聊天） */
+    function envResult(r) {
+        var body = $('owRpEnvBody');
+        if (!body) return;
+        var p = r.card || RP.env || {};
+        var pn = esc(p.points_name || RP.pn);
+        RP.env = p;
+        // 结果态改成整块居中：拆开后视线落在金额上，不再让它贴着页面顶端
+        body.className = 'owrp-env-body is-result';
+        var h = '<div class="owrp-env-top"><div class="owrp-env-bless">' + esc(p.blessing || '') + '</div>';
+        if (r.item) {
+            h += '<div class="owrp-env-hint">' + (r.already ? '你之前抽到的是' : '你抽到了这条福利') + '</div>'
+               + '<div class="owrp-env-item" id="owRpWbox">' + esc(r.item) + '</div>'
+               + '<div class="owrp-env-hint">仅你可见，请自行保存（红包记录里也能回看）</div>'
+               + '</div><div class="owrp-env-bottom"><div class="owrp-env-actions">'
+               + '<button class="owrp-env-btn" type="button" onclick="OwRP.copyItem()">复制</button>'
+               + '<button class="owrp-env-btn is-main" type="button" onclick="OwRP.closeEnv()">收下</button>'
+               + '</div></div>';
+        } else {
+            h += '<div class="owrp-env-amt">' + (parseInt(r.amount, 10) || 0) + '<small>' + pn + '</small></div>'
+               + '<div class="owrp-env-hint">' + (r.already ? '这个红包你之前已经领过了，金额已入账' : '已存入你的账户') + '</div>'
+               + '</div><div class="owrp-env-bottom"><div class="owrp-env-actions">'
+               + '<button class="owrp-env-btn" type="button" onclick="OwRP.envDetail()">看看大家手气</button>'
+               + '<button class="owrp-env-btn is-main" type="button" onclick="OwRP.closeEnv()">收下</button>'
+               + '</div></div>';
+        }
+        body.innerHTML = h;
+        if (r.card) {
+            RP.byId[r.card.id] = r.card;
+            if (r.card.msg_id) RP.cards[r.card.msg_id] = r.card;
+        }
+    }
+
+    /** 从全屏页跳到详情（收起全屏页，避免两层浮层叠着） */
+    RP.envDetail = function () {
+        var p = RP.env;
+        RP.closeEnv();
+        if (p) loadDetail(p.id);
+    };
 
     RP.claimWithPass = function (id) {
         var el = $('owRpPassIn');
@@ -418,22 +555,28 @@
             if (err) err.textContent = '请输入口令';
             return;
         }
-        doClaim(id, pass, function (ok) {
-            if (!ok && el) {
+        doClaim(id, pass, function () {
+            // 详情弹窗里的失败只会是口令不对（其余情况服务端会先判已领/过期）
+            if (el) {
                 var e2 = $('owRpPassErr');
                 if (e2) e2.textContent = '口令不正确';
             }
         });
     };
 
-    function doClaim(id, pass, fail) {
+    /**
+     * 领取请求。$fail(msg) 失败回调、$ok(r) 成功回调（不传就走原来的结果弹窗）。
+     * 全屏页与详情弹窗共用这一条链路，避免两套「领取 → 记账 → 重画卡片」逻辑漂移。
+     */
+    function doClaim(id, pass, fail, ok) {
         if (RP.busy) return;
         RP.busy = true;
         OwApi.post('plugin_red_packet_claim', { id: id, pass: pass || '' }, function (r) {
             RP.busy = false;
             if (!r || !r.ok) {
-                toast((r && r.msg) || '领取失败');
-                if (fail) fail(false);
+                var msg = (r && r.msg) || '领取失败';
+                toast(msg);
+                if (fail) fail(msg);
                 return;
             }
             if (typeof r.balance === 'number') {
@@ -445,7 +588,7 @@
                 if (r.card.msg_id) RP.cards[r.card.msg_id] = r.card;
                 RP.repaint(r.card);
             }
-            resultModal(r);
+            if (ok) ok(r); else resultModal(r);
         });
     }
 
