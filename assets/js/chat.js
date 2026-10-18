@@ -3739,8 +3739,19 @@
             // meta 行：头像一侧依次是「用户组标签、昵称」；时间不直接显示，
             // 悬停满 2 秒才显示（见 ow-time-show 类与 hideMsgTime）
             var timeHtml = '<span class="ow-msg-time">' + esc(m.date + ' ' + m.time) + '</span>';
-            var mainPart = roleTag(m.role, m.title, m.uid)
-                + ' <span class="ow-msg-nick" onclick="OwChat.userCard(' + (m.uid || 0) + ',' + jsAttr(m.nickname) + ')">' + esc(m.nickname) + '</span>';
+            var tagHtml = roleTag(m.role, m.title, m.uid);
+            // v1.5.15：游客昵称单独降一档（CSS .ow-msg-nick.ow-nick-guest，14 → 12px）。
+            //   根因是**不对称**而非字号：roleTag() 只给 bot/群主/超管/VIP/会员/头衔出标签，
+            //   游客一个标签都没有 —— 「游客0046c」孤零零杵着，旁边全是「标签 + 昵称」，
+            //   同样字号下它自然成了整行最重的那一个（站方原话「游客的昵称怎么这么大」）。
+            //   这里按 role 判定，不能靠 CSS 的 :not(.ow-tag) 猜 ——
+            //   「这行没标签」的原因不止游客一种（无头衔的普通用户同样没有）。
+            //   昵称同时出现在通知流（ow-notice-nick）与举报盒里，那两处没有标签参照，
+            //   不加这个类，避免平白变小。
+            var isGuest = !m.uid && m.role === 'guest';
+            var mainPart = tagHtml
+                + ' <span class="ow-msg-nick' + (isGuest ? ' ow-nick-guest' : '')
+                + '" onclick="OwChat.userCard(' + (m.uid || 0) + ',' + jsAttr(m.nickname) + ')">' + esc(m.nickname) + '</span>';
             // v1.1.0：去掉昵称后的「→ 昵称」私信文字标签。
             // 私聊会话页双方已确定；群聊内的 @提及 足以定位发给人，额外标注纯噪音。
             //
