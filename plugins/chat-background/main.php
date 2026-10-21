@@ -753,15 +753,6 @@ Plugin::on('page.head', function () {
     //      又被背景图盖住（z-index:0 的定位伪元素按绘制顺序排在普通流内容之上）——
     //      用户看到的是「群公告条变透明」，其实是它整条被背景图压住了。
     //   负 z-index 方案不依赖任何名单，子级增删都不必再维护。前端 buildCss() 同此。
-    // 昵称配色变量：12 个色相（每 30° 一个）共享一个亮度旋钮。
-    // 变量挂在 body.ow-chat-body 上而不是 :root —— 只作用聊天页；插件停用或不设背景时
-    // 随整块 <style> 一起消失。[data-theme="dark"] 挂在 <html> 上，能正确后置覆盖。
-    $nickVars = 'body.ow-chat-body{--ow-cb-nick-l:42%;';
-    for ($i = 0; $i < 12; $i++) {
-        $nickVars .= '--ow-cb-nick-' . $i . ':hsl(' . ($i * 30) . ',68%,var(--ow-cb-nick-l));';
-    }
-    $nickVars .= '}[data-theme="dark"] body.ow-chat-body{--ow-cb-nick-l:68%;}';
-
     echo '<style id="ow-cb-style">'
        . 'body.ow-chat-body .ow-main{position:relative;z-index:0;' . ($hasImg ? 'background-color:transparent;' : '') . '}'
        . ($hasImg ? 'body.ow-chat-body .ow-main::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;' . $bgCss . '}' : '')
@@ -778,12 +769,6 @@ Plugin::on('page.head', function () {
        // 即「没有背景图在下面」—— 效果是朝页面底色略提亮，而不是透出背景图。
        . 'body.ow-chat-body .ow-rail,'
        . 'body.ow-chat-body .ow-sidebar{background-color:color-mix(in srgb, var(--ow-bg-chat) 78%, transparent);}'
-       // 昵称彩色化：颜色值以 CSS 变量下发，具体取哪个由前端按昵称哈希决定
-       // （见 chat.js 的 paintNick）。为什么不在 CSS 里直接写死：CSS 无法按元素文本做哈希，
-       // 做不出「每人一色」。为什么这套调色板一定「非白非黑非灰」：12 个色相绕色环每 30° 一个、
-       // 饱和度固定 68%，只把亮度收成单变量 --ow-cb-nick-l（浅色 42% / 深色 68%）——
-       // 主题切换只改它一处，前端不必重新上色。
-       . $nickVars
        . '</style>';
 });
 
