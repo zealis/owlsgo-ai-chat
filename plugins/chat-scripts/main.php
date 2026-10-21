@@ -508,6 +508,7 @@ Plugin::cron('chat_scripts_cast', 60, function () {
 
     $bot = csBot();
     $done = 0;
+    // N+1 例外：每个任务要独立发消息、独立写状态/日志；一次最多 5 个，数量有上限。
     foreach ($tasks as $t) {
         $id = (int)$t['id'];
         if (!$bot) {
@@ -1410,18 +1411,21 @@ Plugin::route('plugin_chat_scripts_admin_bot_join', function (array $ctx) use ($
     $bot = csBot();
     if (!$bot) Api::json(['ok' => false, 'msg' => '请先设置机器人账号']);
     $rooms = DB::all('SELECT id FROM rooms WHERE status=1 AND is_public=1');
-    $n = 0;
-    foreach ($rooms as $rm) {
-        // 先查后插：room_members 的唯一约束随核心版本演变，不能依赖 INSERT IGNORE 去重
-        $has = (int)DB::val('SELECT 1 FROM room_members WHERE room_id=? AND user_id=?',
-            [(int)$rm['id'], (int)$bot['id']]);
-        if ($has) continue;
-        DB::insert('room_members', [
-            'room_id' => (int)$rm['id'], 'user_id' => (int)$bot['id'],
-            'invited_by' => 0, 'created_at' => time(),
-        ]);
-        $n++;
+    // v1.5.20：一次取回机器人已加入的群，再批量补齐缺的行；别在循环里逐群查+插
+    $joined = [];
+    foreach (DB::all('SELECT room_id FROM room_members WHERE user_id=?', [(int)$bot['id']]) as $jr) {
+        $joined[(int)$jr['room_id']] = true;
     }
+    $addRows = [];
+    $nowTs = time();
+    foreach ($rooms as $rm) {
+        $rid = (int)$rm['id'];
+        if (isset($joined[$rid])) continue;
+        $addRows[] = ['room_id' => $rid, 'user_id' => (int)$bot['id'],
+            'invited_by' => 0, 'created_at' => $nowTs];
+    }
+    foreach (array_chunk($addRows, 200) as $chunk) DB::insertMany('room_members', $chunk);
+    $n = count($addRows);
     Sec::log('cs_bot_join', $ctx['actor']['nickname'], ['bot' => (int)$bot['id'], 'joined' => $n]);
     Api::json(['ok' => true, 'msg' => $n > 0 ? ('已加入 ' . $n . ' 个公开群聊') : '机器人已在所有公开群聊中', 'n' => $n]);
 });

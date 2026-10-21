@@ -426,11 +426,17 @@ class Plugin
     public static function syncCronTasks(): void
     {
         $now = time();
+        // v1.5.20：先一次取回现有任务，别在 foreach 里逐个 SELECT（插件一多就是 N+1）。
+        $existing = [];
+        foreach (DB::all('SELECT id, plugin, name, interval_sec FROM cron_tasks') as $row) {
+            $existing[(string)$row['plugin'] . '::' . (string)$row['name']] = $row;
+        }
+        $newRows = [];
         foreach (self::$crons as $t) {
-            $row = DB::one('SELECT id, interval_sec FROM cron_tasks WHERE plugin=? AND name=?',
-                [$t['plugin'], $t['name']]);
+            $key = $t['plugin'] . '::' . $t['name'];
+            $row = $existing[$key] ?? null;
             if (!$row) {
-                DB::insert('cron_tasks', [
+                $newRows[$key] = [
                     'plugin'      => $t['plugin'],
                     'name'        => $t['name'],
                     // 列名是 interval_sec：`INTERVAL` 是 MySQL 保留字（见 DB::migrate 的说明）。
@@ -443,15 +449,17 @@ class Plugin
                     'enabled'     => 1,
                     'created_at'  => $now,
                     'updated_at'  => $now,
-                ]);
+                ];
                 continue;
             }
-            // 间隔被插件改过 → 按新间隔重算到期时间；否则原样保留
+            // 间隔被插件改过 → 按新间隔重算到期时间；否则原样保留。
+            // 只有「真变了」的少数任务会写一次，数量不随插件数放大。
             if ((int)$row['interval_sec'] !== (int)$t['interval']) {
                 DB::run('UPDATE cron_tasks SET interval_sec=?, next_run_at=?, updated_at=? WHERE id=?',
                     [(int)$t['interval'], $now + (int)$t['interval'], $now, (int)$row['id']]);
             }
         }
+        if ($newRows) DB::insertMany('cron_tasks', array_values($newRows));
     }
 
     /**
@@ -480,6 +488,7 @@ class Plugin
         }
 
         $results = [];
+        // N+1 例外：每个到期任务必须独立执行并写自己的状态/日志；$tasks 有 LIMIT 上限。
         foreach ($tasks as $task) {
             $key = $task['plugin'] . '::' . $task['name'];
             $started = microtime(true);

@@ -655,19 +655,29 @@ class Chat
     public static function isBanned(array $actor, int $roomId): ?string
     {
         $now = time();
-        $checks = [];
-        if ($actor['kind'] === 'user') $checks[] = ['user', (string)$actor['id']];
-        if ($actor['kind'] === 'guest') $checks[] = ['guest', $actor['nickname']];
-        $checks[] = ['ip', Sec::ip()];
-        foreach ($checks as [$type, $target]) {
-            $b = DB::one(
-                'SELECT * FROM bans WHERE type=? AND target=? AND (room_id=0 OR room_id=?) AND (expires_at IS NULL OR expires_at=0 OR expires_at>?) ORDER BY id DESC LIMIT 1',
-                [$type, $target, $roomId, $now]
-            );
-            if ($b) {
-                $exp = $b['expires_at'] ? '，解封时间 ' . date('Y-m-d H:i', (int)$b['expires_at']) : '，永久';
-                return '您已被禁言' . $exp . ($b['reason'] ? '，原因：' . $b['reason'] : '');
-            }
+        $conds = [];
+        $args = [];
+        if ($actor['kind'] === 'user') {
+            $conds[] = '(type=? AND target=?)';
+            $args[] = 'user'; $args[] = (string)$actor['id'];
+        }
+        if ($actor['kind'] === 'guest') {
+            $conds[] = '(type=? AND target=?)';
+            $args[] = 'guest'; $args[] = $actor['nickname'];
+        }
+        $conds[] = '(type=? AND target=?)';
+        $args[] = 'ip'; $args[] = Sec::ip();
+        // v1.5.20：原来身份 / 游客 / IP 各查一次（每条消息 3 条 SQL），合并成 1 条；
+        // 三者任一命中即拦，取最新的一条记录。
+        $b = DB::one(
+            'SELECT * FROM bans WHERE (' . implode(' OR ', $conds) . ')'
+            . ' AND (room_id=0 OR room_id=?) AND (expires_at IS NULL OR expires_at=0 OR expires_at>?)'
+            . ' ORDER BY id DESC LIMIT 1',
+            array_merge($args, [$roomId, $now])
+        );
+        if ($b) {
+            $exp = $b['expires_at'] ? '，解封时间 ' . date('Y-m-d H:i', (int)$b['expires_at']) : '，永久';
+            return '您已被禁言' . $exp . ($b['reason'] ? '，原因：' . $b['reason'] : '');
         }
         // 插件扩展判定（v1.0.52）：核心表无禁言时，插件可通过 $reason 追加自定义
         // 禁言逻辑（返回原因字符串即拦截）。每条消息触发一次，回调内避免重查询。
@@ -1451,9 +1461,8 @@ class Chat
      *  - **没有位点记录的会话返回 0**（历史不算未读）。理由：不然升级后第一天
      *    每个会话都是几千条红点，那是噪声而不是提醒。
      *
-     * 实现：一个会话一条 COUNT 查询（带位点条件，走主键范围扫描）。
-     * 会话列表本身只有几十条，这个量级完全可接受；换来的是口径准确、
-     * 不需要「把所有 id > min(位点) 的行捞回 PHP 再分桶」那种易错的写法。
+     * 实现（v1.5.20）：群聊 / 私聊各一条 GROUP BY，位点用 CASE 带入；
+     * 不再逐会话 COUNT（N+1）。口径仍与 unreadCountOf 完全一致。
      */
     private static function unreadCounts(array $actor, array $readMarks, array $lastMsgId): array
     {
@@ -1461,15 +1470,60 @@ class Chat
         $uid = (int)($actor['id'] ?? 0);
         if ($uid <= 0) return [];
 
-        $out = [];
+        // v1.5.20：原来一个会话一条 COUNT（会话列表一长就是 N+1）。
+        // 现在按「群聊 / 私聊」各一条 GROUP BY，位点用 CASE 带进去，2 条 SQL 覆盖全部会话。
+        $roomCases = []; $roomArgs = []; $roomKeys = [];
+        $dmCases = []; $dmArgs = []; $dmKeys = [];
         foreach ($readMarks as $key => $mark) {
-            if ((int)$mark <= 0) continue;                 // 没建立过有效位点 → 不算未读
+            $mark = (int)$mark;
+            if ($mark <= 0) continue;                 // 没建立过有效位点 → 不算未读
             $lastId = (int)($lastMsgId[$key] ?? 0);
-            if ($lastId <= (int)$mark) continue;            // 之后没有新消息，短路掉这次 COUNT
-            // v1.3.21：计数口径统一走 unreadCountOf，避免同一套判定散在两处日后漂移。
-            // 第二个参数把已查好的 $readMarks 传下去 —— 否则每个会话都会重查一次同一张表。
-            $n = self::unreadCountOf($actor, (string)$key, $readMarks);
-            if ($n > 0) $out[$key] = $n;
+            if ($lastId <= $mark) continue;            // 之后没有新消息，短路掉这次 COUNT
+            if (strpos($key, 'room:') === 0) {
+                $rid = (int)substr($key, 5);
+                if ($rid <= 0) continue;
+                $roomCases[] = 'WHEN ? THEN ?';
+                $roomArgs[] = $rid; $roomArgs[] = $mark;
+                $roomKeys[$rid] = (string)$key;
+            } elseif (strpos($key, 'dm:') === 0) {
+                $pid = (int)substr($key, strrpos($key, ':') + 1);
+                if ($pid <= 0) continue;
+                $dmCases[] = 'WHEN ? THEN ?';
+                $dmArgs[] = $pid; $dmArgs[] = $mark;
+                $dmKeys[$pid] = (string)$key;
+            }
+        }
+
+        $out = [];
+        if ($roomCases) {
+            [$inSql, $inArgs] = DB::in('room_id', array_keys($roomKeys));
+            $rows = DB::all(
+                'SELECT room_id, COUNT(*) AS n FROM messages'
+                . " WHERE $inSql AND deleted=0 AND recalled=0"
+                . ' AND (user_id IS NULL OR user_id<>?) AND (guest_id IS NULL OR guest_id=0)'
+                . ' AND id > CASE room_id ' . implode(' ', $roomCases) . ' END'
+                . ' GROUP BY room_id',
+                array_merge($inArgs, [$uid], $roomArgs)
+            );
+            foreach ($rows as $r) {
+                $rid = (int)$r['room_id'];
+                if (isset($roomKeys[$rid])) $out[$roomKeys[$rid]] = (int)$r['n'];
+            }
+        }
+        if ($dmCases) {
+            [$inSql, $inArgs] = DB::in('user_id', array_keys($dmKeys));
+            $rows = DB::all(
+                'SELECT user_id, COUNT(*) AS n FROM messages'
+                . ' WHERE room_id=0 AND to_user_id=? AND deleted=0 AND recalled=0'
+                . ' AND ' . $inSql
+                . ' AND id > CASE user_id ' . implode(' ', $dmCases) . ' END'
+                . ' GROUP BY user_id',
+                array_merge([$uid], $inArgs, $dmArgs)
+            );
+            foreach ($rows as $r) {
+                $pid = (int)$r['user_id'];
+                if (isset($dmKeys[$pid])) $out[$dmKeys[$pid]] = (int)$r['n'];
+            }
         }
         return $out;
     }
@@ -1552,11 +1606,17 @@ class Chat
         if (!$rows) return [true, '没有可清空的聊天记录', 0];
         $uid = (int)$actor['id'];
         $now = time();
+        // v1.5.20：原来每条消息一次 upsert（清空一个几百条的会话就是几百条 SQL）。
+        // 现在一条 SELECT 取 id + 分批多行 upsert，整段包在事务里。
+        $hideRows = [];
         foreach ($rows as $r) {
-            DB::upsert('message_hides',
-                ['user_id' => $uid, 'message_id' => (int)$r['id'], 'created_at' => $now],
-                ['user_id', 'message_id']);   // 唯一索引 idx_msg_hides_key
+            $hideRows[] = ['user_id' => $uid, 'message_id' => (int)$r['id'], 'created_at' => $now];
         }
+        DB::tx(function () use ($hideRows) {
+            foreach (array_chunk($hideRows, 200) as $chunk) {
+                DB::upsertMany('message_hides', $chunk, ['user_id', 'message_id']);
+            }
+        });
         return [true, '已清空 ' . count($rows) . ' 条聊天记录', count($rows)];
     }
 
@@ -1617,7 +1677,11 @@ class Chat
              ORDER BY id DESC LIMIT 300',
             $args
         );
-        $seen = [];
+        // v1.5.20：先按对方聚合出候选，再一次性补资料与好友关系。
+        // 原实现每个会话各查一次 users/guests + 一次 friends，会话一多就是 N+1。
+        $cands = [];
+        $uids = [];
+        $gids = [];
         foreach ($rows as $m) {
             if (isset($hidden[(int)$m['id']])) continue;   // v1.1.14：别拿我已隐藏的消息当会话摘要
             // 对方 = 另一方。v1.1.2 起只可能是「用户↔用户」，
@@ -1634,22 +1698,55 @@ class Chat
             if ($pId <= 0) continue;           // 接收方缺失的异常数据，直接跳过
             $key = $pKind . ':' . $pId;
             if (!self::dmPeerKey($actor, $key)) continue;   // v1.1.2：跨身份会话不展示
-            if (isset($seen[$key])) continue;   // 已取到最新一条
-            $seen[$key] = true;
-            $info = self::dmPeerInfo($pKind, $pId);
+            if (isset($cands[$key])) continue;   // 已取到最新一条
+            $cands[$key] = ['kind' => $pKind, 'id' => $pId, 'msg' => $m];
+            if ($pKind === 'user') $uids[$pId] = 1; else $gids[$pId] = 1;
+        }
+
+        $peers = [];
+        if ($uids) {
+            [$inSql, $inArgs] = DB::in('id', array_keys($uids));
+            foreach (DB::all('SELECT id, nickname, avatar, avatar_type, avatar_style, avatar_seed'
+                . ' FROM users WHERE ' . $inSql, $inArgs) as $u) {
+                $peers['user:' . (int)$u['id']] = [
+                    'name' => (string)$u['nickname'],
+                    'avatar' => Auth::avatarUrlFor($u, (string)$u['id']),
+                ];
+            }
+        }
+        if ($gids) {
+            [$inSql, $inArgs] = DB::in('id', array_keys($gids));
+            foreach (DB::all('SELECT id, nickname, client_key, avatar_type, avatar_style, avatar_seed'
+                . ' FROM guests WHERE ' . $inSql, $inArgs) as $g) {
+                $peers['guest:' . (int)$g['id']] = [
+                    'name' => '游客' . substr((string)$g['nickname'], 2),
+                    'avatar' => Auth::avatarUrlFor($g, (string)($g['client_key'] ?? 'guest')),
+                ];
+            }
+        }
+        $friends = [];
+        if ($uids) {
+            [$inSql, $inArgs] = DB::in('friend_id', array_keys($uids));
+            foreach (DB::all('SELECT friend_id FROM friends WHERE user_id=? AND ' . $inSql,
+                array_merge([$mineUser], $inArgs)) as $f) {
+                $friends[(int)$f['friend_id']] = true;
+            }
+        }
+
+        foreach ($cands as $key => $c) {
+            $info = $peers[$key] ?? null;
             if (!$info) continue;              // 对方已注销
+            $m = $c['msg'];
             $out[] = [
-                'conv' => 'dm', 'id' => $pId, 'peer' => $key,
-                'peer_key' => self::convKey('dm', $key, $pId),
+                'conv' => 'dm', 'id' => $c['id'], 'peer' => $key,
+                'peer_key' => self::convKey('dm', $key, $c['id']),
                 'name' => $info['name'], 'avatar' => $info['avatar'],
                 'last_at' => (int)$m['created_at'], 'last_text' => self::convText($m),
                 'last_id' => (int)$m['id'],       // v1.3.19：前端标记已读时回传
                 'need_password' => false, 'can_edit' => false, 'mine' => false,
-                'pinned' => isset($pins[self::convKey('dm', $key, $pId)]),
-                // v1.2.28：右侧栏「删除好友」只在对方确实是好友时才渲染，
-                // 不然点了必然被服务端拒（先查一次 friends，比让用户试错好）
-                'is_friend' => (int)DB::val('SELECT 1 FROM friends WHERE user_id=? AND friend_id=?',
-                    [$mineUser, $pId]) > 0,
+                'pinned' => isset($pins[self::convKey('dm', $key, $c['id'])]),
+                // v1.2.28：右侧栏「删除好友」只在对方确实是好友时才渲染
+                'is_friend' => isset($friends[$c['id']]),
             ];
         }
         // v1.3.19：未读数统一在这里算完再下发。lastMsgId 用各会话的末条 id
@@ -1692,16 +1789,27 @@ class Chat
                 FROM users WHERE status=1 AND (nickname LIKE ?' . ($idNum > 0 ? ' OR id=?' : '') . ')
                 ORDER BY (nickname=?) DESC, id ASC LIMIT ?';
         $args = $idNum > 0 ? [$like, $idNum, $q, $limit * 2] : [$like, $q, $limit * 2];
-        foreach (DB::all($sql, $args) as $u) {
+        $rows = DB::all($sql, $args);
+        // v1.5.20：先批量取「这批人里谁在本群」，别再每行一次 room_members 查询
+        $inRoom = [];
+        if ($rows) {
+            $uids = array_map(fn($u) => (int)$u['id'], $rows);
+            [$inSql, $inArgs] = DB::in('user_id', $uids);
+            foreach (DB::all('SELECT user_id FROM room_members WHERE room_id=? AND ' . $inSql,
+                array_merge([$roomId], $inArgs)) as $mb) {
+                $inRoom[(int)$mb['user_id']] = true;
+            }
+        }
+        foreach ($rows as $u) {
             $uid = (int)$u['id'];
             $out[] = [
                 'kind' => 'user', 'uid' => $uid, 'gid' => 0,
                 'nickname' => (string)$u['nickname'], 'role' => (string)$u['role'],
                 'avatar' => Auth::avatarUrlFor($u, (string)$uid),
                 // 是否已在本群（用于结果行上打「已在群」标记）
-                'in_room' => (int)DB::val('SELECT 1 FROM room_members WHERE room_id=? AND user_id=?', [$roomId, $uid]) > 0,
+                'in_room' => isset($inRoom[$uid]),
             ];
-            if (count($out) >= $limit) return $out;
+            if (count($out) >= $limit) break;
         }
         return $out;
     }
@@ -2085,13 +2193,28 @@ class Chat
 
         // 4) 打包：按「对方」分组，标注每条的发送方与接收方，方便还原对话
         $target = DB::one('SELECT id,nickname FROM users WHERE id=?', [$targetId]);
+        // v1.5.20：缺 to_nickname 的对方昵称一次查回，避免每条消息一次 users 查询
+        $peerIds = [];
+        foreach ($rows as $m) {
+            if ((string)($m['to_nickname'] ?? '') !== '') continue;
+            $pu = (int)($m['user_id'] ?? 0) === $targetId
+                ? (int)($m['to_user_id'] ?? 0) : (int)($m['user_id'] ?? 0);
+            if ($pu > 0) $peerIds[$pu] = 1;
+        }
+        $peerNicks = [];
+        if ($peerIds) {
+            [$inSql, $inArgs] = DB::in('id', array_keys($peerIds));
+            foreach (DB::all('SELECT id, nickname FROM users WHERE ' . $inSql, $inArgs) as $u) {
+                $peerNicks[(int)$u['id']] = (string)$u['nickname'];
+            }
+        }
         $data = [];
         foreach (array_reverse($rows) as $m) {
             $peerUid = (int)($m['user_id'] ?? 0) === $targetId
                 ? (int)($m['to_user_id'] ?? 0) : (int)($m['user_id'] ?? 0);
             $peerNick = (string)($m['to_nickname'] ?? '');
             if ($peerUid > 0 && $peerNick === '') {
-                $peerNick = (string)(DB::val('SELECT nickname FROM users WHERE id=?', [$peerUid]) ?: ('用户' . $peerUid));
+                $peerNick = (string)($peerNicks[$peerUid] ?? ('用户' . $peerUid));
             }
             $data[] = [
                 'id' => (int)$m['id'],
@@ -2280,8 +2403,8 @@ class Chat
      * ⚠️ 文件按内容哈希命名，同一份物理文件可被多条消息共用；因此 unlink 前要确认
      * 没有别的消息还在引用它，否则就是删掉一条消息、抽走另一条消息的地基。
      *
-     * 安全：逐条 DELETE 而非大范围 WHERE，避免一次锁表；
-     * 单条失败只跳过该条（记入日志），绝不影响读消息主流程。
+     * 安全（v1.5.20）：先收集 id，再按 100 条一块 DELETE —— 一次锁的行数可控，
+     * 又不会退化成「500 条消息 = 500 次 SQL」的 N+1；单块失败只跳过该块。
      */
     public static function purgeExpired(): void
     {
@@ -2301,7 +2424,7 @@ class Chat
             );
             if (!$rows) return;
 
-            $msgs = 0; $files = 0; $paths = [];
+            $msgs = 0; $files = 0; $paths = []; $delIds = [];
             foreach ($rows as $m) {
                 $ty = (string)$m['type'];
                 // 先收集附件路径：删行之后 content 就没了，必须在删除前提取。
@@ -2321,7 +2444,11 @@ class Chat
                         }
                     }
                 }
-                if (DB::run('DELETE FROM messages WHERE id=?', [(int)$m['id']])) $msgs++;
+                $delIds[] = (int)$m['id'];
+            }
+            foreach (array_chunk($delIds, 100) as $chunk) {
+                [$inSql, $inArgs] = DB::in('id', $chunk);
+                $msgs += DB::run("DELETE FROM messages WHERE $inSql", $inArgs)->rowCount();
             }
 
             // 附件文件同步清理：只删 uploads/file/ 下、经 fileAbs 二次校验的路径。

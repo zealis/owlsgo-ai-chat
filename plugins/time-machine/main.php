@@ -389,21 +389,25 @@ function owTmMineSets(array $ids, int $uid): array
 
 /**
  * 一批波文的评论（默认全展开，不需要点开才加载）。
- * 每条波文最多 50 条、按 id 正序（旧→新）；一条帖 10 次查询比一次大 IN 更好控
- * （IN 版式在多帖共用一个 LIMIT 时会把靠后的帖挤掉）。
+ * 每条波文最多 50 条、按 id 正序（旧→新）。
+ * v1.5.20：改成「每帖一个带 LIMIT 的子查询 UNION ALL」一次取回；
+ * 原来逐帖查询是 N+1，而普通大 IN + 全局 LIMIT 又会把靠后的帖挤掉。
  */
 function owTmCommentsOf(array $ids): array
 {
+    $ids = array_values(array_unique(array_filter(array_map('intval', $ids), fn($v) => $v > 0)));
+    if (!$ids) return [];
+    $parts = [];
+    foreach ($ids as $i => $_) {
+        $parts[] = 'SELECT * FROM (SELECT id, post_id, uid, nickname, avatar, role, content, media, created_at'
+            . ' FROM plugin_time_machine_comment WHERE post_id=? ORDER BY id ASC LIMIT 50) t' . $i;
+    }
+    $rows = DB::all(implode(' UNION ALL ', $parts) . ' ORDER BY post_id ASC, id ASC', $ids);
     $out = [];
-    foreach ($ids as $pid) {
-        $rows = DB::all(
-            'SELECT id, uid, nickname, avatar, role, content, media, created_at FROM plugin_time_machine_comment'
-            . ' WHERE post_id=? ORDER BY id ASC LIMIT 50',
-            [(int)$pid]
-        );
-        foreach ($rows as &$rc) $rc['media'] = owTmMediaOut((string)($rc['media'] ?? ''));
-        unset($rc);
-        $out[(int)$pid] = $rows;
+    foreach ($ids as $pid) $out[$pid] = [];
+    foreach ($rows as $rc) {
+        $rc['media'] = owTmMediaOut((string)($rc['media'] ?? ''));
+        $out[(int)$rc['post_id']][] = $rc;
     }
     return $out;
 }
@@ -415,23 +419,25 @@ function owTmCommentsOf(array $ids): array
  */
 function owTmLikersOf(array $ids): array
 {
-    $out = [];
-    foreach ($ids as $pid) {
-        $rows = DB::all(
-            'SELECT l.uid, u.nickname, u.avatar, u.avatar_type, u.avatar_style, u.avatar_seed, u.role'
+    $ids = array_values(array_unique(array_filter(array_map('intval', $ids), fn($v) => $v > 0)));
+    if (!$ids) return [];
+    // v1.5.20：同样改成带 LIMIT 的子查询 UNION ALL，一次取回多帖的点赞人（每帖仍限 10）
+    $parts = [];
+    foreach ($ids as $i => $_) {
+        $parts[] = 'SELECT * FROM (SELECT l.post_id, l.uid, u.nickname, u.avatar, u.avatar_type,'
+            . ' u.avatar_style, u.avatar_seed, u.role, l.created_at'
             . ' FROM plugin_time_machine_like l INNER JOIN users u ON u.id = l.uid'
-            . ' WHERE l.post_id=? ORDER BY l.created_at ASC LIMIT 10',
-            [(int)$pid]
-        );
-        $list = [];
-        foreach ($rows as $r) {
-            $list[] = [
-                'uid' => (int)$r['uid'],
-                'nickname' => (string)$r['nickname'],
-                'avatar' => Auth::avatarUrlFor($r, (string)$r['uid']),
-            ];
-        }
-        $out[(int)$pid] = $list;
+            . ' WHERE l.post_id=? ORDER BY l.created_at ASC LIMIT 10) t' . $i;
+    }
+    $rows = DB::all(implode(' UNION ALL ', $parts) . ' ORDER BY post_id ASC, created_at ASC', $ids);
+    $out = [];
+    foreach ($ids as $pid) $out[$pid] = [];
+    foreach ($rows as $r) {
+        $out[(int)$r['post_id']][] = [
+            'uid' => (int)$r['uid'],
+            'nickname' => (string)$r['nickname'],
+            'avatar' => Auth::avatarUrlFor($r, (string)$r['uid']),
+        ];
     }
     return $out;
 }

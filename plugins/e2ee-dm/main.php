@@ -242,15 +242,20 @@ Plugin::route('plugin_e2ee_dm_register', function (array $ctx) {
             'dev_name' => $name, 'ua' => mb_substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 120),
             'created_at' => $now, 'last_seen' => $now,
         ]);
+        // v1.5.20：一次多行写预密钥，别逐枚 INSERT
+        $opkRows = [];
         foreach ($opks as $o) {
             if (!is_array($o)) continue;
             $kid = (int)($o['id'] ?? 0);
             $pub = (string)($o['pub'] ?? '');
             if ($kid <= 0 || !preg_match('/^[A-Za-z0-9_-]{80,96}$/', $pub)) continue;
-            DB::insert('plugin_e2ee_opk', [
+            $opkRows[$kid] = [
                 'dev_id' => $devId, 'user_id' => $me, 'key_id' => $kid,
                 'pub' => $pub, 'used' => 0, 'created_at' => $now,
-            ]);
+            ];
+        }
+        foreach (array_chunk(array_values($opkRows), 100) as $chunk) {
+            DB::insertMany('plugin_e2ee_opk', $chunk);
         }
         DB::pdo()->commit();
     } catch (Throwable $e) {
@@ -335,20 +340,22 @@ Plugin::route('plugin_e2ee_dm_opk', function (array $ctx) {
     if (!$opks) Api::json(['ok' => false, 'msg' => '没有要补充的预密钥']);
     // 序号必须递增且不与现存冲突（表上有 dev_id+key_id 唯一索引）
     $maxId = (int)DB::val('SELECT MAX(key_id) FROM plugin_e2ee_opk WHERE dev_id=?', [(string)$dev['dev_id']]);
-    $add = 0;
+    // v1.5.20：一次多行、冲突跳过；不再逐枚 INSERT + 逐枚 catch
+    $rows = [];
     foreach ($opks as $o) {
         if (!is_array($o)) continue;
         $kid = (int)($o['id'] ?? 0);
         $pub = (string)($o['pub'] ?? '');
         if ($kid <= $maxId) continue;                       // 序号倒退：拒绝
         if (!preg_match('/^[A-Za-z0-9_-]{80,96}$/', $pub)) continue;
-        try {
-            DB::insert('plugin_e2ee_opk', [
-                'dev_id' => (string)$dev['dev_id'], 'user_id' => $me, 'key_id' => $kid,
-                'pub' => $pub, 'used' => 0, 'created_at' => time(),
-            ]);
-            $add++;
-        } catch (Throwable $e) { /* 序号撞了唯一索引，跳过即可 */ }
+        $rows[$kid] = [
+            'dev_id' => (string)$dev['dev_id'], 'user_id' => $me, 'key_id' => $kid,
+            'pub' => $pub, 'used' => 0, 'created_at' => time(),
+        ];
+    }
+    $add = 0;
+    foreach (array_chunk(array_values($rows), 100) as $chunk) {
+        $add += DB::insertIgnoreMany('plugin_e2ee_opk', $chunk, ['dev_id', 'key_id']);
     }
     Api::json([
         'ok' => true,

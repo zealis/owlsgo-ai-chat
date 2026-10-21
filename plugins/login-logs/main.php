@@ -392,10 +392,11 @@ Plugin::route('plugin_login_logs_del', function (array $ctx) use ($llGuard) {
     if (!$ids) Api::json(['ok' => false, 'msg' => '未选择日志']);
     // 防御性上限：正常一页 ≤100 条，超过即异常请求，拒绝而不是照删
     if (count($ids) > 500) Api::json(['ok' => false, 'msg' => '一次最多删除 500 条']);
+    // v1.5.20：分块 IN 批量删除，别逐条 DELETE（一页最多 500 条 = 500 次 SQL）
     $ok = 0;
-    foreach ($ids as $id) {
-        // DB::run 返回 PDOStatement，行数要取 rowCount()（与对象比大小无意义）
-        if (DB::run('DELETE FROM plugin_login_logs WHERE id=?', [$id])->rowCount() > 0) $ok++;
+    foreach (array_chunk($ids, 200) as $chunk) {
+        [$inSql, $inArgs] = DB::in('id', $chunk);
+        $ok += DB::run("DELETE FROM plugin_login_logs WHERE $inSql", $inArgs)->rowCount();
     }
     // 删除动作本身留痕：谁在什么时候删了哪些（ids 全量记录，便于事后核对）
     Sec::log('plugin_login_logs_del', (string)($ctx['actor']['nickname'] ?? ''), ['ids' => $ids, 'ok' => $ok]);

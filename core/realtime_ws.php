@@ -967,20 +967,28 @@ class RealtimeWs
             if ($live !== null) { $live['actor'] = $fresh; $live['actorAt'] = $now; self::$seats[(int)$seat['fp']] = $live; }
         }
 
-        // 房间 watcher（P2）：先 1 条索引探询（空闲时每房 1 条/秒），命中才逐座位拉包
+        // 房间 watcher（P2）：v1.5.20 改成一条 GROUP BY 取回所有活跃房间的最新 id。
+        // 原来每房一条探询 SQL（房间一多就是 N+1）；命中房间才逐座位拉包。
         $activeRooms = [];
         foreach (self::$seats as $s) {
             if ($s['phase'] === 'open' && (int)$s['room'] > 0) $activeRooms[(int)$s['room']] = true;
         }
-        foreach (array_keys($activeRooms) as $room) {
+        if ($activeRooms) {
             try {
-                $wm = self::$wmRoom[$room] ?? 0;
-                $hit = (int)DB::val('SELECT id FROM messages WHERE room_id=? AND id>? ORDER BY id LIMIT 1', [(int)$room, $wm]);
-                if ($hit > 0) self::pushRoomNow((int)$room);
+                [$inSql, $inArgs] = DB::in('room_id', array_keys($activeRooms));
+                $latest = [];
+                foreach (DB::all("SELECT room_id, MAX(id) AS mid FROM messages WHERE $inSql GROUP BY room_id", $inArgs) as $r) {
+                    $latest[(int)$r['room_id']] = (int)$r['mid'];
+                }
+                foreach (array_keys($activeRooms) as $room) {
+                    $wm = self::$wmRoom[$room] ?? 0;
+                    if (($latest[(int)$room] ?? 0) > $wm) self::pushRoomNow((int)$room);
+                }
             } catch (Throwable $e) { /* 探询失败：下个 tick 重试 */ }
         }
 
-        // DM watcher（P2）：私聊座位数量少，直接逐座位单查（查询数 = DM 座位数/秒）
+        // DM watcher（P2）：N+1 例外 —— 私聊座位数量少，逐座位单查（查询数 = DM 座位数/秒）；
+        // 房间 watcher 已改为一条 GROUP BY，私聊若要再优化需按 peer 合并 watcher 水位。
         foreach (self::$seats as $s) {
             if ($s['phase'] !== 'open' || empty($s['dms'])) continue;
             foreach (array_keys($s['dms']) as $peer) self::dmPushSeat($s, (string)$peer);

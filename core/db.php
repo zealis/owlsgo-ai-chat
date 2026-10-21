@@ -153,6 +153,139 @@ class DB
         return self::run($sql, $args)->fetchColumn();
     }
 
+    /**
+     * 生成 `col IN (?,?,…)` 片段与参数，**一次查回一批**。
+     * 循环里逐行查（N+1）是明令禁止的，先用它把 id 收齐再一次查。
+     *
+     * @param string $col    列名（由代码写死，不接受用户输入）
+     * @param array  $values 值列表；空数组返回恒假条件
+     * @return array{0:string,1:array} [SQL 片段, 绑定参数]
+     */
+    public static function in(string $col, array $values): array
+    {
+        $values = array_values($values);
+        if (!$values) return ['0=1', []];
+        return [
+            $col . ' IN (' . implode(',', array_fill(0, count($values), '?')) . ')',
+            $values,
+        ];
+    }
+
+    /**
+     * 批量 INSERT：一次往返写多行。
+     * 每行的列集合必须一致；行数多时调用方自行 array_chunk（建议 ≤500）。
+     *
+     * @return int 受影响行数
+     */
+    public static function insertMany(string $table, array $rows): int
+    {
+        if (!$rows) return 0;
+        $first = reset($rows);
+        $cols = array_keys($first);
+        if (!$cols) return 0;
+        $one = '(' . implode(',', array_fill(0, count($cols), '?')) . ')';
+        $tuples = [];
+        $args = [];
+        foreach ($rows as $row) {
+            $tuples[] = $one;
+            foreach ($cols as $c) $args[] = $row[$c] ?? null;
+        }
+        $sql = "INSERT INTO {$table} (" . implode(',', $cols) . ') VALUES ' . implode(',', $tuples);
+        return self::run($sql, $args)->rowCount();
+    }
+
+    /**
+     * 批量「冲突就跳过」插入（不更新已有行）。
+     * @param array $keys 冲突判定列（PostgreSQL 需要）
+     * @return int 实际插入行数
+     */
+    public static function insertIgnoreMany(string $table, array $rows, array $keys): int
+    {
+        if (!$rows) return 0;
+        $first = reset($rows);
+        $cols = array_keys($first);
+        if (!$cols) return 0;
+        $one = '(' . implode(',', array_fill(0, count($cols), '?')) . ')';
+        $tuples = [];
+        $args = [];
+        foreach ($rows as $row) {
+            $tuples[] = $one;
+            foreach ($cols as $c) $args[] = $row[$c] ?? null;
+        }
+        $values = implode(',', $tuples);
+        $colList = implode(',', $cols);
+        if (self::$driver === 'mysql') {
+            $sql = "INSERT IGNORE INTO {$table} ($colList) VALUES $values";
+        } elseif (self::$driver === 'pgsql') {
+            $sql = "INSERT INTO {$table} ($colList) VALUES $values ON CONFLICT ("
+                 . implode(',', $keys) . ') DO NOTHING';
+        } else {
+            $sql = "INSERT OR IGNORE INTO {$table} ($colList) VALUES $values";
+        }
+        return self::run($sql, $args)->rowCount();
+    }
+
+    /**
+     * 批量 UPSERT：一次往返写入/更新多行，按 $keys 判冲突。
+     * MySQL 走 ON DUPLICATE KEY UPDATE，SQLite / PostgreSQL 走 ON CONFLICT。
+     * 每行必须包含 $keys 对应的列，列集合保持一致；行多时调用方自行分块。
+     */
+    public static function upsertMany(string $table, array $rows, array $keys): void
+    {
+        if (!$rows) return;
+        $first = reset($rows);
+        $cols = array_keys($first);
+        if (!$cols) return;
+        $one = '(' . implode(',', array_fill(0, count($cols), '?')) . ')';
+        $tuples = [];
+        $args = [];
+        foreach ($rows as $row) {
+            $tuples[] = $one;
+            foreach ($cols as $c) $args[] = $row[$c] ?? null;
+        }
+        $nonKeys = array_values(array_diff($cols, $keys));
+        $head = "INSERT INTO {$table} (" . implode(',', $cols) . ') VALUES ' . implode(',', $tuples);
+        if (self::$driver === 'mysql') {
+            $update = $nonKeys
+                ? implode(',', array_map(fn($c) => "$c=VALUES($c)", $nonKeys))
+                : $keys[0] . '=' . $keys[0];   // 纯忽略型：无字段可更新时写回冲突键
+            $sql = $head . ' ON DUPLICATE KEY UPDATE ' . $update;
+        } elseif ($nonKeys) {
+            $sql = $head . ' ON CONFLICT (' . implode(',', $keys) . ') DO UPDATE SET '
+                 . implode(',', array_map(fn($c) => "$c=excluded.$c", $nonKeys));
+        } else {
+            $sql = $head . ' ON CONFLICT (' . implode(',', $keys) . ') DO NOTHING';
+        }
+        self::run($sql, $args);
+    }
+
+    /** 批量写设置项（一次 SQL），供后台保存一组开关/文本时使用。 */
+    public static function setSettings(array $map): void
+    {
+        if (!$map) return;
+        $rows = [];
+        foreach ($map as $k => $v) $rows[] = ['k' => (string)$k, 'v' => (string)$v];
+        self::upsertMany('settings', $rows, ['k']);
+    }
+
+    /**
+     * 事务包裹：批量写要么全成、要么全退。已在事务里时直接执行（不嵌套）。
+     * 用法：DB::tx(function () { DB::insertMany(...); });
+     */
+    public static function tx(callable $fn)
+    {
+        $own = !self::$pdo->inTransaction();
+        if ($own) self::$pdo->beginTransaction();
+        try {
+            $ret = $fn();
+            if ($own) self::$pdo->commit();
+            return $ret;
+        } catch (Throwable $e) {
+            if ($own && self::$pdo->inTransaction()) self::$pdo->rollBack();
+            throw $e;
+        }
+    }
+
     public static function insert(string $table, array $data): int
     {
         $cols = array_keys($data);

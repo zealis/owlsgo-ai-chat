@@ -585,10 +585,13 @@ Plugin::route('plugin_red_packet_create', function (array $ctx) {
         'created_at'   => $now,
         'expire_at'    => $now + $expireH * 3600,
     ]);
+    // v1.5.20：一次多行写入内容池，别逐条 INSERT
+    $itemRows = [];
     foreach ($items as $line) {
-        DB::insert('plugin_red_packet_item', [
-            'packet_id' => $pid, 'content' => $line, 'claim_user' => 0, 'claim_at' => 0,
-        ]);
+        $itemRows[] = ['packet_id' => $pid, 'content' => $line, 'claim_user' => 0, 'claim_at' => 0];
+    }
+    foreach (array_chunk($itemRows, 200) as $chunk) {
+        DB::insertMany('plugin_red_packet_item', $chunk);
     }
 
     // 发消息：走核心 Chat::send，成员/禁言/敏感词/频率一套校验全部复用。
@@ -757,9 +760,12 @@ Plugin::route('plugin_red_packet_admin_save', function (array $ctx) {
     $maxTotal = max(1, min(100000000, (int)($post['max_total'] ?? 100000)));
     $maxCnt   = max(1, min(500, (int)($post['max_count'] ?? 100)));
     $expireH  = max(1, min(720, (int)($post['expire_hours'] ?? 24)));
-    foreach (['max_total' => $maxTotal, 'max_count' => $maxCnt, 'expire_hours' => $expireH] as $k => $v) {
-        DB::upsert('plugin_red_packet_cfg', ['k' => $k, 'v' => (string)$v], ['k']);
-    }
+    // v1.5.20：三项配置一次多行 upsert
+    DB::upsertMany('plugin_red_packet_cfg', [
+        ['k' => 'max_total', 'v' => (string)$maxTotal],
+        ['k' => 'max_count', 'v' => (string)$maxCnt],
+        ['k' => 'expire_hours', 'v' => (string)$expireH],
+    ], ['k']);
     Api::json(['ok' => true, 'msg' => '已保存']);
 });
 
@@ -850,6 +856,7 @@ Plugin::cron('expire_and_purge', 3600, function () {
     $rows = DB::all("SELECT * FROM plugin_red_packet
                       WHERE status='active' AND expire_at<=? AND remain_cnt>0
                    ORDER BY id ASC LIMIT 300", [$now]);
+    // N+1 例外：逐包条件更新是并发安全所需（CAS），且每次上限 300，属于清理任务。
     foreach ($rows as $r) {
         $st = DB::run("UPDATE plugin_red_packet SET status='expired' WHERE id=? AND status='active'", [(int)$r['id']]);
         if ($st->rowCount() < 1) continue;
@@ -865,6 +872,7 @@ Plugin::cron('expire_and_purge', 3600, function () {
     // 兜底：已领完但仍有余额的包（历史数据 / 极端并发下老版本留下的尾巴）把余额退回。
     // 领取侧的「最后一份拿走全部余额」保证新包不会产生这种行，这条只对存量数据生效。
     $leftover = DB::all("SELECT * FROM plugin_red_packet WHERE status='done' AND remain_total>0 LIMIT 300");
+    // N+1 例外：存量兜底，逐包 CAS（remain_total 作为版本号），上限 300/次。
     foreach ($leftover as $r) {
         $back = (int)$r['remain_total'];
         $st = DB::run('UPDATE plugin_red_packet SET remain_total=0 WHERE id=? AND remain_total=?',
@@ -880,13 +888,15 @@ Plugin::cron('expire_and_purge', 3600, function () {
     // 90 天前的红包整包清掉（含内容池与领取记录）
     $cut = $now - 90 * 86400;
     $old = DB::all('SELECT id FROM plugin_red_packet WHERE created_at<? LIMIT 500', [$cut]);
+    // v1.5.20：分块批量清理三张表，别每个包 3 条 DELETE
     $purged = 0;
-    foreach ($old as $o) {
-        $pid = (int)$o['id'];
-        DB::run('DELETE FROM plugin_red_packet_claim WHERE packet_id=?', [$pid]);
-        DB::run('DELETE FROM plugin_red_packet_item WHERE packet_id=?', [$pid]);
-        DB::run('DELETE FROM plugin_red_packet WHERE id=?', [$pid]);
-        $purged++;
+    $oldIds = array_map(fn($o) => (int)$o['id'], $old);
+    foreach (array_chunk($oldIds, 200) as $chunk) {
+        [$inSql, $inArgs] = DB::in('packet_id', $chunk);
+        DB::run("DELETE FROM plugin_red_packet_claim WHERE $inSql", $inArgs);
+        DB::run("DELETE FROM plugin_red_packet_item WHERE $inSql", $inArgs);
+        [$idSql, $idArgs] = DB::in('id', $chunk);
+        $purged += DB::run("DELETE FROM plugin_red_packet WHERE $idSql", $idArgs)->rowCount();
     }
 
     $pn = ow_points_name();

@@ -1709,8 +1709,12 @@ Plugin::route('plugin_spam_appeal_batch', function (array $ctx) {
         fn(int $v): bool => $v > 0)));
     if (!$ids) Api::json(['ok' => false, 'msg' => '未选择申诉']);
     if (count($ids) > 200) Api::json(['ok' => false, 'msg' => '一次最多删除 200 条']);
+    // v1.5.20：分块 IN 批量删除
     $ok = 0;
-    foreach ($ids as $id) { DB::run('DELETE FROM plugin_spam_appeal WHERE id=?', [$id]); $ok++; }
+    foreach (array_chunk($ids, 200) as $chunk) {
+        [$inSql, $inArgs] = DB::in('id', $chunk);
+        $ok += DB::run("DELETE FROM plugin_spam_appeal WHERE $inSql", $inArgs)->rowCount();
+    }
     Sec::log('spam_appeal_batch_del', (string)($ctx['actor']['nickname'] ?? ''), ['count' => $ok]);
     Api::json(['ok' => $ok > 0, 'msg' => '批量删除：成功 ' . $ok . ' 条']);
 }, ['sensitive' => true]);
@@ -1732,8 +1736,12 @@ Plugin::route('plugin_sensitive_words_batch', function (array $ctx) {
     if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);
     $ids = array_filter(array_map('intval', explode(',', (string)($ctx['post']['ids'] ?? ''))));
     if (!$ids) Api::json(['ok' => false, 'msg' => '未选择敏感词']);
+    // v1.5.20：分块 IN 批量删除
     $ok = 0;
-    foreach ($ids as $id) { DB::run('DELETE FROM sensitive_words WHERE id=?', [$id]); $ok++; }
+    foreach (array_chunk($ids, 200) as $chunk) {
+        [$inSql, $inArgs] = DB::in('id', $chunk);
+        $ok += DB::run("DELETE FROM sensitive_words WHERE $inSql", $inArgs)->rowCount();
+    }
     Sec::log('sensitive_word_batch_del', $ctx['actor']['nickname'], ['count' => $ok]);
     Api::json(['ok' => $ok > 0, 'msg' => '批量删除：成功 ' . $ok . ' 条']);
 }, ['sensitive' => true]);

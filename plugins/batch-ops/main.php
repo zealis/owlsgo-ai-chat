@@ -119,8 +119,14 @@ Plugin::route('plugin_batch_ops_record_save', function (array $ctx): void {
     $roomCache = [];
     $srcRid = 0;
     $srcPeerUid = 0;
+    // v1.5.20：一次取回所选消息，别在 foreach 里逐条 SELECT（最多 100 条 = 100 次查询）
+    $msgMap = [];
+    [$msgIn, $msgInArgs] = DB::in('id', $ids);
+    foreach (DB::all("SELECT * FROM messages WHERE $msgIn", $msgInArgs) as $row) {
+        $msgMap[(int)$row['id']] = $row;
+    }
     foreach ($ids as $mid) {
-        $m = DB::one('SELECT * FROM messages WHERE id=?', [$mid]);
+        $m = $msgMap[$mid] ?? null;
         if (!$m) continue;
         if ((int)$m['recalled'] === 1 || (int)$m['deleted'] === 1) continue;
         $ty = (string)$m['type'];
@@ -216,9 +222,17 @@ Plugin::route('plugin_batch_ops_record_get', function (array $ctx): void {
        点击走的就是那条已验证可用的请求形状。旧页面传来的 full=1 仍然认（兼容），
        新客户端不再发送。 */
     $withItems = count($tokens) === 1 || (string)($p['full'] ?? '') === '1';
+    // v1.5.20：预取这一页所有 token 对应的记录，别逐个 token 查
+    $recMap = [];
+    if ($tokens) {
+        [$tokIn, $tokArgs] = DB::in('token', $tokens);
+        foreach (DB::all("SELECT * FROM plugin_batch_ops_record WHERE $tokIn", $tokArgs) as $row) {
+            $recMap[(string)$row['token']] = $row;
+        }
+    }
     $out = [];
     foreach ($tokens as $t) {
-        $row = DB::one('SELECT * FROM plugin_batch_ops_record WHERE token=?', [$t]);
+        $row = $recMap[$t] ?? null;
         if (!$row) { $out[$t] = null; continue; }
         $items = json_decode((string)$row['items'], true);
         if (!is_array($items)) $items = [];

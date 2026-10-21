@@ -142,6 +142,7 @@ class Auth
      */
     public static function nextId(string $table): int
     {
+        // N+1 例外：ID 分配是有限重试（段满才升位），不是按行遍历。
         $max    = (int)(DB::val("SELECT MAX(id) FROM $table") ?: 0);
         $digits = max(3, strlen((string)$max));          // 至少 3 位（001-999）
         while (true) {

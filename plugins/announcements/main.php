@@ -112,10 +112,11 @@ Plugin::route('plugin_announcements_batch', function (array $ctx) {
     if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);
     $ids = array_filter(array_map('intval', explode(',', (string)($ctx['post']['ids'] ?? ''))));
     if (!$ids) Api::json(['ok' => false, 'msg' => '未选择公告']);
+    // v1.5.20：分块 IN 批量删除，别逐条 DELETE
     $ok = 0;
-    foreach ($ids as $id) {
-        $st = DB::run('DELETE FROM plugin_announcements WHERE id=?', [$id]);
-        if (is_object($st) && method_exists($st, 'rowCount')) $ok += (int)$st->rowCount();
+    foreach (array_chunk($ids, 200) as $chunk) {
+        [$inSql, $inArgs] = DB::in('id', $chunk);
+        $ok += DB::run("DELETE FROM plugin_announcements WHERE $inSql", $inArgs)->rowCount();
     }
     Sec::log('group_ann_batch_del', $ctx['actor']['nickname'], ['count' => $ok]);
     Api::json(['ok' => $ok > 0, 'msg' => '批量删除：成功 ' . $ok . ' 条'

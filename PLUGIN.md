@@ -128,6 +128,72 @@ if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' =
 
 - 输出统一用 `Api::json()`；禁止 `echo` 混入 JSON 响应。
 
+## 数据库性能：禁止循环内 N+1（v1.5.20 起）
+
+**硬性规则：禁止在 `foreach` / `for` / `while` 循环体里直接调用
+`DB::one` / `DB::all` / `DB::val` / `DB::insert` / `DB::run`。**
+循环 N 次就是 N+1 次往返，聊天页、成员列表、后台分页一放大先把数据库打满。
+
+核心已把批量能力收口到 `core/db.php`，插件直接用，不要自己拼 IN：
+
+| 助手 | 用途 |
+|---|---|
+| `DB::in($col, $values)` | 返回 `[SQL 片段, 绑定参数]`；空数组返回恒假的 `0=1` |
+| `DB::insertMany($table, $rows)` | 一次多行 INSERT；行多时自行 `array_chunk`（建议 200–500） |
+| `DB::insertIgnoreMany($table, $rows, $keys)` | 一次多行、冲突就跳过；返回实际插入行数 |
+| `DB::upsertMany($table, $rows, $keys)` | 一次多行 UPSERT（SQLite / MySQL / PG 同一写法） |
+| `DB::setSettings($map)` | 一组设置项一次写完 |
+| `DB::tx(fn)` | 事务包裹；已在事务里时不会嵌套 |
+
+### 正确写法
+
+```php
+// ❌ 循环里逐条查（典型 N+1）
+foreach ($ids as $id) {
+    $row = DB::one('SELECT * FROM t WHERE id=?', [$id]);
+    // …
+}
+
+// ✅ 一次 IN + map
+[$inSql, $inArgs] = DB::in('id', $ids);
+$map = [];
+foreach (DB::all("SELECT * FROM t WHERE $inSql", $inArgs) as $r) {
+    $map[(int)$r['id']] = $r;
+}
+foreach ($ids as $id) {
+    $row = $map[$id] ?? null;
+    // …
+}
+
+// ❌ 循环里逐条写
+foreach ($rows as $r) DB::insert('t', ['k' => $r['k'], 'v' => $r['v']]);
+
+// ✅ 一条多行写；冲突场景用 upsertMany
+DB::insertMany('t', $rows);
+DB::upsertMany('t', $rows, ['k']);
+
+// ❌ 每个会话一次 COUNT
+foreach ($keys as $k) $n = DB::val('SELECT COUNT(*) FROM messages WHERE …');
+
+// ✅ 一条 GROUP BY（不同位点用 CASE 带进 SQL）
+```
+
+- 关联数据（昵称、头像、好友关系、是否在群、末条消息）同样先批量取 map，
+  不要在循环里 `DB::one`。
+- 批量删除/更新先收集 id，再 `DB::in('id', $ids)` + 一条 `DELETE/UPDATE`；
+  删除量大时按 100–200 分块，避免一次锁太多行。
+- 多步写操作（先插记录再写日志等）用 `DB::tx()` 包起来，失败整体回滚。
+- 分块是必须的：SQLite 的绑定变量上限约 999，MySQL / PostgreSQL 也有上限；
+  `IN` 与多行写建议每块 200–500。
+- `array_chunk` + `DB::in` 的分块循环**不是 N+1**：查询次数 = 数据量 / 块大小，
+  属于批量写/批量查的正常形态；评审时看的是「是否按行一次往返」。
+- 例外（**必须在循环上方写明原因**）：
+  - 重试 / CAS 循环（ID 碰撞重试、红包余量 CAS），次数固定且很小；
+  - 固定 2–3 项的检查，合并后收益有限、反而难读；
+  - 一次性安装 / 迁移 / 导入，跑一次就结束。
+- 评审时看到新增循环里有 `DB::`，先停下来：能用 `DB::in` / `insertMany` /
+  `upsertMany` 的必须改成批量；不能改的写清例外原因。
+
 ## 静态资源（Plugin::asset）
 
 ```php
@@ -869,6 +935,7 @@ function mount() {
 样式只引用核心 --ow-* 变量，不写死颜色（深浅两套主题都要能看）。
 按钮防重入：经 OwApi 发起的请求已自动锁按钮；上传/WebAuthn 等异步入口用 OwBusy.run/form 包一层。
 图片懒加载：<img> 自动补 loading=lazy/decoding=async；首屏/验证码/灯箱标 data-ow-eager；大列表背景图用 OwLazy.bg。
+数据库：循环内禁止 DB:: 查询/逐条写；用 DB::in / insertMany / upsertMany / tx 批量处理，例外必须注释原因。
 需求：<清楚描述功能、入口、权限>
 完成后执行 php -l 与 node --check，并在后台启用插件做真实验证。
 ```

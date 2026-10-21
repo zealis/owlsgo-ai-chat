@@ -917,8 +917,18 @@ Plugin::route('plugin_attachment_manager_delete', function (array $ctx) use ($am
 
     $deleted = 0;
     $keptFiles = 0;   // 因仍被其它消息引用而保留的物理文件数
+    // v1.5.20：一次取回待删消息，别逐条 SELECT。
+    // N+1 例外：引用计数仍按文件逐个查（一次后台操作通常只有一页附件，且要同时核对
+    // messages 三种类型 + stickers；批量 LIKE 扫描留作后续优化）。
+    $msgMap = [];
+    foreach (array_chunk($idList, 200) as $chunk) {
+        [$msgIn, $msgInArgs] = DB::in('id', $chunk);
+        foreach (DB::all("SELECT * FROM messages WHERE $msgIn", $msgInArgs) as $row) {
+            $msgMap[(int)$row['id']] = $row;
+        }
+    }
     foreach ($idList as $mid) {
-        $msg = DB::one('SELECT * FROM messages WHERE id=?', [$mid]);
+        $msg = $msgMap[$mid] ?? null;
         if (!$msg) continue;
         $type = $msg['type'];
         // v1.2.50：先算引用（要排除本条自己），再决定要不要删物理文件。

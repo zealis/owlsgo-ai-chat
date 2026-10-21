@@ -684,13 +684,15 @@ Plugin::route('plugin_email_verify_policy', function (array $ctx) {
     $allow = ['mail_code_ttl', 'mail_rate_limit', 'mail_mail_hourly', 'mail_ip_hourly', 'mail_browser_hourly',
               'mail_max_attempts', 'mail_email_min_len', 'mail_email_max_len', 'mail_allowed_domains',
               'mail_unique_check', 'mail_allow_change', 'mail_code_verify'];
-    $got = 0;
+    // v1.5.20：一次收集、一条多行 upsert 写完，别逐项 setSetting
+    $toSave = [];
     foreach ($allow as $k) {
         if (!array_key_exists($k, $ctx['post'])) continue;
-        DB::setSetting($k, mb_substr(trim((string)$ctx['post'][$k]), 0, 2000));
-        $got++;
+        $toSave[$k] = mb_substr(trim((string)$ctx['post'][$k]), 0, 2000);
     }
+    $got = count($toSave);
     if ($got === 0) Api::json(['ok' => false, 'msg' => '没有收到任何可保存的设置项']);
+    DB::setSettings($toSave);
     // 长度上下限写反了会让所有邮箱都过不了，直接拒
     $p = Mailer::policy();
     if ($p['email_min_len'] > $p['email_max_len']) {

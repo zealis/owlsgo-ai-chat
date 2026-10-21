@@ -127,8 +127,9 @@ class Admin
          * 处置写入回收站（room_review_trash），可撤销；delete 走独立逻辑（见 admin_room_del）。
          * @return array [bool, string]
          */
-        $roomReview = function (array $actor, int $id, string $act): array {
-            $room = DB::one('SELECT * FROM rooms WHERE id=?', [$id]);
+        // v1.5.20：$room 可由批量调用方预取传入，单条调用则照旧自查。
+        $roomReview = function (array $actor, int $id, string $act, ?array $room = null): array {
+            if ($room === null) $room = DB::one('SELECT * FROM rooms WHERE id=?', [$id]);
             if (!$room) return [false, '群聊不存在'];
             $trash = function (string $action, array $before) use ($id, $room): void {
                 DB::insert('room_review_trash', [
@@ -341,11 +342,21 @@ class Admin
                 $idsB = array_filter(array_map('intval', explode(',', (string)$p('ids', ''))));
                 if (!$idsB) Api::json(['ok' => false, 'msg' => '未选择群聊']);
                 $okB = 0; $failB = 0; $lastMsg = '';
+                // v1.5.20：批量前先把这批群聊一次查回，逐条处理时不再各查一次
+                $roomMap = [];
+                foreach (array_chunk($idsB, 200) as $chunk) {
+                    [$roomIn, $roomInArgs] = DB::in('id', $chunk);
+                    foreach (DB::all("SELECT * FROM rooms WHERE $roomIn", $roomInArgs) as $rr) {
+                        $roomMap[(int)$rr['id']] = $rr;
+                    }
+                }
                 foreach ($idsB as $idB) {
+                    $del = $roomMap[$idB] ?? null;
                     if ($actB === 'delete') {
                         // 批量删除：与 admin_room_del 同款（整行快照入回收站 + 默认房间保护）
-                        $del = DB::one('SELECT * FROM rooms WHERE id=? AND slug!=?', [$idB, 'public']);
-                        if (!$del) { $failB++; $lastMsg = '群聊不存在（默认房间不可删除）'; continue; }
+                        if (!$del || (string)($del['slug'] ?? '') === 'public') {
+                            $failB++; $lastMsg = '群聊不存在（默认房间不可删除）'; continue;
+                        }
                         DB::insert('room_review_trash', [
                             'room_id' => $idB, 'room_name' => $del['name'],
                             'action' => 'delete', 'before_data' => json_encode(['row' => $del], JSON_UNESCAPED_UNICODE),
@@ -359,7 +370,7 @@ class Admin
                         $okB++;
                         continue;
                     }
-                    [$rok, $rmsg] = $roomReview($actor, $idB, $actB);
+                    [$rok, $rmsg] = $roomReview($actor, $idB, $actB, $del);
                     if ($rok) { $okB++; } else { $failB++; $lastMsg = $rmsg; }
                 }
                 Api::json(['ok' => $okB > 0,
@@ -519,10 +530,12 @@ class Admin
                     array_map('intval', explode(',', (string)$p('ids', '')))
                 )));
                 if (!$idsLB) Api::json(['ok' => false, 'msg' => '未选择日志']);
+                // v1.5.20：原来逐条 DELETE（选中几百条就是几百条 SQL），改成分块 IN。
                 $okLB = 0;
-                foreach ($idsLB as $idLB) {
-                    // DB::run 返回 PDOStatement，行数要取 rowCount()（与对象比大小无意义）
-                    if (DB::run('DELETE FROM security_logs WHERE id=?', [$idLB])->rowCount() > 0) $okLB++;
+                foreach (array_chunk($idsLB, 200) as $chunk) {
+                    [$inSql, $inArgs] = DB::in('id', $chunk);
+                    // rowCount() 是 PDOStatement 的受影响行数（与对象比大小无意义）
+                    $okLB += DB::run("DELETE FROM security_logs WHERE $inSql", $inArgs)->rowCount();
                 }
                 // 删除动作本身留痕：谁在什么时候清了哪些日志
                 Sec::log('admin_logs_batch_del', $actor['nickname'], ['ids' => $idsLB, 'ok' => $okLB]);
@@ -639,23 +652,24 @@ class Admin
                 // 它是**用户可见的名词**，会出现在前端拼接的 HTML 与插件后台表单里，
                 // 所以先删标签与空白/控制字符再限长（8 字），不接受换行、引号内换行之类的东西。
                 // 空串 = 恢复默认「积分」：不把默认值写进库，日后改默认文案不必写迁移。
+                $toSave = [];
                 if (isset($_POST['points_name'])) {
                     $pn = preg_replace('/[\s\x00-\x1F\x7F]+/u', '', strip_tags((string)$p('points_name')));
                     $pn = is_string($pn) ? $pn : '';
                     if (mb_strlen($pn, 'UTF-8') > 8) {
                         Api::json(['ok' => false, 'msg' => '积分名称最多 8 个字']);
                     }
-                    DB::setSetting('points_name', $pn);
+                    $toSave['points_name'] = $pn;
                 }
+                // v1.5.20：一次收集所有待存项，最后一条多行 upsert 写完，别在 foreach 里逐项写库。
                 foreach ($allow as $k) {
                     if (!isset($_POST[$k])) continue;
                     if ($k === 'points_name') continue;   // 上面已单独处理
-                    if (in_array($k, $intKeys, true)) {
-                        DB::setSetting($k, (string)max(0, (int)$p($k)));
-                    } else {
-                        DB::setSetting($k, $p($k));
-                    }
+                    $toSave[$k] = in_array($k, $intKeys, true)
+                        ? (string)max(0, (int)$p($k))
+                        : $p($k);
                 }
+                if ($toSave) DB::setSettings($toSave);
                 Sec::log('admin_settings', $actor['nickname']);
                 Api::json(['ok' => true, 'msg' => '设置已保存']);
 

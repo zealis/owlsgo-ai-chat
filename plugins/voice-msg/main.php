@@ -498,14 +498,48 @@ Plugin::cron('gc', 3600, function (): string {
         'SELECT id, path FROM plugin_voice_msg WHERE msg_id = 0 AND created_at < ? LIMIT 300',
         [$now - 3600]
     );
-    foreach (array_merge($orphans, $stale) as $v) {
-        DB::run('DELETE FROM plugin_voice_msg WHERE id=?', [(int)$v['id']]);
-        $rows++;
-        // 文件可能被别的消息共用（同一段录音发给两个人）：没别人用了才真删
-        if (owVMRefCount((string)$v['path']) <= 0) {
-            $abs = Upload::fileAbs((string)$v['path']);
-            if ($abs && @unlink($abs)) $files++;
+    $all = array_merge($orphans, $stale);
+    if (!$all) return '';
+    // v1.5.20：批量删行；文件引用改为一次扫回再判定，不再逐行 COUNT + DELETE
+    $delIds = [];
+    $paths = [];
+    foreach ($all as $v) {
+        $delIds[] = (int)$v['id'];
+        $p = (string)($v['path'] ?? '');
+        if ($p !== '') $paths[$p] = true;
+    }
+    foreach (array_chunk($delIds, 200) as $chunk) {
+        [$inSql, $inArgs] = DB::in('id', $chunk);
+        DB::run("DELETE FROM plugin_voice_msg WHERE $inSql", $inArgs);
+    }
+    $rows = count($delIds);
+
+    // 文件可能被别的消息共用（同一段录音发给两个人）：没别人用了才真删
+    $stems = []; $stemOf = []; $keep = [];
+    foreach (array_keys($paths) as $rel) {
+        $base = basename(str_replace('\\', '/', $rel));
+        $s = (string)preg_replace('/\.[A-Za-z0-9]{1,8}$/', '', $base);
+        if ($s !== '' && preg_match('/^[A-Za-z0-9_\-]{6,80}$/', $s)) {
+            $stemOf[$rel] = $s; $stems[$s] = 1;
+        } else {
+            $keep[$rel] = true;   // 形状不对 → 保守当作有人用（与旧逻辑一致）
         }
+    }
+    $alive = [];
+    if ($stems) {
+        foreach (array_chunk(array_keys($stems), 50) as $chunk) {
+            $ors = []; $binds = [];
+            foreach ($chunk as $s) { $ors[] = 'content LIKE ?'; $binds[] = '%/' . $s . '.%'; }
+            foreach (DB::all("SELECT content FROM messages WHERE type='file' AND (" . implode(' OR ', $ors) . ')', $binds) as $r) {
+                $c = (string)$r['content'];
+                foreach ($chunk as $s) { if (strpos($c, '/' . $s . '.') !== false) $alive[$s] = 1; }
+            }
+        }
+    }
+    foreach (array_keys($paths) as $rel) {
+        if (isset($keep[$rel]) || isset($alive[$stemOf[$rel] ?? ''])) continue;
+        $abs = Upload::fileAbs($rel);
+        if ($abs && @unlink($abs)) $files++;
     }
     return '清理语音记录 ' . $rows . ' 条' . ($files > 0 ? '，删除文件 ' . $files . ' 个' : '');
 }, '清理超时未发送的语音、消息已删除的孤儿记录及无人引用的音频文件（每小时一次）');

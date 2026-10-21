@@ -882,12 +882,22 @@ function owCRAiTick(): string
     $rows = DB::all("SELECT * FROM plugin_content_report_ai WHERE status='pending' ORDER BY id ASC LIMIT $limit");
     if (!$rows) return '';
 
+    // v1.5.20：一次取回本批待审消息，别在 foreach 里逐条查（AI 调用才是大头，但查询也没必要 N+1）
+    $msgIds = array_values(array_unique(array_map(fn($q) => (int)$q['msg_id'], $rows)));
+    [$msgIn, $msgInArgs] = DB::in('id', $msgIds);
+    $msgMap = [];
+    foreach (DB::all("SELECT * FROM messages WHERE $msgIn", $msgInArgs) as $mr) {
+        $msgMap[(int)$mr['id']] = $mr;
+    }
+
     $okN = 0; $hitN = 0; $failN = 0; $skipN = 0; $autoN = 0;
+    // N+1 例外：每个待审条目都要调一次外部 AI 接口，DB 这一侧已把消息一次预取；
+    // 单条更新/上下文查询无法合并（每条的外部调用结果各自独立）。
     foreach ($rows as $q) {
         $now = time();
         $qid = (int)$q['id'];
         $msgId = (int)$q['msg_id'];
-        $msg = DB::one('SELECT * FROM messages WHERE id=?', [$msgId]);
+        $msg = $msgMap[$msgId] ?? null;
         // 消息已被撤回（物理删行）或软删除（内容已清空）：没有可审的内容，停在这里交人工
         if (!$msg || (int)($msg['deleted'] ?? 0) === 1 || (int)($msg['recalled'] ?? 0) === 1) {
             DB::run("UPDATE plugin_content_report_ai SET status='failed', attempts=attempts+1,"
