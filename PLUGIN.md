@@ -355,7 +355,7 @@ OwChat.registerAvatarUploader(function (file, filename, onOk) {
 | `page.head`           | 各页面 `<head>` 输出时（`pageHead()` 内） | 无参，可直接 echo                                                          |
 | `page.footer`         | 聊天页 / 后台页 body 输出末尾              | 无参，可直接 echo                                                          |
 | `cron.minute`         | 统一计划任务（每分钟至多一次）                  | 无参                                                                   |
-| `avatar.url` | 计算某用户的头像地址时（`Auth::avatarUrlFor`） | `[&$url, $ctx]` —— `$ctx` 含 `style` / `seed` / `source`；改写 `$url` 即可换掉头像源（含 DiceBear / 内置 identicon） |
+| `avatar.url` | 计算某用户的头像地址时（`Auth::avatarUrlFor`；v1.5.17 起上传头像的 `Auth::avatarFileUrl` 同样触发，`$ctx['source']` 为 `upload`） | `[&$url, $ctx]` —— `$ctx` 含 `style` / `seed` / `source`；改写 `$url` 即可换掉头像源（含 DiceBear / 内置 identicon）。云存储插件用它把上传头像的本地 `uploads/` 路径映射到对象存储地址（库里的路径不动，停用插件即整体回落） |
 | `nickname.before_save` | 昵称校验（注册 / 改资料 / 安装向导，`Auth::checkNickname` 内） | `[&$nick, &$err, $ctx]` —— 可改写 `$nick`，或把 `$err` 设为非空字符串拦截（即用户看到的文案）；`$ctx['scene']` 为 `register` / `profile` / `install`。参考实现：`plugins/nickname-guard/` |
 | `login.after_verify` | 登录验证完成（`Auth::login` 内，密码校验通过且会话已建立） | `[$user, $method, $ctx]` —— 通知型，`$method` 为本通过验证的方式（核心仅 `password`；插件实现两步验证时可自行触发本钩子并传 `totp` / `recovery`）；`$ctx` 含 `ip`。**仅在成功登录时触发，验证失败不触发** |
 | `login.failed` | 登录失败（`Auth::login` 内，**每次失败都触发**，v1.1.12 起） | `[$info]` —— 键：`identity`（用户提交的登录标识，原样）、`reason`（`fail` 密码或账号错 / `locked` 临时锁定 / `disabled` 账号被禁用）、`msg`（用户看到的文案）、`left`（剩余尝试次数，`-1` 表示不适用）、`user`（命中的 `users` 行）、`ip`。⚠️ **密码错误时 `user` 为 `null`**（确认「账号存在」本身就是信息，核心不给出以防账号枚举侧信道），回调内**必须判空**。与 `login.after_verify` 严格成对：一个只在成功时触发、一个只在失败时触发，插件不必自己判断方向 |
@@ -365,9 +365,12 @@ OwChat.registerAvatarUploader(function (file, filename, onOk) {
 | `embed.sess_user` | 解析「无 cookie 场景下的用户身份」时（`index.php` 身份解析块，请求带 `embed_sess` 且仍是访客时，v1.3.104） | `[&$user, $sess]` —— `$sess` 是 32 位小写 hex 的会话令牌明文；把对应的 `users` 行**整行**回填到 `$user` 即以该用户身份处理本次请求，核心负责 `status=1` 兜底复核。无人响应 / 校验不过就静默回落到访客身份（功能不坏，只是没登录态）。⚠️ 纯备用凭证通道，**权力等同该用户本人**（发消息、私信、收藏…），因此：① 只在「同请求已带合法 `embed_token`、且该令牌绑定了房间」的场景可用；② 必须校验令牌自己没过期/没吊销，且**签发它的那枚嵌入令牌仍有效**（父级吊销要能连坐）；③ 只存 sha256、可吊销、有效期别太长；④ 绝不回填 `password` 之外的敏感字段给前端——`$user` 只在服务端内部使用，但插件里别顺手塞进任何 echo 输出 |
 | `upload.guard` | 上传闸门（`index.php` 的 `?action=upload`，**落盘之前**） | `[&$allow, &$reason, $kind, $actor]` —— `$allow` 置 false 拦截，`$reason` 即用户看到的文案；`$kind` 为 `avatar` / `sticker` 等（等级信任插件按等级限制头像与贴纸） |
 | `upload.image` | 头像/贴纸/图片消息落盘前（`Upload::handle` 内，`checkImage` 之前） | `[&$f, $kind]` —— `$f` 是 `$_FILES['file']` 的拷贝，按引用改写即可替换落盘内容（附件上传插件在此做 WebP 压缩，按 `$kind` 细分开关）。⚠️ 替换 `tmp_name` 时产物是自建临时文件，核心落盘已按 `is_uploaded_file()` 分流 move/copy（v1.3.29） |
+| `upload.stored` | 落盘后（v1.5.17）：`Upload::handle`（头像/贴纸/图片消息）与 `Upload::storeFile`（文件附件、语音消息）各触发一次 | `[&$out, $kind, $rel, $abs]` —— `$out` 是调用方即将返回的第二元素（`handle` 里是返回前端的 **URL**，`storeFile` 里是存进消息 content 的**相对路径**），按引用改写；`$rel`/`$abs` 是本地落点（相对 `uploads/` 与绝对路径）。云存储插件在此把 `$abs` 搬去对象存储并改写 `$out`（URL 或自有云端标识）；本地文件删不删由插件决定，核心不代劳。**只在落盘成功时触发**；无人应答时与此前完全一致 |
+| `media.allow` | 媒体地址校验失败时的放行口（v1.5.17）：`Chat::normalizeRich`（图文混排的 `mediaRel` 失败）与 `Chat::send` 文件分支（`fileAbs` 失败） | `[&$allow, &$ref, $kind, $actor, $roomId]` —— 插件担保的云端地址/标识放行（`$allow` 置 `'1'`）；`$ref` 按引用可就地改写成渲染可达的完整地址（normalizeRich 里改写的值直接入库）。核心只认「自己空间里的 key」，外链仍进不来；无人应答时维持「仅限本站 uploads/ 下真实文件」 |
+| `file.download` | 下载消息附件时（`index.php` 的 `file_download`，**权限校验之后、读本地盘之前**，v1.5.17） | `[&$handled, $path, $msg, $actor]` —— 插件认出 `$path` 是自家云端标识时自行输出（流式代理或 302 到对象存储）并置 `$handled=true`；核心随即照常发 `file.downloaded` 通知并退出。放在权限校验后：插件不能借它绕过群/私聊可见性。无人应答时维持本地 `readfile` |
 | `sticker.allow` | 收藏贴纸的地址放行（`Upload::addSticker` 内） | `[&$allow, $url, $actor]` —— `$allow` 置字符串 `'1'` 才放行**外站**图片地址（核心默认只认本站 `uploads/`）；表情包插件用它在收藏自己图源的外链时作保。放行后核心仍会校验地址形状 |
 | `sticker.quota` | 收藏贴纸数量校验前（`Upload::addSticker` 内） | `[&$limit, $actor]` —— `$limit` 初始 100，改小即收紧；`<=0` 表示未解锁直接拒（等级信任插件按 sticker_tiers 分档） |
-| `file.downloaded` | 下载消息附件后（`index.php`） | `[$下载者id, $消息id, $发送者id]` —— 通知型，等级插件据此计任务进度 |
+| `file.downloaded` | 下载消息附件后（`index.php`） | `[$下载者id, $消息id, $发送者id]` —— 通知型，等级插件据此计任务进度。v1.5.17 起插件经 `file.download` 接管的云端下载同样计数（下载真实发生了） |
 | `room.create.gate` | 建群闸门（名额 / 权限，`index.php`） | `[&$gate, $actor]` —— `$gate` 置非空字符串即拒绝（即用户看到的文案） |
 | `room.created` | 建群成功后（`index.php`） | `[$id, $actor, $charged]` —— `$charged` 为消耗的积分（0 = 免费），等级插件据此统计建群次数 |
 | `room.after_update` | 群资料 / 群设置更新后（`Chat::updateRoom`，后台改名、清空群头像） | `[$roomId, $sets, $actor]` —— `$sets` 为本次改动的字段 |

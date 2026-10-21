@@ -1,0 +1,213 @@
+/**
+ * 云存储插件 - 后台样式（v1.0.0）
+ * 复用主程序 ow- 前缀变量，深浅主题自动跟随；禁硬编码颜色。
+ * 选择器全部限定 .owcs- 前缀，避免影响其他后台页。
+ */
+
+/* ---------- 空间网格 ---------- */
+.owcs-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 10px;
+}
+
+/* ---------- 空间卡片 ---------- */
+.owcs-space {
+    border: 1px solid var(--ow-border);
+    border-radius: 8px;
+    padding: 12px;
+    background: var(--ow-bg-sub);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    transition: border-color .15s ease, box-shadow .15s ease;
+}
+.owcs-space:hover {
+    border-color: var(--ow-primary);
+}
+.owcs-space.is-active {
+    border-color: var(--ow-primary);
+    background: var(--ow-blue-light);
+    box-shadow: 0 0 0 1px var(--ow-primary);
+}
+.owcs-space-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+.owcs-space-name {
+    font-weight: 600;
+    color: var(--ow-text-title);
+    font-size: 14px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.owcs-space-type {
+    font-size: 11px;
+    color: var(--ow-text-sub);
+    margin-top: 2px;
+}
+.owcs-space-stats {
+    display: flex;
+    gap: 12px;
+    font-size: 12px;
+    color: var(--ow-text-sub);
+}
+.owcs-space-stats b {
+    color: var(--ow-text);
+    font-weight: 600;
+}
+.owcs-space-ops {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: auto;
+}
+.owcs-space-ops .ow-btn {
+    font-size: 12px;
+    padding: 4px 10px;
+}
+
+/* 生效中徽标 */
+.owcs-pill {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 99px;
+    font-size: 11px;
+    line-height: 18px;
+    background: var(--ow-primary);
+    color: var(--ow-on-accent);
+    flex: none;
+}
+
+/* ---------- 生效空间大卡片 ---------- */
+.owcs-hero {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 14px;
+}
+.owcs-hero-main {
+    flex: 1 1 260px;
+    min-width: 0;
+}
+.owcs-hero-name {
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--ow-text-title);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.owcs-hero-meta {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--ow-text-sub);
+    word-break: break-all;
+}
+.owcs-hero-stats {
+    display: flex;
+    gap: 18px;
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--ow-text-sub);
+}
+.owcs-hero-stats b {
+    display: block;
+    font-size: 16px;
+    color: var(--ow-text);
+    font-weight: 600;
+}
+
+/* ---------- 类型选择器 ---------- */
+.owcs-type-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 8px;
+    margin-bottom: 12px;
+}
+.owcs-type {
+    border: 1px solid var(--ow-border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    cursor: pointer;
+    background: var(--ow-bg-sub);
+    text-align: center;
+    transition: border-color .15s ease, background .15s ease;
+}
+.owcs-type:hover {
+    border-color: var(--ow-primary);
+}
+.owcs-type.is-on {
+    border-color: var(--ow-primary);
+    background: var(--ow-blue-light);
+}
+.owcs-type b {
+    display: block;
+    font-size: 13px;
+    color: var(--ow-text-title);
+}
+.owcs-type span {
+    font-size: 11px;
+    color: var(--ow-text-sub);
+}
+
+/* ---------- 表单网格 ---------- */
+.owcs-form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 10px 14px;
+}
+.owcs-form-grid .ow-form-item {
+    margin-bottom: 0;
+}
+.owcs-secret {
+    font-size: 11px;
+    color: var(--ow-text-sub);
+}
+
+/* ---------- 迁移进度条 ---------- */
+.owcs-progress {
+    height: 8px;
+    border-radius: 99px;
+    background: var(--ow-border);
+    overflow: hidden;
+}
+.owcs-progress-bar {
+    height: 100%;
+    width: 0;
+    border-radius: 99px;
+    background: var(--ow-primary);
+    transition: width .2s ease;
+}
+
+/* ---------- 空态 ---------- */
+.owcs-empty {
+    padding: 26px 10px;
+    text-align: center;
+    color: var(--ow-text-sub);
+    font-size: 13px;
+    grid-column: 1 / -1;
+}
+
+/* ---------- 移动端 ---------- */
+@media (max-width: 720px) {
+    .owcs-grid {
+        grid-template-columns: 1fr;
+    }
+    .owcs-type-grid {
+        grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+    }
+    .owcs-form-grid {
+        grid-template-columns: 1fr;
+    }
+    .owcs-hero-stats {
+        gap: 12px;
+    }
+    .owcs-space-ops .ow-btn {
+        flex: 1 1 auto;
+    }
+}
