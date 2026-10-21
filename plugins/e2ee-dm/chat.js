@@ -182,6 +182,10 @@
         return api('plugin_e2ee_dm_bundle', { peer_id: peerId }).then(function (r) {
             if (!r.ok) throw new Error(r.msg || '对方还没有启用端到端加密');
             bundle = r.bundle;
+            // 顺手补货：一次性预密钥是**本机**生成的，每开一次新会话烧一枚，
+            // 用户反复重试能把 20 枚烧穿，之后就永远开不了新会话。
+            // 余量低于 5 枚时静默补一批，用户侧无感。
+            if ((r.bundle.opkLeft | 0) <= 5) topUpOpks();
             return OWEE.genDhPair();
         }).then(function (e) {
             ek = e;
@@ -198,6 +202,28 @@
                 return saveSessions().then(function () { return s; });
             });
         });
+    }
+
+    /** 生成一批新的一次性预密钥并上传（序号从服务端告知的 opk_next 起） */
+    function topUpOpks() {
+        if (topUpOpks.busy) return;
+        topUpOpks.busy = true;
+        loadKeys().then(function () {
+            if (!keys) return null;
+            return api('plugin_e2ee_dm_state', {}).then(function (r) {
+                var start = (r && r.opk_next) || (keys.opkNext || 1);
+                return OWEE.genOneTimePrekeys(start, 20);
+            });
+        }).then(function (list) {
+            if (!list || !list.length) return null;
+            keys.opkNext = list[list.length - 1].id + 1;
+            return api('plugin_e2ee_dm_opk', { opks: list });
+        }).then(function (r) {
+            if (r && r.ok && r.added > 0) {
+                try { W.console.log('[加密私聊] 已补充 ' + r.added + ' 枚一次性预密钥'); } catch (e) {}
+            }
+        }).catch(function () { /* 补货失败不影响本次发送，下次再试 */ })
+            .then(function () { topUpOpks.busy = false; });
     }
 
     /** 收方：从信封里的握手字段本地重算 X3DH（对方发起的第一条消息才带这些字段） */
@@ -895,7 +921,7 @@
     W.OWED = {
         // 版本自检：浏览器控制台敲 OWED.v 应显示这个号。
         // 显示 undefined 就说明页面还在用旧的插件包（Ctrl+F5 硬刷新）。
-        v: '1.3.0',
+        v: '1.4.1',
         /**
          * 自检：控制台敲 OWED.diagnose() 回车。
          * 结果会**自动打印并复制到剪贴板**（Chrome 控制台的 copy() 辅助）——

@@ -69,3 +69,8 @@
     cursor: not-allowed;
     color: var(--ow-text-sub, #999);
 }
+
+/* 后台设备列表：空态与副标题（沿用各插件一致的克制样式） */
+.owed-empty { padding: 24px 0; text-align: center; color: var(--ow-text-sub, #999); font-size: 13px; }
+.owed-sub { font-size: 11px; color: var(--ow-text-sub, #999); }
+.ow-EDChk { vertical-align: middle; }

@@ -178,6 +178,11 @@ Plugin::route('plugin_e2ee_dm_state', function (array $ctx) {
         // 不一致就说明对方换过设备，必须丢掉旧会话重新取密钥包 ——
         // 否则会一直加密给一台已经不存在的设备，新设备收不到、旧设备读得到。
         'peer_dev' => $peerDev ? (string)$peerDev['dev_id'] : null,
+        // 本机预密钥的余量与下一个可用序号：客户端据此自动补货
+        // （一次性预密钥是**客户端**生成的密钥对，服务端造不出来，
+        //   用尽后不补就再也开不了新会话 —— 只能让用户重新登记）。
+        'opk_left' => $dev ? (int)DB::val('SELECT COUNT(*) FROM plugin_e2ee_opk WHERE dev_id=? AND used=0', [(string)$dev['dev_id']]) : 0,
+        'opk_next' => $dev ? ((int)DB::val('SELECT MAX(key_id) FROM plugin_e2ee_opk WHERE dev_id=?', [(string)$dev['dev_id']]) + 1) : 1,
     ]);
 });
 
@@ -289,6 +294,15 @@ Plugin::route('plugin_e2ee_dm_bundle', function (array $ctx) {
         $st = DB::run('UPDATE plugin_e2ee_opk SET used=1 WHERE id=? AND used=0', [(int)$row['id']]);
         if ($st->rowCount() === 1) $opk = ['id' => (int)$row['key_id'], 'pub' => (string)$row['pub']];
     }
+    // 用尽就明说，不要默默降级：没有一次性预密钥的 X3DH 会丢掉首次消息的前向保密，
+    // 而且用户完全看不出发生了什么（症状是"对方突然收不到消息"）。
+    if ($opk === null) {
+        Api::json([
+            'ok' => false,
+            'msg' => '对方的一次性预密钥已用完，请让对方重新点一次「端到端加密」补充',
+            'opk_exhausted' => true,
+        ]);
+    }
 
     Api::json(['ok' => true, 'bundle' => [
         'devId' => (string)$dev['dev_id'],
@@ -300,6 +314,48 @@ Plugin::route('plugin_e2ee_dm_bundle', function (array $ctx) {
         'opk' => $opk,
         'opkLeft' => (int)DB::val('SELECT COUNT(*) FROM plugin_e2ee_opk WHERE dev_id=? AND used=0', [(string)$dev['dev_id']]),
     ]]);
+});
+
+/**
+ * 补货：往本机设备追加一批一次性预密钥。
+ *
+ * 为什么必须有这个口子：一次性预密钥是**客户端**生成的密钥对（私钥只在本机），
+ * 服务端造不出来。每发起一次新会话消耗一枚，用户反复重试会把 20 枚烧穿，
+ * 之后永远开不了新会话。客户端在余量低时自动补，用户侧无感。
+ * POST: opks = [{id:序号, pub:公钥}]
+ */
+Plugin::route('plugin_e2ee_dm_opk', function (array $ctx) {
+    $actor = $ctx['actor'];
+    if (!owEDIsUser($actor)) Api::json(['ok' => false, 'msg' => '请先登录'], 403);
+    owEDSchema();
+    $me = (int)$actor['id'];
+    $dev = owEDDevice($me);
+    if (!$dev) Api::json(['ok' => false, 'msg' => '本设备还未登记']);
+    $opks = (array)($ctx['post']['opks'] ?? []);
+    if (!$opks) Api::json(['ok' => false, 'msg' => '没有要补充的预密钥']);
+    // 序号必须递增且不与现存冲突（表上有 dev_id+key_id 唯一索引）
+    $maxId = (int)DB::val('SELECT MAX(key_id) FROM plugin_e2ee_opk WHERE dev_id=?', [(string)$dev['dev_id']]);
+    $add = 0;
+    foreach ($opks as $o) {
+        if (!is_array($o)) continue;
+        $kid = (int)($o['id'] ?? 0);
+        $pub = (string)($o['pub'] ?? '');
+        if ($kid <= $maxId) continue;                       // 序号倒退：拒绝
+        if (!preg_match('/^[A-Za-z0-9_-]{80,96}$/', $pub)) continue;
+        try {
+            DB::insert('plugin_e2ee_opk', [
+                'dev_id' => (string)$dev['dev_id'], 'user_id' => $me, 'key_id' => $kid,
+                'pub' => $pub, 'used' => 0, 'created_at' => time(),
+            ]);
+            $add++;
+        } catch (Throwable $e) { /* 序号撞了唯一索引，跳过即可 */ }
+    }
+    Api::json([
+        'ok' => true,
+        'added' => $add,
+        'opk_left' => (int)DB::val('SELECT COUNT(*) FROM plugin_e2ee_opk WHERE dev_id=? AND used=0', [(string)$dev['dev_id']]),
+        'msg' => $add > 0 ? ('已补充 ' . $add . ' 枚一次性预密钥') : '无需补充',
+    ]);
 });
 
 /**
@@ -449,9 +505,6 @@ Plugin::adminPage('e2ee-dm', '加密私聊', function () {
     $convCnt = (int)DB::val('SELECT COUNT(*) FROM plugin_e2ee_conv WHERE enabled=1');
     $msgCnt = (int)DB::val('SELECT COUNT(*) FROM plugin_e2ee_msg');
 
-    $devs = DB::all('SELECT d.user_id, d.dev_id, d.dev_name, d.created_at, u.nickname
-                     FROM plugin_e2ee_devices d LEFT JOIN users u ON u.id=d.user_id
-                     ORDER BY d.id DESC LIMIT 30');
 
     echo '<h2>端到端加密私聊</h2>';
     $meta = @json_decode((string)@file_get_contents(__DIR__ . '/plugin.json'), true);
@@ -487,20 +540,23 @@ Plugin::adminPage('e2ee-dm', '加密私聊', function () {
         . '已开启加密的会话：<b>' . $convCnt . '</b> 个　|　'
         . '已加密消息：<b>' . $msgCnt . '</b> 条</p></div>';
 
-    echo '<div class="ow-card"><h3 style="margin-top:0">最近登记的设备</h3>';
-    if (!$devs) {
-        echo '<p style="font-size:13px;color:var(--ow-text-sub)">暂无</p>';
-    } else {
-        echo '<table class="ow-table"><thead><tr><th>用户</th><th>设备名</th><th>设备号</th><th>登记时间</th></tr></thead><tbody>';
-        foreach ($devs as $d) {
-            $nick = (string)($d['nickname'] ?? '') ?: ('用户' . (int)$d['user_id']);
-            echo '<tr><td>' . htmlspecialchars($nick, ENT_QUOTES, 'UTF-8') . '（' . (int)$d['user_id'] . '）</td>'
-                . '<td>' . htmlspecialchars((string)$d['dev_name'], ENT_QUOTES, 'UTF-8') . '</td>'
-                . '<td><code>' . htmlspecialchars(substr((string)$d['dev_id'], 0, 10), ENT_QUOTES, 'UTF-8') . '…</code></td>'
-                . '<td>' . date('Y-m-d H:i', (int)$d['created_at']) . '</td></tr>';
-        }
-        echo '</tbody></table>';
-    }
+    // v1.4.0：改成通用列表（搜索 + 多选批量 + 分页），与站点其它后台页同一套轮子。
+    // 列表本身由 admin.js 拉 plugin_e2ee_dm_dev_list 渲染，这里只留骨架。
+    echo '<div class="ow-card">';
+    echo '<div class="ow-list-head"><b class="ow-list-head-t">登记的设备</b>'
+        . '<div id="owEDPager"></div></div>';
+    echo '<div class="ow-form-row">'
+        . '<div class="ow-form-item" style="min-width:220px;flex:1 1 220px"><label>搜索</label>'
+        . '<input class="ow-input" id="owEDQ" type="text" autocomplete="off" placeholder="用户昵称 / 用户ID / 设备名 / 设备号"'
+        . ' onkeydown="if(event.key===\'Enter\')OwEDAdmin.load(1)"></div>'
+        . '<div class="ow-form-item" style="min-width:90px;flex:0 0 90px"><label>&nbsp;</label>'
+        . '<button class="ow-btn" type="button" id="owEDReset">重置</button></div>'
+        . '</div>';
+    echo '<table class="ow-table"><thead><tr><th style="width:32px"><input type="checkbox" id="owEDChkAll"'
+        . ' onchange="OwEDAdmin.toggleAll(this)"></th><th>ID</th><th>用户</th><th>设备名</th><th>设备号</th>'
+        . '<th>预密钥余量</th><th>登记时间</th></tr></thead>'
+        . '<tbody id="owEDTable"></tbody></table>';
+    echo '<div id="owEDBatch" style="margin-top:10px"></div>';
     echo '</div>';
 });
 
@@ -512,6 +568,80 @@ Plugin::route('plugin_e2ee_dm_setmode', function (array $ctx) {
     Api::json(['ok' => true, 'msg' => '已保存']);
 });
 Plugin::sensitive('plugin_e2ee_dm_setmode');
+
+/* ===================== 设备列表：搜索 + 分页 + 批量 ===================== */
+
+/**
+ * 设备列表页数据。与站点其它后台列表同构：page/size/q 三件套，服务端分页。
+ * q 命中：用户昵称 / 用户ID / 设备名 / 设备号（ LIKE 前后通配，纯文本模糊搜）。
+ */
+Plugin::route('plugin_e2ee_dm_dev_list', function (array $ctx) {
+    if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);
+    $page = max(1, (int)($ctx['post']['page'] ?? 1));
+    $size = (int)($ctx['post']['size'] ?? 20);
+    $size = $size < 5 ? 5 : ($size > 100 ? 100 : $size);
+    $q = trim((string)($ctx['post']['q'] ?? ''));
+
+    $where = '1=1';
+    $args = [];
+    if ($q !== '') {
+        // 用户昵称走 JOIN 字段，设备字段走 d.*：两种 LIKE 用一个占位符会互相污染，分开写
+        $where = "(u.nickname LIKE ? OR CAST(d.user_id AS CHAR) LIKE ? OR d.dev_id LIKE ? OR d.dev_name LIKE ?)";
+        $args = array_fill(0, 4, '%' . $q . '%');
+    }
+    $total = (int)DB::val("SELECT COUNT(*) FROM plugin_e2ee_devices d
+                           LEFT JOIN users u ON u.id=d.user_id WHERE $where", $args);
+    $rows = $total > 0 ? DB::all("SELECT d.id, d.user_id, d.dev_id, d.dev_name, d.created_at,
+                                         u.nickname
+                                  FROM plugin_e2ee_devices d
+                                  LEFT JOIN users u ON u.id=d.user_id
+                                  WHERE $where ORDER BY d.id DESC LIMIT ? OFFSET ?",
+            array_merge($args, [$size, ($page - 1) * $size])) : [];
+
+    // 每个用户的预密钥余量：决定「重登后能不能直接用」，批量操作时管理员要看一眼
+    $opkLeft = [];
+    if ($rows) {
+        $in = implode(',', array_fill(0, count($rows), '?'));
+        foreach (DB::all("SELECT user_id, COUNT(*) c FROM plugin_e2ee_opk
+                          WHERE used=0 AND user_id IN ($in) GROUP BY user_id", array_column($rows, 'user_id')) as $r) {
+            $opkLeft[(int)$r['user_id']] = (int)$r['c'];
+        }
+    }
+    foreach ($rows as &$r) {
+        $r['opk_left'] = $opkLeft[(int)$r['user_id']] ?? 0;
+    }
+    unset($r);
+    Api::json(['ok' => true, 'data' => ['list' => $rows, 'total' => $total, 'page' => $page, 'size' => $size]]);
+});
+
+/**
+ * 批量注销设备。
+ * 连带删除该用户的**未消耗**预密钥（用过的没有价值了，留着只是噪音）；
+ * 用过的预密钥保留 —— 它是对方重算 X3DH 的凭证，删掉会让历史密文彻底失去校验依据。
+ * 用户侧表现：该设备需要重新登记，重新点一次「端到端加密」即可，历史密文仍然解不开
+ * （密钥只存在原设备上，这正是这套方案的固有代价）。
+ */
+Plugin::route('plugin_e2ee_dm_dev_batch', function (array $ctx) {
+    if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);
+    $op = (string)($ctx['post']['op'] ?? '');
+    $ids = (array)($ctx['post']['ids'] ?? []);
+    $ids = array_values(array_unique(array_filter(array_map('intval', $ids))));
+    if (!$ids) Api::json(['ok' => false, 'msg' => '没有选择设备']);
+    if ($op !== 'delete') Api::json(['ok' => false, 'msg' => '未知操作']);
+
+    $in = implode(',', array_fill(0, count($ids), '?'));
+    $uids = array_map('intval', array_column(
+        DB::all("SELECT DISTINCT user_id FROM plugin_e2ee_devices WHERE id IN ($in)", $ids), 'user_id'));
+    DB::run("DELETE FROM plugin_e2ee_devices WHERE id IN ($in)", $ids);
+    if ($uids) {
+        $uin = implode(',', array_fill(0, count($uids), '?'));
+        DB::run("DELETE FROM plugin_e2ee_opk WHERE used=0 AND user_id IN ($uin)", $uids);
+    }
+    Sec::log('e2ee_dev_delete', (string)($ctx['actor']['nickname'] ?? ''), [
+        'count' => count($ids), 'users' => $uids]);
+    Api::json(['ok' => true, 'msg' => '已注销 ' . count($ids) . ' 台设备']);
+});
+Plugin::sensitive('plugin_e2ee_dm_dev_batch');
 
 /* ===================== 资源 ===================== */
 
