@@ -122,7 +122,7 @@ H=$(curl -sk -b .t-pc/u.txt "$B/")
 # v1.0.1 起横幅管理移入个人设置，rail 不再有「名片」入口（回归：防复活）
 if printf '%s' "$H" | grep -q 'data-tab="profilecard"'; then
   FAIL=$((FAIL+1)); echo "  [FAIL] 聊天页不应再有名片 rail 按钮（已移入设置）"; else PASS=$((PASS+1)); echo "  [PASS] 聊天页无名片 rail 按钮"; fi
-has "聊天页含名片样式 link（带 pv 版本键）" 'plugin=profile-card&file=style.css&v=1.5.17&pv=1.0.3' "$H"
+has "聊天页含名片样式 link（带 pv 版本键）" 'plugin=profile-card&file=style.css&v=1.5.17&pv=1.0.4' "$H"
 has "JS 合并包含名片插件代码（__owPcLoaded 哨兵）" '__owPcLoaded' "$(curl -sk -b .t-pc/u.txt "$B/?action=assets&type=js")"
 has "CSS 端点非空（两件套落地）" 'owpc-set-preview' "$(curl -sk "$B/?action=assets&type=css&plugin=profile-card&file=style.css")"
 

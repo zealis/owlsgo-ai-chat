@@ -29,7 +29,20 @@ spawnSync('D:/Program Files/phpstudy_pro/Extensions/php/php8.2.9nts/php.exe',
   ck('深色主题生效', await page.evaluate(() => document.documentElement.getAttribute('data-theme')), 'dark');
   await page.evaluate(() => OwChat.userCard(900002));
   await page.waitForSelector('#owModal.owpc-card', { timeout: 8000 });
-  await page.waitForTimeout(400);
+  // 等横幅背景图真正加载完再截图（background-image 是异步的，等 400ms 偶尔会截到空图）
+  await page.waitForFunction(() => {
+    const el = document.querySelector('#owModal .owpc-banner');
+    if (!el) return false;
+    const m = getComputedStyle(el).backgroundImage.match(/url\("?([^")]+)"?\)/);
+    if (!m) return true;                       // 无图也算就绪
+    return new Promise(res => {
+      const img = new Image();
+      img.onload = () => res(true);
+      img.onerror = () => res(true);
+      img.src = m[1];
+    });
+  }, { timeout: 8000 });
+  await page.waitForTimeout(200);
   const st = await page.evaluate(() => {
     const cs = s => getComputedStyle(document.querySelector(s));
     return {

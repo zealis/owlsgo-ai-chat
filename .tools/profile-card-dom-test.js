@@ -69,7 +69,7 @@ function ck(name, actual, expect) {
   ck('初始无横幅：移除按钮收起', await page.locator('#owpcSetRemoveBtn').isVisible(), false);
   ck('预览条存在（默认白）', await page.$eval('#owpcSetPreview', el => getComputedStyle(el).backgroundImage), 'none');
   ck('预览条高度 96px', await page.$eval('#owpcSetPreview', el => getComputedStyle(el).height), '96px');
-  ck('预览里有半露小头像', await page.$eval('.owpc-set-preview-av', el => getComputedStyle(el).bottom), '-22px');
+  ck('预览里有半露小头像', await page.$eval('.owpc-set-preview-av', el => getComputedStyle(el).bottom), '-18px');
   ck('上传 / 链接 / 移除三件套齐', await page.locator('#owpcSetUploadBtn,#owpcSetUrlBtn,#owpcSetRemoveBtn').count(), 3);
   await page.screenshot({ path: path.join(OUT, 'pc-1-settings-empty.png') });
 
@@ -99,34 +99,48 @@ function ck(name, actual, expect) {
   await page.waitForTimeout(400);
   ck('弹窗带上 owpc-card 类', (await page.getAttribute('#owModal', 'class')).includes('owpc-card'), true);
   ck('横幅节点注入', await page.locator('#owModal .owpc-banner').count(), 1);
+  const heroBox = await page.$eval('#owModal .owpc-hero', el => {
+    const cs = getComputedStyle(el);
+    const r = el.getBoundingClientRect();
+    return { h: Math.round(r.height), mt: cs.marginTop, ml: cs.marginLeft, radius: cs.borderTopLeftRadius };
+  });
   const bannerBox = await page.$eval('#owModal .owpc-banner', el => {
     const cs = getComputedStyle(el);
-    return { h: cs.height, mt: cs.marginTop, ml: cs.marginLeft, bg: cs.backgroundImage, bgc: cs.backgroundColor, radius: cs.borderTopLeftRadius };
+    return { h: cs.height, bg: cs.backgroundImage, bgc: cs.backgroundColor, radius: cs.borderTopLeftRadius };
   });
-  ck('横幅高度 132px', bannerBox.h, '132px');
-  ck('横幅向上出血 -24px（抵消弹窗内边距）', bannerBox.mt, '-24px');
-  ck('横幅左右出血 -24px', bannerBox.ml, '-24px');
+  ck('封面区铺到 meta 以上（≥180px）', heroBox.h >= 180, true);
+  ck('封面区满宽（不被关闭按钮的浮动挤窄）', await page.evaluate(() => {
+    const m = document.getElementById('owModal').getBoundingClientRect();
+    const h = document.querySelector('#owModal .owpc-hero').getBoundingClientRect();
+    return Math.round(h.width) === Math.round(m.width - 2);   // 扣掉左右各 1px 边框
+  }), true);
+  ck('封面区向上出血 -24px（抵消弹窗内边距）', heroBox.mt, '-24px');
+  ck('封面区左右出血 -24px', heroBox.ml, '-24px');
+  ck('封面区顶部圆角继承弹窗', heroBox.radius, '13px');
+  ck('横幅铺满整个封面区（等于 hero 高）', Math.round(parseFloat(bannerBox.h)), heroBox.h);
   ck('横幅背景图为上传的图', /url\(/.test(bannerBox.bg), true);
   ck('默认底色为白（--ow-surface）', bannerBox.bgc, 'rgb(255, 255, 255)');
   ck('横幅顶部圆角继承弹窗', bannerBox.radius, '13px');
   const headBox = await page.$eval('#owModal .ow-card-head', el => {
     const cs = getComputedStyle(el);
-    return { dir: cs.flexDirection, align: cs.alignItems };
+    return { dir: cs.flexDirection, align: cs.alignItems, gap: cs.rowGap, pos: cs.position, z: cs.zIndex };
   });
-  ck('头部改纵排', headBox.dir, 'column');
+  ck('头部纵排', headBox.dir, 'column');
   ck('头部左对齐', headBox.align, 'flex-start');
+  ck('头像↔昵称间距 14px（站方要求拉大）', headBox.gap, '14px');
+  ck('头部浮在图上（定位 + 抬层）', headBox.pos === 'relative' && Number(headBox.z) >= 1, true);
   const avBox = await page.$eval('#owModal .ow-card-head > .ow-set-avatar-btn', el => {
     const cs = getComputedStyle(el);
     return { mt: cs.marginTop, shadow: cs.boxShadow };
   });
-  ck('头像上移叠压横幅 -46px', avBox.mt, '-46px');
+  ck('头像在封面内（不再负数压边）', avBox.mt, '0px');
   ck('头像 4px 同色描边环', /4px/.test(avBox.shadow), true);
   ck('原标题被收起', await page.$eval('#owModal > h3', el => getComputedStyle(el).display), 'none');
   ck('关闭按钮有衬底（压横幅可见）', await page.$eval('#owModal .ow-modal-close', el => getComputedStyle(el).borderRadius), '50%');
   ck('昵称行仍在', await page.locator('#owModal .ow-card-name').count(), 1);
   ck('弹窗加宽到 420px（面板体量）', await page.$eval('#owModal', el => getComputedStyle(el).maxWidth), '420px');
   ck('昵称 20px 标题级', await page.$eval('#owModal .ow-card-name', el => getComputedStyle(el).fontSize), '20px');
-  ck('头像放大到 84px', await page.$eval('#owModal .ow-card-head > .ow-set-avatar-btn .ow-avatar', el => getComputedStyle(el).width), '84px');
+  ck('头像收小到 64px（站方：再小一点）', await page.$eval('#owModal .ow-card-head > .ow-set-avatar-btn .ow-avatar', el => getComputedStyle(el).width), '64px');
   ck('信息行变数据胶囊', await page.$eval('#owModal .ow-card-meta-row', el => getComputedStyle(el).borderRadius), '8px');
   ck('顶部无彩色边框（站方取消）', await page.$eval('#owModal .owpc-banner', el => getComputedStyle(el).borderTopWidth), '0px');
   ck('横幅底部渐隐遮罩生效', /linear-gradient/.test(await page.$eval('#owModal .owpc-banner', el => getComputedStyle(el).webkitMaskImage)), true);
@@ -142,7 +156,7 @@ function ck(name, actual, expect) {
   ck('他人横幅按各自设置显示（banner-b）', /banner-b\.png/.test(otherBg), true);
   ck('他人头像走裸 .ow-avatar 路径', await page.locator('#owModal .ow-card-head > .ow-avatar').count(), 1);
   const avBox2 = await page.$eval('#owModal .ow-card-head > .ow-avatar', el => getComputedStyle(el).marginTop);
-  ck('他人头像同样叠压 -46px', avBox2, '-46px');
+  ck('他人头像同样浮在封面内（无负边距）', avBox2, '0px');
   await page.screenshot({ path: path.join(OUT, 'pc-4-card-other.png') });
 
   /* ---------- 4. 设置里移除 → 默认白 ---------- */
@@ -198,8 +212,8 @@ function ck(name, actual, expect) {
   await page.evaluate(() => OwChat.userCard(900002));
   await page.waitForSelector('#owModal.owpc-card', { timeout: 8000 });
   await page.waitForTimeout(400);
-  ck('窄屏横幅 104px', await page.$eval('#owModal .owpc-banner', el => getComputedStyle(el).height), '104px');
-  ck('窄屏头像叠压 -38px', await page.$eval('#owModal .ow-card-head > .ow-set-avatar-btn', el => getComputedStyle(el).marginTop), '-38px');
+  ck('窄屏封面区 164px', Math.round(await page.$eval('#owModal .owpc-hero', el => el.getBoundingClientRect().height)), 164);
+  ck('窄屏头像 56px', await page.$eval('#owModal .ow-card-head > .ow-set-avatar-btn .ow-avatar', el => getComputedStyle(el).width), '56px');
   await page.screenshot({ path: path.join(OUT, 'pc-6-card-mobile.png') });
   await page.evaluate(() => OwChat.closeModal());
   // 设置弹窗窄屏：区块可见、资料面板无横向溢出

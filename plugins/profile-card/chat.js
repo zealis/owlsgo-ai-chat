@@ -1,5 +1,5 @@
 /* ==========================================================================
- * 用户名片插件前端（profile-card）v1.0.3 —— 纯原生 ES5，无外部依赖
+ * 用户名片插件前端（profile-card）v1.0.4 —— 纯原生 ES5，无外部依赖
  *
  * 功能：
  *   1. 资料卡头部「名片」化：顶部横幅背景图（默认白色）+ 头像叠压。
@@ -37,10 +37,11 @@
     /**
      * 核心渲染完资料卡后调用。做两件事：
      *   ① 给弹窗加 .owpc-card 类（样式作用域；同时把原标题「用户资料」收起来）
-     *   ② 在 .ow-card-head 之前插入 .owpc-banner 节点
-     * 无自定义横幅时**照样插节点**（默认白色）：所有卡片统一享受
-     * 「横幅区 + 头像叠压 + 头部纵排」的名片布局，有图才显示背景图。
-     * 布局全部交给 CSS（style.css），JS 只插一个节点、不加一行内联布局样式。
+     *   ② 把横幅与头部（头像/昵称/ID）包进 .owpc-hero —— 背景图铺满
+     *      「.ow-card-meta 以上」的整个封面区，头像与昵称浮在图上
+     * 无自定义横幅时**照样建 hero**（默认白色）：所有卡片统一享受
+     * 「封面区 + 悬浮身份」的主页布局，有图才显示背景图。
+     * 布局全部交给 CSS（style.css），JS 只重组节点、不加一行内联布局样式。
      */
     function decorateCard(modal, u) {
         if (!modal) return;
@@ -51,7 +52,11 @@
         var b = d.createElement('div');
         b.className = 'owpc-banner';
         if (banner) b.style.backgroundImage = 'url("' + banner + '")';
-        head.parentNode.insertBefore(b, head);
+        var hero = d.createElement('div');
+        hero.className = 'owpc-hero';
+        hero.appendChild(b);
+        head.parentNode.insertBefore(hero, head);
+        hero.appendChild(head);          // 头部移入封面区，浮在背景图上
     }
 
     if (typeof OwChat.onCardRendered === 'function') {
@@ -111,7 +116,12 @@
                     var f = this.files[0];
                     this.value = '';                      // 清掉，允许再次选同一个文件
                     if (f.size > 8 * 1024 * 1024) { toast('图片不能超过 8MB'); return; }
+                    // v1.5.18：上传在选完文件后才开始，手动锁住「上传图片」按钮
+                    var upBtn = $('owpcSetUploadBtn');
+                    var release = (upBtn && w.OwBusy) ? OwBusy.lock(upBtn, 60000) : null;
+                    var finish = function () { if (release) { release(); release = null; } };
                     OwApi.upload('plugin_profile_card_upload', f, function (r) {
+                        finish();
                         if (!r.ok) { toast(r.msg || '上传失败'); return; }
                         self.stage(r.url);
                         var inp = $('owpcSetUrl');       // 上传即采用，链接框清掉避免「两个值」误解

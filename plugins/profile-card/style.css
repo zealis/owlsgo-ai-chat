@@ -33,28 +33,43 @@
     max-width: 420px;
     border: 1px solid var(--ow-border);
     border-radius: 14px;
+    position: relative;                 /* 关闭按钮改为绝对定位的锚点 */
 }
 
 /* 原标题「用户资料」收起来：主页的标题就是横幅本身 */
 .ow-modal.owpc-card > h3 { display: none; }
 
-/* 横幅：向弹窗四边出血（抵消 24px 内边距），顶部两角继承圆角。
-   默认底色 = --ow-surface（浅色即白，深色随卡面）；有图时 cover 居中。 */
-.ow-modal.owpc-card .owpc-banner {
+/* 封面区（v1.0.4）：背景图铺满「.ow-card-meta 以上」的整个空间，
+   头像与昵称作为内容**浮在图上**（不是压在横幅下沿的流式布局）。
+   结构由 JS 重组：.owpc-hero > .owpc-banner + .ow-card-head。
+   高度用 min-height 撑底、内容 flex-end 贴底 —— 昵称换行/身份标签多时
+   hero 自然长高，背景图跟着铺满（banner 是 absolute inset:0）。 */
+.ow-modal.owpc-card .owpc-hero {
     position: relative;
-    height: 132px;
     margin: -24px -24px 0;
+    padding: 24px 24px 18px;
+    min-height: 180px;
+    display: flex;
+    display: -webkit-flex;
+    align-items: flex-end;
+    -webkit-align-items: flex-end;
+    border-radius: 13px 13px 0 0;
+}
+
+/* 横幅：绝对定位铺满整个封面区。默认底色 = --ow-surface（浅色即白，深色随卡面）；
+   有图时 cover 居中。底部渐隐让图与下方信息区无缝衔接。 */
+.ow-modal.owpc-card .owpc-banner {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
     background-color: var(--ow-surface);
     background-position: center center;
     background-repeat: no-repeat;
     background-size: cover;
     border-radius: 13px 13px 0 0;
-    /* 顶部不再压主色光条（站方：取消资料卡上面的颜色边框）——
-       横幅顶端直接是图片/底色，避免「图上又贴一条色带」的割裂感。 */
-    /* 底部渐隐：图片与卡面交界不留硬边（无图时白→白，不可见）。
-       74% 起渐——再高头像就压在「已渐没」的区域上，叠压感会消失。 */
-    -webkit-mask-image: linear-gradient(180deg, #000 74%, transparent 100%);
-    mask-image: linear-gradient(180deg, #000 74%, transparent 100%);
+    /* 底部渐隐：66% 起渐 —— 头像（上方 1/3）完整落在图上，
+       昵称落在渐隐出的浅色区，深色文字在任何横幅图上都读得清。 */
+    -webkit-mask-image: linear-gradient(180deg, #000 66%, transparent 100%);
+    mask-image: linear-gradient(180deg, #000 66%, transparent 100%);
 }
 /* 网格底纹：细密方格，只做质感不抢内容（有图/无图都铺，opacity 极低） */
 .ow-modal.owpc-card .owpc-banner::before {
@@ -77,41 +92,47 @@
 }
 [data-theme="dark"] .ow-modal.owpc-card .owpc-banner::after { opacity: .22; }
 
-/* 头部纵排：头像独占一行压在横幅下沿，昵称/身份/ID 整体落到下方 */
+/* 头部：作为封面区的内容浮在图上（z-index 抬起），纵排、贴底。
+   gap 14px = 头像与昵称之间刻意留出的呼吸（v1.0.4 站方要求「间隔大一点」）。 */
 .ow-modal.owpc-card .ow-card-head {
+    position: relative;
+    z-index: 1;
+    width: 100%;
     -webkit-flex-direction: column;
     flex-direction: column;
     align-items: flex-start;
     -webkit-align-items: flex-start;
-    gap: 4px;
-    margin-bottom: 14px;
+    gap: 14px;
+    margin-bottom: 0;
 }
 .ow-modal.owpc-card .ow-card-id { width: 100%; }
 
-/* 头像：64 → 84px（主页主视觉），上移 46px 叠压横幅。
+/* 头像：64px（v1.0.4 从 84 收小一档），不再用负边距压横幅 —— 它就在封面区里。
    ⚠️ 用 box-shadow 而不是 border 做描边环：不改布局盒，不会把文字推走；
-   第二层是柔和投影，让头像从横幅图片里「浮」出来。 */
+   第二层是柔和投影，让头像从背景图上「浮」出来。 */
 .ow-modal.owpc-card .ow-card-head > .ow-avatar,
 .ow-modal.owpc-card .ow-card-head > .ow-set-avatar-btn {
-    margin-top: -46px;
     position: relative;
     z-index: 2;
     box-shadow: 0 0 0 4px var(--ow-bg), 0 14px 30px -14px rgba(0, 0, 0, .45);
 }
 .ow-modal.owpc-card .ow-card-head > .ow-avatar,
 .ow-modal.owpc-card .ow-card-head > .ow-set-avatar-btn .ow-avatar {
-    width: 84px;
-    height: 84px;
-    line-height: 84px;
-    font-size: 30px;
+    width: 64px;
+    height: 64px;
+    line-height: 64px;
+    font-size: 24px;
 }
 
-/* 昵称：主页主标题。字重 600、字号 20px（消息区昵称是 14px，这里是标题级） */
+/* 昵称：主页主标题。字重 600、字号 20px（消息区昵称是 14px，这里是标题级）。
+   文字浮在横向图片上，给一圈同色柔光做保底 —— 深色横幅图上也不会糊成一片；
+   光晕用 --ow-surface（卡面色），深浅主题各自贴合。 */
 .ow-modal.owpc-card .ow-card-name {
     font-size: 20px;
     font-weight: 600;
     letter-spacing: -.01em;
     color: var(--ow-text-title);
+    text-shadow: 0 0 6px var(--ow-surface), 0 0 2px var(--ow-surface);
 }
 /* 身份标签在昵称右侧，与标题同排时略微下移，别顶在天灵盖上 */
 .ow-modal.owpc-card .ow-card-name-row { align-items: center; -webkit-align-items: center; }
@@ -125,6 +146,7 @@
     letter-spacing: .12em;
     text-transform: uppercase;
     color: var(--ow-text-sub);
+    text-shadow: 0 0 5px var(--ow-surface), 0 0 2px var(--ow-surface);
 }
 
 /* 信息区：分隔线保留（数据段起点），行改成可换行的胶囊 */
@@ -179,9 +201,14 @@
 }
 .ow-modal.owpc-card .ow-modal-actions .ow-btn-primary { box-shadow: 0 10px 22px -12px rgba(0, 0, 0, .5); }
 
-/* 关闭按钮：浮在横幅右上角，白圆 + 投影（压在任何图上都可见） */
+/* 关闭按钮：绝对定位浮在封面右上角（白圆 + 投影，压在任何图上都可见）。
+   ⚠️ 必须 absolute 而不是核心默认的 float:right —— 封面区是 flex 容器（BFC），
+   BFC 会避让浮动元素，实测被 ✕ 挤掉右侧 30px，横幅铺不满（v1.0.4 的坑）。 */
 .ow-modal.owpc-card .ow-modal-close {
-    position: relative;
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    float: none;
     z-index: 3;
     width: 28px;
     height: 28px;
@@ -192,17 +219,16 @@
     box-shadow: 0 1px 6px rgba(0, 0, 0, .2);
 }
 
-/* 窄屏：横幅/头像/叠压等比收一档，其余保持不变 */
+/* 窄屏：封面区与头像等比收一档，间距略缩但仍有呼吸 */
 @media (max-width: 720px) {
-    .ow-modal.owpc-card .owpc-banner { height: 104px; }
-    .ow-modal.owpc-card .ow-card-head > .ow-avatar,
-    .ow-modal.owpc-card .ow-card-head > .ow-set-avatar-btn { margin-top: -38px; }
+    .ow-modal.owpc-card .owpc-hero { min-height: 164px; padding: 24px 24px 16px; }
+    .ow-modal.owpc-card .ow-card-head { gap: 12px; }
     .ow-modal.owpc-card .ow-card-head > .ow-avatar,
     .ow-modal.owpc-card .ow-card-head > .ow-set-avatar-btn .ow-avatar {
-        width: 72px;
-        height: 72px;
-        line-height: 72px;
-        font-size: 26px;
+        width: 56px;
+        height: 56px;
+        line-height: 56px;
+        font-size: 21px;
     }
     .ow-modal.owpc-card .ow-card-name { font-size: 18px; }
 }
@@ -243,9 +269,9 @@
 .owpc-set-preview-av {
     position: absolute;
     left: 14px;
-    bottom: -22px;
-    width: 44px;
-    height: 44px;
+    bottom: -18px;
+    width: 36px;
+    height: 36px;
     line-height: 0;
     border-radius: 50%;
     overflow: hidden;
