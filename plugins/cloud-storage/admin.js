@@ -365,4 +365,4 @@
     }
     if (d.readyState === 'loading') d.addEventListener('DOMContentLoaded', watchInit);
     else watchInit();
-})(w, d);
+})(window, document);
