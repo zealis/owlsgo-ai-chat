@@ -24,7 +24,7 @@ DST_HOST="/d/Program Files/phpstudy_pro/WWW/owlsgo"
 #   .box-agent / .box-agent-scratch   代理任务状态与空壳暂存；ci-preview.html 视觉预览草稿
 # ⚠️ robocopy 对被 /XD /XF 命中的项**既不复制也不清除** —— 所以早先那次 /MIR 灌进副本的
 #    这四样不会靠本脚本自动消失，要手工删一次（本机已删；再次出现时按路径删即可）。
-robocopy "$SRC" "$DST" /MIR /XD data uploads .git .workbuddy .birdview .tools .box-agent .box-agent-scratch "参考文献" _test_www /XF .htaccess nginx.htaccess core/config.php ci-preview.html /NFL /NDL /NJH > /dev/null
+robocopy "$SRC" "$DST" /MIR /XD data uploads .git .workbuddy .birdview .tools .box-agent .box-agent-scratch .t-pc "参考文献" _test_www /XF .htaccess nginx.htaccess core/config.php ci-preview.html /NFL /NDL /NJH > /dev/null
 RC=$?
 if [ "$RC" -gt 7 ]; then echo "robocopy 失败 exit=$RC"; exit "$RC"; fi
 
@@ -34,7 +34,7 @@ cd "/d/project/owlsgo" || exit 1
 for f in $(git -c core.quotepath=false ls-files); do
   # 与上方 robocopy 的 /XD 保持一致：运行数据与内部资料不参与同步校验
   case "$f" in
-    data/*|uploads/*|.git/*|.workbuddy/*|.birdview/*|.tools/*|core/config.php) continue ;;
+    data/*|uploads/*|.git/*|.workbuddy/*|.birdview/*|.tools/*|.t-pc/*|core/config.php) continue ;;
   esac
   A=$(md5sum "$f" 2>/dev/null | cut -d' ' -f1)
   B=$(md5sum "$DST_HOST/$f" 2>/dev/null | cut -d' ' -f1)

@@ -859,6 +859,222 @@
             + '</svg>';
     }
 
+    /* ==========================================================================
+       OwBusy：按钮防重入（v1.5.18，通用轮子）
+       --------------------------------------------------------------------------
+       一次点击发两个请求的代价，登录页早就吃过（失败计数翻倍，点几下就被锁在门外），
+       所以 v1.3.131 在登录表单里写了 submitOnce。这个轮子把它推广到全站：
+
+         OwBusy.run(btn, function (done) { …请求…; done(); });
+         OwBusy.form(form, function (done) { …提交…; done(); });
+         OwBusy.lock(el)      // 手动上锁，返回释放函数（引用计数，可嵌套）
+         OwBusy.autoLock(action) // 供裸 XHR/WS 的插件把手动请求挂到「刚点的按钮」上
+
+       还有一层自动兜底：OwApi.post / secure / upload 会自动锁住**触发它的按钮**
+       （同一次点击任务里同步发起的请求，或锁内链式发起的后续请求），请求回来自动释放。
+       所以绝大多数按钮不用改代码就有防重入；只有不经过 OwApi 的异步按钮需要显式 run()。
+
+       几个刻意不自动锁的 action（见 AUTO_SKIP）：
+         · poll / dm_poll / heartbeat_status / ws_ticket / conv_read / conv_unread_at
+           —— 轮询和后台请求，锁住按钮只会把长轮询的几十秒算到用户头上；
+         · send —— 发送按设计是非阻塞的（300ms 合并 + 服务端幂等键），禁用它反而卡住连发；
+         · send_code —— 「发验证码」自己管禁用与 60s 倒计时，锁上去会在响应后把倒计时解开。
+
+       锁的行为：原生按钮置 disabled（保留锁前就禁用的按钮，绝不替别人解禁）；
+       非按钮（a / role=button / .ow-btn 等）加 .ow-busy，并在捕获阶段拦掉重复点击。
+       ========================================================================== */
+    var OwBusy = (function () {
+        var last = null;          // { el, seq, sync } —— 最近一次点击的按钮
+        var seq = 0;
+        var BTN_CLASS = /(^|\s)(ow-btn|ow-icon-btn|ow-rail-btn|ow-seg-btn|ow-optcard|ow-av-btn|ow-av-cell|ow-pagetab|ow-navset-item|ow-emoji-tab|ow-syslog-tab|ow-tab|ow-quick|ow-send)(\s|$)/;
+        // 这些接口不参与「点谁锁谁」的自动锁，原因见上方注释
+        var AUTO_SKIP = {
+            poll: 1, dm_poll: 1, heartbeat_status: 1, ws_ticket: 1,
+            conv_read: 1, conv_unread_at: 1, send: 1, send_code: 1
+        };
+
+        function hasClass(el, c) {
+            return (' ' + (typeof el.className === 'string' ? el.className : '') + ' ').indexOf(' ' + c + ' ') >= 0;
+        }
+        function addClass(el, c) {
+            if (!hasClass(el, c) && typeof el.className === 'string') {
+                el.className = (el.className + ' ' + c).replace(/^\s+|\s+$/g, '');
+            }
+        }
+        function delClass(el, c) {
+            if (typeof el.className !== 'string') return;
+            el.className = (' ' + el.className + ' ').replace(' ' + c + ' ', ' ').replace(/^\s+|\s+$/g, '');
+        }
+
+        function buttonish(n) {
+            if (!n || n.nodeType !== 1) return false;
+            if (n.tagName === 'BUTTON' || n.tagName === 'A') return true;
+            if (n.getAttribute && n.getAttribute('role') === 'button') return true;
+            return typeof n.className === 'string' && BTN_CLASS.test(n.className);
+        }
+
+        /** 从点击目标向上找「可锁的按钮」，最多 12 层，避免把整页容器当按钮锁住 */
+        function nearest(target) {
+            var n = target, depth = 0;
+            while (n && n.nodeType === 1 && depth++ < 12) {
+                if (buttonish(n)) return n;
+                n = n.parentNode;
+            }
+            return null;
+        }
+
+        /** 释放一次锁；reference count 归零才真正解禁 */
+        function makeRelease(el, rec) {
+            var used = false;
+            return function () {
+                if (used) return;
+                used = true;
+                rec.n--;
+                if (rec.n > 0) return;
+                if (rec.timer) { clearTimeout(rec.timer); rec.timer = 0; }
+                // 已被安全超时释放、或元素上换了一把新锁：本次是迟到回调，不能碰新锁
+                if (el.__owBusy !== rec) return;
+                try { delete el.__owBusy; } catch (e) { el.__owBusy = null; }
+                delClass(el, 'ow-busy');
+                if (el.removeAttribute) el.removeAttribute('aria-busy');
+                // 只恢复「我们锁之前本来就是启用」的按钮（倒计时按钮等不能被我们解开）
+                if (!rec.wasDisabled && 'disabled' in el) {
+                    try { el.disabled = false; } catch (e) {}
+                }
+                if (last && last.el === el) last = null;
+            };
+        }
+
+        function lock(el, timeout) {
+            if (!el || el.nodeType !== 1) return null;
+            if (el.__owBusy) {
+                el.__owBusy.n++;
+                return makeRelease(el, el.__owBusy);
+            }
+            var rec = { n: 1, wasDisabled: el.disabled === true, timer: 0 };
+            el.__owBusy = rec;
+            if ('disabled' in el) { try { el.disabled = true; } catch (e) {} }
+            addClass(el, 'ow-busy');
+            if (el.setAttribute) el.setAttribute('aria-busy', 'true');
+            // 安全阀：请求异常/回调丢失也不能把按钮永久焊死
+            rec.timer = setTimeout(function () {
+                if (el.__owBusy !== rec) return;
+                rec.timer = 0;
+                rec.n = 0;
+                makeRelease(el, rec)();
+            }, timeout || 30000);
+            return makeRelease(el, rec);
+        }
+
+        /** 自动锁：供 OwApi 使用。只在「本次点击任务内」或「该按钮正在锁内链式请求」时生效 */
+        function autoLock(action, timeout) {
+            if (!last || AUTO_SKIP[action]) return null;
+            var el = last.el;
+            if (!el || !el.parentNode) return null;   // 已被弹窗关闭等移除
+            if (!last.sync && !el.__owBusy) return null;
+            return lock(el, timeout || 30000);
+        }
+
+        /** 点击任务的收尾：同一任务内标记 sync；任务结束后按钮仍锁着就继续允许链式请求挂靠 */
+        function noteClick(el) {
+            // 点在空白/列表行上不覆盖上一个按钮：否则「A 的请求还没回、用户点了一下空白」
+            // 会让 A 的链式请求失去挂靠对象，中途解禁。
+            if (!el) return;
+            var s = ++seq;
+            last = { el: el, seq: s, sync: true };
+            setTimeout(function () {
+                if (!last || last.seq !== s) return;
+                last.sync = false;
+                if (!last.el.__owBusy) last = null;
+            }, 0);
+        }
+
+        // 捕获阶段做两件事：记录本次点击的按钮；拦住正在忙的元素上的重复点击
+        if (d.addEventListener) {
+            d.addEventListener('click', function (e) {
+                var t = e.target || e.srcElement, n = t;
+                while (n && n.nodeType === 1) {
+                    if (n.__owBusy) {
+                        if (e.preventDefault) e.preventDefault();
+                        if (e.stopPropagation) e.stopPropagation();
+                        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+                        return;
+                    }
+                    n = n.parentNode;
+                }
+                noteClick(nearest(t));
+            }, true);
+        }
+
+        return {
+            /** 手动上锁；返回的释放函数可重复调用，内部按引用计数（嵌套请求安全） */
+            lock: lock,
+            autoLock: autoLock,
+
+            /**
+             * 执行一次带锁的异步任务。
+             * @param {Element} el   要锁的按钮（可为 null，此时只执行任务）
+             * @param {Function} task task(done)：异步结束后必须调 done()
+             * @param {Object} [opts] { timeout: 毫秒，默认 30000 }
+             * @returns {boolean} false = 按钮正在忙，本次点击被忽略
+             */
+            run: function (el, task, opts) {
+                if (el && el.__owBusy) return false;
+                var release = lock(el, opts && opts.timeout), done = false;
+                var finish = function () {
+                    if (done) return;
+                    done = true;
+                    if (release) release();
+                };
+                try {
+                    var ret = task(finish);
+                    // 也支持 Promise：任务返回 thenable 时自动收尾
+                    if (ret && typeof ret.then === 'function') ret.then(finish, finish);
+                } catch (e) {
+                    finish();
+                    throw e;
+                }
+                return true;
+            },
+
+            /**
+             * 整张表单上锁：提交期间禁用所有按钮，同一表单只放行一次提交。
+             * 与 v1.3.131 的 OwAuth.submitOnce 行为一致（只解禁「锁前是启用」的按钮）。
+             * @param {HTMLFormElement} form
+             * @param {Function} task task(done)
+             * @param {Object} [opts] { timeout: 毫秒，默认 15000 }
+             * @returns {boolean} false = 上一次提交还没回来
+             */
+            form: function (form, task, opts) {
+                if (!form || form.__owBusy) return false;
+                form.__owBusy = true;
+                if (form.setAttribute) form.setAttribute('aria-busy', 'true');
+                var off = [], i, all = form.getElementsByTagName('button');
+                for (i = 0; i < all.length; i++) {
+                    if (!all[i].disabled) { all[i].disabled = true; off.push(all[i]); }
+                }
+                var done = false, timer = 0;
+                var release = function () {
+                    if (done) return;
+                    done = true;
+                    if (timer) { clearTimeout(timer); timer = 0; }
+                    if (!form.__owBusy) return;
+                    form.__owBusy = false;
+                    if (form.removeAttribute) form.removeAttribute('aria-busy');
+                    for (var j = 0; j < off.length; j++) off[j].disabled = false;
+                };
+                timer = setTimeout(release, (opts && opts.timeout) || 15000);
+                try {
+                    task(release);
+                } catch (e) {
+                    release();   // 任务同步抛错也要放开，不能等 15s 超时
+                    throw e;
+                }
+                return true;
+            }
+        };
+    })();
+
     var OwApi = {
         key: '',
         tsOffset: 0,   // 客户端时钟与服务器的偏差（秒），由页面下发的服务器时间校正
@@ -874,8 +1090,15 @@
         // 带文件的 multipart 上传：upload(action, file, cb) 或 upload(action, file, extraFields, cb)
         upload: function (action, file, extra, cb) {
             if (typeof extra === 'function') { cb = extra; extra = null; }
+            // v1.5.18：上传期间锁住触发按钮（不经过点击的调用没有可锁对象，自然跳过）。
+            // 大文件/慢网可能超过 30s，安全超时放宽到 120s。
+            var release = OwBusy.autoLock(action, 120000);
+            var done = function (r, status) {
+                try { if (cb) cb(r, status); }
+                finally { if (release) release(); }
+            };
             var s = this.sign(action), fd, x, k;
-            try { fd = new FormData(); } catch (e) { cb({ ok: false, msg: '当前浏览器不支持文件上传' }); return; }
+            try { fd = new FormData(); } catch (e) { done({ ok: false, msg: '当前浏览器不支持文件上传' }); return; }
             fd.append('ts', s.ts);
             fd.append('sign', s.sign);
             if (extra) { for (k in extra) if (extra.hasOwnProperty(k)) fd.append(k, extra[k]); }
@@ -888,10 +1111,10 @@
                 try { r = JSON.parse(x.responseText); } catch (e) {}
                 r = r || { ok: false, msg: '网络错误（' + x.status + '）' };
                 if (r.ok === false && r.msg && r.msg.indexOf('签名验证失败') >= 0) {
-                    OwApi.onSignExpired(function () { cb(r, x.status); });
+                    OwApi.onSignExpired(function () { done(r, x.status); });
                     return;
                 }
-                cb(r, x.status);
+                done(r, x.status);
             };
             x.send(fd);
             return x;
@@ -907,6 +1130,12 @@
             setTimeout(function () { location.reload(); }, 800);
         },
         post: function (action, data, cb) {
+            // v1.5.18：自动锁住「触发这次请求的按钮」，请求回来再释放（链式请求会继续挂靠）
+            var release = OwBusy.autoLock(action);
+            var done = function (r, status) {
+                try { if (cb) cb(r, status); }
+                finally { if (release) release(); }
+            };
             var s = this.sign(action), body = 'ts=' + s.ts + '&sign=' + s.sign, k;
             for (k in (data || {})) if (data.hasOwnProperty(k)) body += '&' + encodeURIComponent(k) + '=' + encodeURIComponent(data[k]);
             var x = new XMLHttpRequest();
@@ -918,10 +1147,10 @@
                 try { r = JSON.parse(x.responseText); } catch (e) {}
                 r = r || { ok: false, msg: '网络错误（' + x.status + '）' };
                 if (r.ok === false && r.msg && r.msg.indexOf('签名验证失败') >= 0) {
-                    OwApi.onSignExpired(function () { cb(r, x.status); });
+                    OwApi.onSignExpired(function () { done(r, x.status); });
                     return;
                 }
-                cb(r, x.status);
+                done(r, x.status);
             };
             x.send(body);
             return x;
@@ -933,12 +1162,21 @@
          * 防止签名窗口期内的请求重放与跨站劫持。用法与 post 相同：OwApi.secure(action, data, cb)
          */
         secure: function (action, data, cb) {
+            // 票据 + 业务是两次请求：从点击起就持有锁，直到业务请求回来才释放。
+            // 中途 ticket 的 post 也会自动锁（引用计数），不会提前解禁。
+            var hold = OwBusy.autoLock(action), settled = false;
+            var finish = function (r, status) {
+                if (settled) return;
+                settled = true;
+                try { if (cb) cb(r, status); }
+                finally { if (hold) hold(); }
+            };
             this.post('ticket', {}, function (t) {
-                if (!t.ok || !t.ticket) { cb({ ok: false, msg: t.msg || '安全校验组件不可用' }); return; }
+                if (!t.ok || !t.ticket) { finish({ ok: false, msg: t.msg || '安全校验组件不可用' }); return; }
                 var d = {}, k;
                 for (k in (data || {})) if (data.hasOwnProperty(k)) d[k] = data[k];
                 d.ticket = t.ticket;
-                OwApi.post(action, d, cb);
+                OwApi.post(action, d, finish);
             });
         },
     };
@@ -1368,19 +1606,9 @@
      * @returns {boolean} 是否真的开始提交（false = 上一个请求还没回来，这次直接忽略）
      */
     function submitOnce(form, run) {
-        if (!form || form.__owBusy) return false;
-        form.__owBusy = true;
-        var off = [], i, all = form.getElementsByTagName('button');
-        // 只记录「本次被我们禁用」的按钮：本来就禁用的（例如倒计时中的「发验证码」）不能由我们放开
-        for (i = 0; i < all.length; i++) if (!all[i].disabled) { all[i].disabled = true; off.push(all[i]); }
-        var done = function () {
-            if (!form.__owBusy) return;
-            form.__owBusy = false;
-            for (var j = 0; j < off.length; j++) off[j].disabled = false;
-        };
-        setTimeout(done, 15000);   // 请求没回来也不能把按钮永久焊死（OwApi 无超时回调）
-        run(done);
-        return true;
+        // 统一走 OwBusy.form（同一套引用计数与安全超时）；保留此函数是为了兼容
+        // 老插件调用的 OwAuth.submitOnce（twofa 等），行为与 v1.3.131 完全一致。
+        return OwBusy.form(form, run, { timeout: 15000 });
     }
 
     var OwAuth = {
@@ -6688,7 +6916,7 @@
                     + '</div>'
                     + '<div class="ow-modal-actions">'
                     + '<button class="ow-btn ow-btn-ghost" onclick="OwChat.avatarCropCancel()">取消</button>'
-                    + '<button class="ow-btn ow-btn-primary" onclick="OwChat.avatarCropSave()">确定</button></div>'
+                    + '<button class="ow-btn ow-btn-primary" onclick="OwChat.avatarCropSave(this)">确定</button></div>'
                 );
                 var canvas = $('owCropCanvas'), zoom = $('owCropZoom'), val = $('owCropVal');
                 var ctx = canvas.getContext('2d');
@@ -7153,7 +7381,11 @@
         },
 
         /** 按当前缩放导出正方形头像并上传（上传后仍需点「保存」写入资料） */
-        avatarCropSave: function () {
+        avatarCropSave: function (btn) {
+            // v1.5.18：toBlob 是异步的，OwApi 的自动锁拿不到这次点击；按钮在这里同步禁用。
+            // 弹窗无论成功失败都会关闭，所以不需要再解禁。
+            if (btn && btn.__owBusy) return;
+            if (btn) OwBusy.lock(btn, 15000);
             var self = this, canvas = $('owCropCanvas');
             if (!canvas) { toast('裁剪弹窗已关闭'); return; }
             var done = function (blob) {
@@ -9078,6 +9310,8 @@
     w.OwChat = OwChat;
     w.OwAdmin = OwAdmin;
     w.OwApi = OwApi;   // 暴露给插件脚本（如用户管理插件 OwUM）使用
+    // v1.5.18：按钮防重入通用轮子（OwApi 已自动接入；插件里不经过 OwApi 的异步按钮用 run/form）
+    w.OwBusy = OwBusy;
     // 通用助手同样暴露：插件脚本与主程序共用渲染与提示
     w.esc = esc; w.toast = toast; w.fmtUid = fmtUid; w.opts = opts; w.ROLE_CN = ROLE_CN;
     // owTr 也暴露：插件把文案写进**已存在**的节点时，i18n 的 MutationObserver 只看新增元素，

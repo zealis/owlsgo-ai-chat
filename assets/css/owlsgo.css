@@ -546,6 +546,10 @@ button { font-family: inherit; cursor: pointer; }
 .ow-btn-danger { background: var(--ow-red); color: #fff; }
 .ow-btn-danger:hover { background: #cf1322; }
 .ow-btn[disabled] { opacity: .5; cursor: not-allowed; }
+/* v1.5.18：OwBusy 按钮防重入。原生按钮直接 disabled（上面的规则已给禁用态）；
+   非按钮（a / role=button / 自定义控件）靠 .ow-busy 表达「处理中」，重复点击由捕获阶段拦掉。 */
+.ow-busy { opacity: .55; cursor: not-allowed; }
+button.ow-busy[disabled] { cursor: not-allowed; }
 
 .ow-icon-btn {
     border: none;

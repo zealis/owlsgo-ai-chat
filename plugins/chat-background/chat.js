@@ -361,7 +361,7 @@
             h += '<div class="ow-cb-custom-url">'
                 + '<input class="ow-input" id="owCBCustomUrl" placeholder="https://example.com/bg.jpg" value="' + esc(curUrl) + '">'
                 + (canUpload
-                    ? '<button class="ow-btn ow-btn-ghost" onclick="OwCBUser.uploadCustom()">上传</button>'
+                    ? '<button class="ow-btn ow-btn-ghost" id="owCBUploadBtn" onclick="OwCBUser.uploadCustom()">上传</button>'
                         + '<input type="file" id="owCBFileInput" accept="image/jpeg,image/png,image/gif,image/webp" style="display:none">'
                     : '')
                 + '</div>';
@@ -405,7 +405,8 @@
         if (fileInput) {
             fileInput.onchange = function () {
                 if (!this.files || !this.files[0]) return;
-                OwCBUser.uploadCustom(this.files[0]);
+                // v1.5.18：上传发生在选完文件之后，自动锁拿不到点击，手动把按钮传进去
+                OwCBUser.uploadCustom(this.files[0], $('owCBUploadBtn'));
                 this.value = '';
             };
         }
@@ -470,7 +471,7 @@
         },
 
         /* 上传自定义背景 */
-        uploadCustom: function (file) {
+        uploadCustom: function (file, btn) {
             if (!file) {
                 var fi = $('owCBFileInput');
                 if (!fi) return;
@@ -483,8 +484,12 @@
             }
             if (!state.cfg.can_custom) { toast(state.cfg.custom_reason || '当前等级不可使用自定义背景'); return; }
             if (!state.attachEnabled) { toast('未启用附件上传插件'); return; }
+            // v1.5.18：上传期间禁用「上传」按钮，避免重复选文件/重复上传
+            var release = (btn && w.OwBusy) ? OwBusy.lock(btn, 60000) : null;
+            var finish = function () { if (release) { release(); release = null; } };
             toast('背景上传中…');
             OwApi.upload('plugin_chat_background_user_upload', file, {}, function (r) {
+                finish();
                 if (!r || !r.ok) { toast((r && r.msg) || '上传失败'); return; }
                 if (state.setting) {
                     state.setting.custom_file = r.file;

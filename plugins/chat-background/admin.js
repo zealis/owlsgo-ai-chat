@@ -164,7 +164,7 @@
                 + '<div style="display:flex;-webkit-display:flex;gap:6px;align-items:center;-webkit-align-items:center">'
                 + '<input class="ow-input" id="owCBEditFile" value="' + esc(it.file || '') + '" placeholder="uploads/background/ 下的相对路径" style="-webkit-flex:1;flex:1;min-width:0">'
                 + (canUpload
-                    ? '<button class="ow-btn ow-btn-ghost" onclick="OwCB.adminUpload()">上传</button>'
+                    ? '<button class="ow-btn ow-btn-ghost" id="owCBUploadBtn" onclick="OwCB.adminUpload()">上传</button>'
                         + '<input type="file" id="owCBEditFileInput" accept="image/jpeg,image/png,image/gif,image/webp" style="display:none">'
                     : '')
                 + '</div>'
@@ -199,7 +199,9 @@
             if (fi) {
                 fi.onchange = function () {
                     if (!this.files || !this.files[0]) return;
-                    OwCB.adminUpload(this.files[0]);
+                    // v1.5.18：上传在「选完文件」之后才开始，OwApi 的自动锁拿不到这次点击，
+                    // 把按钮一起传进去，上传期间禁用它。
+                    OwCB.adminUpload(this.files[0], $('owCBUploadBtn'));
                     this.value = '';
                 };
             }
@@ -216,7 +218,7 @@
             if (urlRow) urlRow.style.display = (kind === 'url') ? 'block' : 'none';
         },
 
-        adminUpload: function (file) {
+        adminUpload: function (file, btn) {
             if (!file) {
                 var fi = $('owCBEditFileInput');
                 if (!fi) return;
@@ -226,8 +228,12 @@
                 file = fi.files[0];
             }
             if (!state.attachEnabled) { toast('附件上传插件未启用'); return; }
+            // v1.5.18：单文件上传期间禁用「上传」；成功失败都要放开
+            var release = (btn && w.OwBusy) ? OwBusy.lock(btn, 60000) : null;
+            var finish = function () { if (release) { release(); release = null; } };
             toast('上传中…');
             OwApi.upload('plugin_chat_background_admin_upload', file, {}, function (r) {
+                finish();
                 if (!r || !r.ok) { toast((r && r.msg) || '上传失败'); return; }
                 var f = $('owCBEditFile');
                 if (f) f.value = r.file;

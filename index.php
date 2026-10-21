@@ -1570,11 +1570,14 @@ function renderInstall(string $err): void
        . '<div class="ow-form-item"><label>管理员密码</label><input class="ow-input" type="password" name="password" required autocomplete="new-password"></div>'
        . '<button type="submit" class="ow-btn ow-btn-primary ow-btn-block">开始安装</button>'
        . '<div id="owInstallMsg" class="ow-form-msg"></div></form></div>'
+       // v1.5.18：安装按钮也防重入 —— 安装是建表+写配置，双击会并发跑两遍。
+       // 这是独立页面（不加载 chat.js），所以就地禁用，不用 OwBusy。
        . '<script>document.getElementById("owInstallForm").onsubmit=function(e){e.preventDefault();'
+       . 'var b=this.querySelector(\'button[type=submit]\');if(b){if(b.disabled)return;b.disabled=true;}'
        . 'var f=new FormData(this);var x=new XMLHttpRequest();'
        . 'x.open("POST","?action=install",true);x.onreadystatechange=function(){if(x.readyState===4){'
        . 'try{var r=JSON.parse(x.responseText);if(r.ok){document.getElementById("owInstallMsg").innerHTML="<span style=\"color:var(--ow-green)\">安装成功，正在跳转...</span>";setTimeout(function(){location.href="?page=login"},800);}'
-       . 'else{document.getElementById("owInstallMsg").innerHTML="<span style=\"color:var(--ow-red)\">"+r.msg+"</span>";}}catch(_){}}};x.send(f);};</script>'
+       . 'else{document.getElementById("owInstallMsg").innerHTML="<span style=\"color:var(--ow-red)\">"+r.msg+"</span>";if(b)b.disabled=false;}}catch(_){if(b)b.disabled=false;}}};x.send(f);};</script>'
        . '</body></html>';
 }
 

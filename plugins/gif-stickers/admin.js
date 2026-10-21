@@ -42,9 +42,13 @@
          */
         test: function () {
             var self = this, data = this.collect(), m = $('owGsMsg');
+            // v1.5.18：KLIPY 分支是**裸 XHR**（不走 OwApi，自动锁覆盖不到），
+            // 这里手动挂到触发按钮上，避免连点把测试请求打出去好几次。
+            var release = w.OwBusy ? OwBusy.autoLock('plugin_gif_stickers_test') : null;
             var say = function (ok, t) {
                 if (m) m.innerHTML = '<span style="color:' + (ok ? 'var(--ow-green,#52C41A)' : 'var(--ow-red,#F5222D)') + '">' + esc(t) + '</span>';
                 toast(t);
+                if (release) { release(); release = null; }
             };
             if (data.provider === 'apihz') {
                 // nocache：自测必须打真接口 —— 命中缓存时「代理可用」是假的（上游挂了也照样秒回）。

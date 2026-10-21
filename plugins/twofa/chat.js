@@ -319,12 +319,17 @@
             var code = ($('owTwoFACode') || {}).value || '';
             if (!code) { m.innerHTML = '<span style="color:var(--ow-red)">请填写验证码</span>'; return; }
             m.innerHTML = '验证中…';
-            OwApi.post('plugin_twofa_verify', { code: code }, function (r) {
-                if (r.ok) { location.href = '?page=chat'; return; }
-                m.innerHTML = '<span style="color:var(--ow-red)">' + esc(r.msg) + '</span>';
-                var input = $('owTwoFACode');
-                if (input) { input.value = ''; input.focus(); }
-            });
+            // v1.5.18：回车提交也要防重入（鼠标点击由 OwApi 自动锁；这里覆盖整张表单）
+            var send = function (done) {
+                OwApi.post('plugin_twofa_verify', { code: code }, function (r) {
+                    if (r.ok) { location.href = '?page=chat'; return; }
+                    done();
+                    m.innerHTML = '<span style="color:var(--ow-red)">' + esc(r.msg) + '</span>';
+                    var input = $('owTwoFACode');
+                    if (input) { input.value = ''; input.focus(); }
+                });
+            };
+            if (w.OwBusy) OwBusy.form(f, send); else send(function () {});
         };
         var cancel = $('owTwoFACancel');
         if (cancel) cancel.onclick = function () {

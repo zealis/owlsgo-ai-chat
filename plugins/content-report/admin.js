@@ -186,8 +186,12 @@
                 var f = file.files && file.files[0];
                 file.value = '';                       // 同一张图连选两次也要能触发 change
                 if (!f) return;
+                // v1.5.18：上传在选完文件后才开始，自动锁拿不到点击，手动锁「上传头像」
+                var release = w.OwBusy ? OwBusy.lock(up, 60000) : null;
+                var finish = function () { if (release) { release(); release = null; } };
                 toast('上传中…');
                 OwApi.upload('plugin_content_report_upload_avatar', f, {}, function (r) {
+                    finish();
                     if (r && r.ok && r.url) OwCRAdmin.setAvatar(r.url);
                     else toast((r && r.msg) || '上传失败');
                 });

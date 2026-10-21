@@ -136,8 +136,78 @@ Plugin::asset('js', 'user-manager/admin.js');   // 相对插件目录；css 同�
 
 - 合并输出地址：`?action=assets&type=js` / `?action=assets&type=css`（免签名 GET，纯静态无写操作）。
 - **后台页面**已自动引入 `<script src="?action=assets&type=js">`：需要后台交互的插件在此声明 JS，交互对象挂为全局（如 `window.OwUM`），页面 HTML 里用 `onclick="OwUM.search()"` 调用。
-- 脚本可复用主程序暴露的全局：`OwApi`（AJAX + 自动签名）、`esc`、`toast`、`fmtUid`、`opts`、`ROLE_CN`、`OwAdmin`、`OwChat`。不要重复实现这些能力。
+- 脚本可复用主程序暴露的全局：`OwApi`（AJAX + 自动签名）、`OwBusy`（按钮防重入，见下节）、`esc`、`toast`、`fmtUid`、`opts`、`ROLE_CN`、`OwAdmin`、`OwChat`。不要重复实现这些能力。
 - 前端可从 `OwChat.cfg.site_url` 取当前站点根地址（后端 `ow_site_url()`，未配置时为自动识别值）。
+
+## 前端按钮防重入（OwBusy，v1.5.18 起）
+
+用户手抖连点两下，就会发出两个请求。登录页为此付出过代价：后台「失败 10 次锁 15 分钟」按次数算，
+一次双击等于两次失败。核心从 v1.5.18 起提供通用轮子 `OwBusy`，插件直接复用，不要自己写 `disabled` 标志位。
+
+### 自动兜底：什么都不用做
+
+只要请求是在**点击的处理函数里同步发起**的，`OwApi.post` / `OwApi.secure` / `OwApi.upload` 会自动：
+
+1. 锁住触发这次请求的按钮（原生按钮置 `disabled`；`a` / `role=button` / `.ow-btn` 等加 `.ow-busy`）；
+2. 期间的重复点击被捕获阶段拦掉；
+3. 请求回来（`secure` 要等票据 + 业务两次都回来）自动释放；
+4. 链式请求（先 `room_create_gate` 再 `room_create`）会继续挂在同一把锁上，不会中途解禁。
+
+所以插件里这种写法**已经有了防重入**，不用改：
+
+```js
+OwApi.post('plugin_my_save', data, function (r) { … });
+OwApi.secure('plugin_my_delete', { id: id }, function (r) { … });
+```
+
+几类接口故意不自动锁，避免把等待时间算到用户头上：
+
+- `poll` / `dm_poll` / `heartbeat_status` / `ws_ticket` / `conv_read` / `conv_unread_at`：轮询与后台请求；
+- `send`：发送按设计是非阻塞的（300ms 合并 + 服务端幂等键）；
+- `send_code`：「发验证码」自己管禁用与倒计时，自动锁反而会在响应后把倒计时解开。
+
+插件自己的接口名不会撞上这些键；若确实需要「点一下就锁住」，用下面的手动方式。
+
+### 手动：异步动作不在点击处理函数里
+
+文件选择器（上传在 `change` 里才开始）、WebAuthn、第三方 `fetch`、`canvas.toBlob` 等场景，
+自动锁拿不到那次点击，需要显式包一层：
+
+```js
+// 方式一：run（最常用）——按钮忙时返回 false，任务结束必须调 done()
+btn.onclick = function () {
+    OwBusy.run(btn, function (done) {
+        OwApi.upload('plugin_my_upload', file, {}, function (r) {
+            done();                    // 成功、失败都要调，否则只能等 30s 安全超时
+            …
+        });
+    }, { timeout: 120000 });           // 上传类建议放宽（默认 30s；OwApi.upload 的自动锁是 120s）
+};
+
+// 方式二：lock —— 多步骤 / 回调不在同一处时，拿释放函数自己管（引用计数，可嵌套）
+var release = OwBusy.lock(btn, 60000);
+doSomething(function () { release(); });
+
+// 方式三：表单级 —— 提交期间禁用整张表单的按钮，同一表单只放行一次
+OwBusy.form(form, function (done) {
+    OwApi.post('my_form_submit', data, function (r) { done(); … });
+});
+
+// 方式四：裸 XHR / WS 也要挂到「刚点的按钮」上（不经过 OwApi 时）
+var release = OwBusy.autoLock('plugin_my_test');
+fetch('/…').finally(function () { release(); });
+```
+
+参考实现：`plugins/chat-background/chat.js`（选完文件后手动锁「上传」）、
+`plugins/gif-stickers/admin.js`（裸 XHR 的连通性自测）、`plugins/twofa/chat.js`（表单级）。
+
+### 行为约定
+
+- 释放只恢复「上锁前本来是启用」的按钮；倒计时、权限置灰等别人设的 `disabled` 不会被解开。
+- 同一元素可以嵌套上锁（如 `secure` 的票据请求），引用计数归零才真正解禁。
+- 安全超时：`run` / `lock` / `post` / `secure` 默认 30s，`form` 默认 15s，`OwApi.upload` 的自动锁 120s；请求异常丢失时不会把按钮永久焊死。
+- **不要**给「本来就该连点」的按钮加锁（例如发送消息、翻页、表情切换）；防重入只针对会重复提交副作用的动作。
+- 原生按钮被禁用后不会再触发 `click`，所以服务端仍然必须自己做幂等/频率校验 —— 前端锁只防手抖，不防恶意并发。
 
 ### 站点地址（ow_site_url / ow_abs_url）
 
@@ -731,6 +801,7 @@ function mount() {
 请先阅读根目录 PLUGIN.md 与 core/plugin.php，并参考现有插件 plugins/user-manager/。
 插件放在 plugins/<插件ID>/，使用 Plugin::adminPage / route / asset / on 注册能力。
 样式只引用核心 --ow-* 变量，不写死颜色（深浅两套主题都要能看）。
+按钮防重入：经 OwApi 发起的请求已自动锁按钮；上传/WebAuthn 等异步入口用 OwBusy.run/form 包一层。
 需求：<清楚描述功能、入口、权限>
 完成后执行 php -l 与 node --check，并在后台启用插件做真实验证。
 ```
