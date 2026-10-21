@@ -1,8 +1,8 @@
 /**
- * 用户名片插件（profile-card）DOM 级验证 + 截图
- * 跑在隔离副本 .t-pc 上（php -S 127.0.0.1:8845），用系统 Chrome。
- * 本机 peer 会被 Sec::tlsVerified 信任 X-Forwarded-Proto（见 peerIsLocal），
- * 所以整个上下文带 X-Forwarded-Proto: https 即可绕过强制 HTTPS 跳转。
+ * 用户名片插件（profile-card v1.0.1）DOM 级验证 + 截图
+ * 由 .tools/e2e-profile-card.sh 调起（服务器生命周期归那个脚本管），也可单独跑：
+ * 需先自备 .t-pc + 3 个 php -S 后端 + pc-test-proxy.js（见 e2e 脚本头部说明）。
+ * v1.0.1 起横幅管理在「个人设置 → 资料」页，本脚本驱动设置弹窗走完整链路。
  * 用法：node .tools/profile-card-dom-test.js
  */
 const { chromium } = require('C:/Users/zeali/.workbuddy/skills/birdview/node_modules/playwright-core');
@@ -13,15 +13,20 @@ const path = require('path');
 const B = 'https://127.0.0.1:8845';
 const OUT = path.join(__dirname, 'tmp');
 if (!fs.existsSync(OUT)) fs.mkdirSync(OUT, { recursive: true });
-
+// 测试横幅图自备（不依赖 .t-pc 残留）：1200x320 品牌蓝 + 半透明圆
+const BANNER_PNG = path.join(OUT, 'pc-banner-a.png');
+if (!fs.existsSync(BANNER_PNG)) {
+  spawnSync('D:/Program Files/phpstudy_pro/Extensions/php/php8.2.9nts/php.exe', ['-r',
+    '$im=imagecreatetruecolor(1200,320);imagefill($im,0,0,imagecolorallocate($im,0,144,233));' +
+    '$w=imagecolorallocatealpha($im,255,255,255,70);' +
+    'imagefilledellipse($im,180,240,420,420,$w);imagefilledellipse($im,1020,40,300,300,$w);' +
+    'imagefilledellipse($im,760,300,200,200,$w);imagepng($im,$argv[1]);', BANNER_PNG],
+    { encoding: 'utf8' });
+}
 // 每轮从干净状态起步：900002 无横幅；900003 固定带 banner-b（他人卡片用例靠它）
 const reset = spawnSync('D:/Program Files/phpstudy_pro/Extensions/php/php8.2.9nts/php.exe',
   ['.tools/pc-dom-reset.php'], { cwd: path.join(__dirname, '..'), encoding: 'utf8' });
 if (reset.status !== 0) { console.error('状态重置失败：', reset.stderr); process.exit(1); }
-
-const ID = 'zz-av-1791994798@example.test';
-const PW = 'T3st!points';
-const BANNER = 'uploads/image/pc/banner-a.png';
 
 const errors = [];
 const results = [];
@@ -43,39 +48,51 @@ function ck(name, actual, expect) {
 
   /* ---------- 登录 ---------- */
   await page.goto(B + '/?page=login', { waitUntil: 'domcontentloaded' });
-  await page.fill('input[name=identity]', ID);
-  await page.fill('input[name=password]', PW);
+  await page.fill('input[name=identity]', 'zz-av-1791994798@example.test');
+  await page.fill('input[name=password]', 'T3st!points');
   await page.click('button[type=submit]');
   await page.waitForSelector('#owRail', { timeout: 15000 });
   await page.waitForTimeout(800);
-  console.log('=== 1) 登录 + 名片面板 ===');
-  ck('登录后进入聊天页', await page.locator('#owRail').count(), 1);
 
-  /* ---------- 名片面板 ---------- */
-  await page.click('[data-tab="profilecard"]');
-  await page.waitForSelector('#owpcPanel', { timeout: 8000 });
-  // 等状态文案落定（GET 是异步的，别在「读取中…」上断言）
+  /* ---------- 1. 个人设置里的横幅区块 ---------- */
+  console.log('=== 1) 个人设置 → 资料：横幅区块 ===');
+  ck('rail 不再有名片入口（v1.0.1 移入设置）', await page.locator('[data-tab="profilecard"]').count(), 0);
+  await page.evaluate(() => OwChat.openSettings());
+  await page.waitForSelector('#owModal.ow-modal-fixed #owpcSetBanner', { timeout: 8000 });
+  ck('横幅区块注入「资料」页', await page.locator('#owpcSetBanner').count(), 1);
+  ck('区块挂在资料面板里', await page.locator('.ow-pagetab-panel[data-pane="prof"] #owpcSetBanner').count(), 1);
+  // 等现值读回（异步 GET），初始无横幅 → 移除按钮应收起
   await page.waitForFunction(() => {
-    const s = document.getElementById('owpcState');
-    return s && s.textContent.indexOf('读取中') < 0;
+    var rm = document.getElementById('owpcSetRemoveBtn');
+    return rm && rm.style.display === 'none';
   }, { timeout: 8000 });
-  ck('「名片」面板打开', await page.locator('#owpcPanel').count(), 1);
-  ck('初始状态文案', (await page.textContent('#owpcState')).trim(), '未设置 · 默认白色');
-  ck('预览区有横幅位', await page.locator('#owpcPreviewBanner').count(), 1);
-  await page.screenshot({ path: path.join(OUT, 'pc-1-panel-empty.png'), clip: { x: 0, y: 0, width: 1280, height: 860 } });
+  ck('初始无横幅：移除按钮收起', await page.locator('#owpcSetRemoveBtn').isVisible(), false);
+  ck('预览条存在（默认白）', await page.$eval('#owpcSetPreview', el => getComputedStyle(el).backgroundImage), 'none');
+  ck('预览条高度 84px', await page.$eval('#owpcSetPreview', el => getComputedStyle(el).height), '84px');
+  ck('预览里有半露小头像', await page.$eval('.owpc-set-preview-av', el => getComputedStyle(el).bottom), '-20px');
+  ck('上传 / 链接 / 移除三件套齐', await page.locator('#owpcSetUploadBtn,#owpcSetUrlBtn,#owpcSetRemoveBtn').count(), 3);
+  await page.screenshot({ path: path.join(OUT, 'pc-1-settings-empty.png') });
 
-  /* ---------- 通过链接设置横幅 ---------- */
-  await page.fill('#owpcUrlInput', BANNER);
-  await page.click('#owpcUrlBtn');
-  await page.waitForFunction(() => document.getElementById('owpcState') &&
-    document.getElementById('owpcState').textContent.indexOf('已设置') >= 0, { timeout: 8000 });
-  ck('链接设置后状态', (await page.textContent('#owpcState')).trim(), '已设置横幅');
-  const prevBg = await page.$eval('#owpcPreviewBanner', el => getComputedStyle(el).backgroundImage);
-  ck('预览横幅背景图生效', /banner-a\.png/.test(prevBg), true);
-  ck('移除按钮出现', await page.locator('#owpcRemoveBtn').isVisible(), true);
-  await page.screenshot({ path: path.join(OUT, 'pc-2-panel-set.png'), clip: { x: 0, y: 0, width: 1280, height: 860 } });
+  /* ---------- 上传 → 暂存 → 保存 ---------- */
+  await page.setInputFiles('#owpcSetFile', BANNER_PNG);
+  await page.waitForFunction(() => window.OwPC && OwPC.staged && OwPC.staged.indexOf('uploads/image/') === 0, { timeout: 10000 });
+  ck('上传后暂存值为 uploads/image/ 路径', /^uploads\/image\//.test(await page.evaluate(() => OwPC.staged)), true);
+  ck('预览显示上传结果', /url\(/.test(await page.$eval('#owpcSetPreview', el => getComputedStyle(el).backgroundImage)), true);
+  ck('移除按钮出现', await page.locator('#owpcSetRemoveBtn').isVisible(), true);
+  ck('脏标记置位（待保存）', await page.evaluate(() => OwPC.dirty), true);
+  await page.screenshot({ path: path.join(OUT, 'pc-2-settings-staged.png') });
 
-  /* ---------- 自己的资料卡（.ow-set-avatar-btn 壳路径） ---------- */
+  await page.click('#owModal .ow-btn-primary.ow-btn-block');          // 设置弹窗的「保存」
+  await page.waitForFunction(() => document.getElementById('owModalMask').style.display === 'none', { timeout: 8000 });
+  await page.waitForFunction(() => window.OwPC && OwPC.dirty === false, { timeout: 8000 });
+  ck('保存后弹窗关闭', await page.$eval('#owModalMask', el => el.style.display), 'none');
+  ck('保存后脏标记清除', await page.evaluate(() => OwPC.dirty), false);
+  const savedBanner = await page.evaluate(() => new Promise(resolve => {
+    OwApi.post('plugin_profile_card_get', { id: OwChat.cfg.me.id }, r => resolve(r.ok ? r.banner : ''));
+  }));
+  ck('横幅已落库', /^uploads\/image\//.test(savedBanner), true);
+
+  /* ---------- 2. 自己的资料卡：上传的横幅显示出来 ---------- */
   console.log('=== 2) 自己的资料卡（onCardRendered → 横幅 + 头像叠压） ===');
   await page.evaluate(() => OwChat.userCard(900002));
   await page.waitForSelector('#owModal.owpc-card', { timeout: 8000 });
@@ -89,7 +106,7 @@ function ck(name, actual, expect) {
   ck('横幅高度 96px', bannerBox.h, '96px');
   ck('横幅向上出血 -24px（抵消弹窗内边距）', bannerBox.mt, '-24px');
   ck('横幅左右出血 -24px', bannerBox.ml, '-24px');
-  ck('横幅背景图为所选图', /banner-a\.png/.test(bannerBox.bg), true);
+  ck('横幅背景图为上传的图', /url\(/.test(bannerBox.bg), true);
   ck('默认底色为白（--ow-surface）', bannerBox.bgc, 'rgb(255, 255, 255)');
   ck('横幅顶部圆角继承弹窗', bannerBox.radius, '10px');
   const headBox = await page.$eval('#owModal .ow-card-head', el => {
@@ -109,7 +126,7 @@ function ck(name, actual, expect) {
   ck('昵称行仍在', await page.locator('#owModal .ow-card-name').count(), 1);
   await page.screenshot({ path: path.join(OUT, 'pc-3-card-self.png') });
 
-  /* ---------- 别人的资料卡（.ow-avatar 裸路径 + 别人设的横幅） ---------- */
+  /* ---------- 3. 别人的资料卡（.ow-avatar 裸路径 + 别人设的横幅） ---------- */
   console.log('=== 3) 他人资料卡 ===');
   await page.evaluate(() => { OwChat.closeModal(); OwChat.userCard(900003); });
   await page.waitForSelector('#owModal.owpc-card', { timeout: 8000 });
@@ -122,26 +139,21 @@ function ck(name, actual, expect) {
   ck('他人头像同样叠压 -34px', avBox2, '-34px');
   await page.screenshot({ path: path.join(OUT, 'pc-4-card-other.png') });
 
-  /* ---------- 移除横幅 → 默认白 ---------- */
-  console.log('=== 4) 移除横幅 → 默认白色 ===');
+  /* ---------- 4. 设置里移除 → 默认白 ---------- */
+  console.log('=== 4) 设置里移除横幅 → 默认白色 ===');
   await page.evaluate(() => OwChat.closeModal());
-  // 先切去「消息」再切回「名片」—— 直接点已激活的 rail 入口会收起侧栏
-  // （核心 v1.3.126 行为，所有标签一致），那样就摸不到面板了。
-  // 顺带验证：切走再切回，面板内容还在、状态会重拉。
-  await page.click('[data-tab="chat"]');
-  await page.waitForTimeout(300);
-  await page.click('[data-tab="profilecard"]');
-  await page.waitForSelector('#owpcPanel', { timeout: 8000 });
+  await page.evaluate(() => OwChat.openSettings());
+  await page.waitForSelector('#owpcSetBanner', { timeout: 8000 });
   await page.waitForFunction(() => {
-    const s = document.getElementById('owpcState');
-    return s && s.textContent.indexOf('读取中') < 0;
+    var rm = document.getElementById('owpcSetRemoveBtn');
+    return rm && rm.style.display !== 'none';            // 现值读回、有横幅 → 移除按钮可见
   }, { timeout: 8000 });
-  ck('重入面板状态已重拉', (await page.textContent('#owpcState')).trim(), '已设置横幅');
-  await page.click('#owpcRemoveBtn');
-  await page.waitForFunction(() => document.getElementById('owpcState') &&
-    document.getElementById('owpcState').textContent.indexOf('未设置') >= 0, { timeout: 8000 });
-  const prevBg2 = await page.$eval('#owpcPreviewBanner', el => getComputedStyle(el).backgroundImage);
-  ck('移除后预览无背景图', prevBg2, 'none');
+  await page.click('#owpcSetRemoveBtn');
+  ck('移除后预览无背景图', await page.$eval('#owpcSetPreview', el => getComputedStyle(el).backgroundImage), 'none');
+  ck('移除后移除按钮收起', await page.locator('#owpcSetRemoveBtn').isVisible(), false);
+  await page.click('#owModal .ow-btn-primary.ow-btn-block');
+  await page.waitForFunction(() => document.getElementById('owModalMask').style.display === 'none'
+    && window.OwPC && OwPC.dirty === false, { timeout: 8000 });
   await page.evaluate(() => OwChat.userCard(900002));
   await page.waitForSelector('#owModal.owpc-card', { timeout: 8000 });
   const defBg = await page.$eval('#owModal .owpc-banner', el => {
@@ -154,17 +166,53 @@ function ck(name, actual, expect) {
   await page.screenshot({ path: path.join(OUT, 'pc-5-card-default.png') });
   await page.evaluate(() => OwChat.closeModal());
 
-  /* ---------- 移动端 ---------- */
-  console.log('=== 5) 移动端 375px ===');
+  /* ---------- 5. 链接设置（不走上传的路） ---------- */
+  console.log('=== 5) 粘贴链接设置横幅 ===');
+  await page.evaluate(() => OwChat.openSettings());
+  await page.waitForSelector('#owpcSetBanner', { timeout: 8000 });
+  // 等现值读回渲染完（上一节末尾横幅已移除 → 移除按钮收起）再操作，避免竞态
+  await page.waitForFunction(() => {
+    var rm = document.getElementById('owpcSetRemoveBtn');
+    return rm && rm.style.display === 'none';
+  }, { timeout: 8000 });
+  await page.fill('#owpcSetUrl', 'uploads/image/pc/banner-b.png');
+  await page.click('#owpcSetUrlBtn');
+  ck('链接暂存生效', /banner-b\.png/.test(await page.$eval('#owpcSetPreview', el => getComputedStyle(el).backgroundImage)), true);
+  await page.click('#owModal .ow-btn-primary.ow-btn-block');
+  await page.waitForFunction(() => document.getElementById('owModalMask').style.display === 'none'
+    && window.OwPC && OwPC.dirty === false, { timeout: 8000 });
+  await page.evaluate(() => OwChat.userCard(900002));
+  await page.waitForSelector('#owModal.owpc-card', { timeout: 8000 });
+  ck('链接设置的横幅显示在卡片上', /banner-b\.png/.test(await page.$eval('#owModal .owpc-banner', el => getComputedStyle(el).backgroundImage)), true);
+  await page.evaluate(() => OwChat.closeModal());
+
+  /* ---------- 6. 移动端 ---------- */
+  console.log('=== 6) 移动端 375px ===');
   await page.setViewportSize({ width: 375, height: 720 });
   await page.evaluate(() => OwChat.userCard(900002));
   await page.waitForSelector('#owModal.owpc-card', { timeout: 8000 });
   await page.waitForTimeout(400);
-  const mBox = await page.$eval('#owModal .owpc-banner', el => getComputedStyle(el).height);
-  ck('窄屏横幅 76px', mBox, '76px');
-  const mAv = await page.$eval('#owModal .ow-card-head > .ow-set-avatar-btn', el => getComputedStyle(el).marginTop);
-  ck('窄屏头像叠压 -28px', mAv, '-28px');
-  await page.screenshot({ path: path.join(OUT, 'pc-6-card-mobile.png'), fullPage: false });
+  ck('窄屏横幅 76px', await page.$eval('#owModal .owpc-banner', el => getComputedStyle(el).height), '76px');
+  ck('窄屏头像叠压 -28px', await page.$eval('#owModal .ow-card-head > .ow-set-avatar-btn', el => getComputedStyle(el).marginTop), '-28px');
+  await page.screenshot({ path: path.join(OUT, 'pc-6-card-mobile.png') });
+  await page.evaluate(() => OwChat.closeModal());
+  // 设置弹窗窄屏：区块可见、资料面板无横向溢出
+  await page.evaluate(() => OwChat.openSettings());
+  await page.waitForSelector('#owpcSetBanner', { timeout: 8000 });
+  await page.waitForTimeout(400);
+  const mob = await page.evaluate(() => {
+    var pane = document.querySelector('.ow-pagetab-panel[data-pane="prof"]');
+    var row = document.querySelector('.owpc-set-row');
+    return {
+      paneOverflow: pane.scrollWidth - pane.clientWidth,
+      rowWrap: getComputedStyle(row).flexWrap,
+      previewH: getComputedStyle(document.getElementById('owpcSetPreview')).height,
+    };
+  });
+  ck('窄屏资料面板无横向溢出', mob.paneOverflow <= 1, true);
+  ck('窄屏操作行允许换行', mob.rowWrap, 'wrap');
+  ck('窄屏预览条仍是 84px', mob.previewH, '84px');
+  await page.screenshot({ path: path.join(OUT, 'pc-7-settings-mobile.png') });
 
   /* ---------- 汇总 ---------- */
   const fails = results.filter(r => !r.ok).length;

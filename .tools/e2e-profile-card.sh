@@ -83,6 +83,19 @@ done
 ( exec "$NODE" .tools/pc-test-proxy.js ) > /tmp/pc-proxy.log 2>&1 &
 PIDS+=($!)
 sleep 2
+# ⚠️ 冷启动竞争（本套件踩过）：3 个进程同时首次 init → syncCronTasks 并发插
+# cron_tasks 行 → SQLite 写锁 → 未捕获的 "database is locked" → 那一两秒内的
+# 请求（含 CSS）批量 500。PDO 没设 busy timeout，这是核心侧的既有行为
+# （线上缓存是热的、不写库，故不显）。对策：**逐个后端顺序预热**，把首次写库
+# 串行化，再确认清单缓存落地，然后才放浏览器进场。
+for p in 8851 8852 8853; do
+  curl -sk -o /dev/null -H "X-Forwarded-Proto: https" "http://127.0.0.1:$p/?page=login"
+done
+for _ in $(seq 1 20); do
+  [ -f .t-pc/data/cache/plugins.json ] && break
+  sleep 0.5
+done
+[ -f .t-pc/data/cache/plugins.json ] || { echo "清单缓存未生成，后端启动异常"; exit 1; }
 curl -sk -o /dev/null -w "  代理自检：%{http_code}\n" "$B/?page=login"
 
 # 每轮从干净状态起步：清掉 900002 的横幅行，避免残留把「初始无横幅」断言带偏
@@ -93,15 +106,12 @@ echo "=== 1) API 层 ==="
 login .t-pc/u.txt zz-av-1791994798@example.test UK
 
 H=$(curl -sk -b .t-pc/u.txt "$B/")
-has "聊天页含「名片」rail 按钮" 'data-tab="profilecard"' "$H"
-has "聊天页含名片样式 link（带 pv 版本键）" 'plugin=profile-card&file=style.css&v=1.5.17&pv=1.0.0' "$H"
+# v1.0.1 起横幅管理移入个人设置，rail 不再有「名片」入口（回归：防复活）
+if printf '%s' "$H" | grep -q 'data-tab="profilecard"'; then
+  FAIL=$((FAIL+1)); echo "  [FAIL] 聊天页不应再有名片 rail 按钮（已移入设置）"; else PASS=$((PASS+1)); echo "  [PASS] 聊天页无名片 rail 按钮"; fi
+has "聊天页含名片样式 link（带 pv 版本键）" 'plugin=profile-card&file=style.css&v=1.5.17&pv=1.0.1' "$H"
 has "JS 合并包含名片插件代码（__owPcLoaded 哨兵）" '__owPcLoaded' "$(curl -sk -b .t-pc/u.txt "$B/?action=assets&type=js")"
-has "CSS 端点非空（两件套落地）" 'owpc-banner' "$(curl -sk "$B/?action=assets&type=css&plugin=profile-card&file=style.css")"
-
-# 游客：rail 按钮不应出现（服务端按 $_SESSION['uid'] 拦截）
-G=$(curl -sk "$B/")
-if printf '%s' "$G" | grep -q 'data-tab="profilecard"'; then
-  FAIL=$((FAIL+1)); echo "  [FAIL] 游客页不应出现名片按钮"; else PASS=$((PASS+1)); echo "  [PASS] 游客页无名片按钮"; fi
+has "CSS 端点非空（两件套落地）" 'owpc-set-preview' "$(curl -sk "$B/?action=assets&type=css&plugin=profile-card&file=style.css")"
 
 ck "初始无横幅" "$(q "SELECT COUNT(*) FROM plugin_profile_card WHERE user_id=900002")" "0"
 R=$(api .t-pc/u.txt "$UK" plugin_profile_card_save "banner=uploads/image/ab/test-banner.png")
@@ -149,6 +159,10 @@ echo
 echo "=== 2) DOM 层（系统 Chrome） ==="
 DOM_FAIL=""
 "$NODE" .tools/profile-card-dom-test.js || DOM_FAIL=1
+
+echo
+echo "=== 3) 深色主题 ==="
+"$NODE" .tools/pc-dark-test.js || DOM_FAIL=1
 
 echo
 echo "========== 汇总：API PASS=$PASS FAIL=$FAIL DOM=$([ -n "$DOM_FAIL" ] && echo 失败 || echo 通过) =========="

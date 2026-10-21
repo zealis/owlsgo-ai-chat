@@ -1,14 +1,18 @@
 /* ==========================================================================
- * 用户名片插件前端（profile-card）v1.0.0 —— 纯原生 ES5，无外部依赖
+ * 用户名片插件前端（profile-card）v1.0.1 —— 纯原生 ES5，无外部依赖
  *
  * 功能：
  *   1. 资料卡头部「名片」化：顶部横幅背景图（默认白色）+ 头像叠压。
  *      挂在核心 v1.5.17 新增的 OwChat.onCardRendered（资料卡渲染完成）钩子上；
  *      横幅 URL 由服务端 user.card 钩子随 user_card 接口下发（u.banner）。
- *   2. 左侧 rail「名片」面板：上传图片 / 粘贴链接 / 移除横幅，带卡片效果预览。
+ *   2. 横幅管理在「个人设置 → 资料」页（v1.0.1 从左侧 rail 面板迁入）：
+ *      包装 OwChat.openSettings 注入区块、包装 OwChat.saveSettings 随保存提交。
+ *      与 signature 插件同一口径 —— 核心保存按钮注释明确「插件注入的字段
+ *      挂在 saveSettings 上」。
  *
  * ⚠️ 核心低于 v1.5.17（没有 onCardRendered）时：不猴补 openModal，
- *    资料卡保持核心原样（宁可没有横幅，也不对核心渲染结果做脆弱手术）。
+ *    资料卡保持核心原样（宁可没有横幅，也不对核心渲染结果做脆弱手术）；
+ *    设置里的横幅区块照常工作（等核心升级后即刻生效）。
  * ========================================================================== */
 (function (w, d) {
     'use strict';
@@ -16,8 +20,6 @@
     if (!w.OwChat || !OwChat.cfg) return;
     if (w.__owPcLoaded) return;
     w.__owPcLoaded = true;
-
-    var TAB_ID = 'profilecard';
 
     function $(id) { return d.getElementById(id); }
     function esc(s) {
@@ -57,104 +59,130 @@
     }
     // 核心没有 onCardRendered（低于 v1.5.17）：静默降级，资料卡保持核心原样。
 
-    /* ---------- 2. 「名片」面板 ---------- */
+    /* ---------- 2. 个人设置：横幅区块 ---------- */
 
     var OwPC = {
+        /** 打开设置时从服务端读回的现值（保存时用来判断改没改） */
+        initial: '',
+        /** 用户当前暂存的值（上传 / 链接 / 移除都改它，点「保存」才落库） */
+        staged: '',
+        dirty: false,
 
-        /** 读取并渲染当前用户的横幅状态 */
+        /** 注入区块到「资料」页末尾 + 读现值（openSettings 包装里调用） */
+        inject: function () {
+            var modal = $('owModal');
+            if (!modal || $('owpcSetBanner')) return;                 // 已注入（幂等）
+            var pane = modal.querySelector('.ow-pagetab-panel[data-pane="prof"]');
+            if (!pane) return;
+            var me = OwChat.cfg.me || {};
+            var div = d.createElement('div');
+            div.className = 'ow-form-item';
+            div.id = 'owpcSetBanner';
+            div.innerHTML =
+                '<label>资料卡横幅</label>'
+                + '<div class="owpc-set-preview" id="owpcSetPreview">'
+                +   '<span class="owpc-set-preview-av"><img src="' + esc(me.avatar) + '" alt=""></span>'
+                + '</div>'
+                + '<div class="owpc-set-row">'
+                +   '<button class="ow-btn" id="owpcSetUploadBtn" type="button">上传图片</button>'
+                +   '<button class="ow-btn ow-btn-ghost" id="owpcSetRemoveBtn" type="button" style="display:none">移除横幅</button>'
+                + '</div>'
+                + '<div class="owpc-set-row">'
+                +   '<input class="ow-input" id="owpcSetUrl" type="text" maxlength="500" placeholder="或粘贴图片链接（http/https）">'
+                +   '<button class="ow-btn" id="owpcSetUrlBtn" type="button">使用链接</button>'
+                + '</div>'
+                + '<p class="ow-form-hint">显示在他人查看你的资料卡时：默认白色，设置图片后头像会叠在图片上沿。过宽过高的图片会自动裁剪展示，建议选用宽幅图片。</p>'
+                + '<input type="file" id="owpcSetFile" accept="image/*" style="display:none">';
+            pane.appendChild(div);
+            this.bind();
+            // 有未保存的暂存值（上次开了设置没保存就关了）：先把它呈现出来，
+            // 保持「眼里看到的 = 保存会写上去的」；不读服务端，避免旧值覆盖草稿。
+            if (this.dirty) { this.render(this.staged); return; }
+            this.load();
+        },
+
+        bind: function () {
+            var self = this;
+            var file = $('owpcSetFile');
+            $('owpcSetUploadBtn').onclick = function () { if (file) file.click(); };
+            if (file) {
+                file.onchange = function () {
+                    if (!this.files || !this.files[0]) return;
+                    var f = this.files[0];
+                    this.value = '';                      // 清掉，允许再次选同一个文件
+                    if (f.size > 8 * 1024 * 1024) { toast('图片不能超过 8MB'); return; }
+                    OwApi.upload('plugin_profile_card_upload', f, function (r) {
+                        if (!r.ok) { toast(r.msg || '上传失败'); return; }
+                        self.stage(r.url);
+                        var inp = $('owpcSetUrl');       // 上传即采用，链接框清掉避免「两个值」误解
+                        if (inp) inp.value = '';
+                    });
+                };
+            }
+            $('owpcSetUrlBtn').onclick = function () {
+                var v = $('owpcSetUrl').value.replace(/^\s+|\s+$/g, '');
+                if (!v) { toast('请先粘贴图片链接'); return; }
+                self.stage(v);
+            };
+            $('owpcSetRemoveBtn').onclick = function () { self.stage(''); };
+        },
+
+        /** 读现值并渲染。
+         *  ⚠️ 竞态防护：GET 是异步的，回包可能在用户已经暂存了值之后才到 ——
+         *     那时直接重置会把用户的编辑清掉（表现为「用了链接、点了保存，
+         *     却没存上」）。dirty 一律以回包迟到者输。 */
         load: function () {
             OwApi.post('plugin_profile_card_get', { id: OwChat.cfg.me.id }, function (r) {
-                if (r.ok) OwPC.render(r.banner || '');
+                if (OwPC.dirty) return;
+                var b = r.ok ? (r.banner || '') : '';
+                OwPC.initial = b;
+                OwPC.staged = b;
+                OwPC.dirty = false;
+                OwPC.render(b);
             });
         },
 
-        /** 按横幅 URL 刷新预览与按钮态 */
+        /** 暂存一个值（上传成功 / 点链接 / 移除都走这），只动预览不落库 */
+        stage: function (banner) {
+            this.staged = banner;
+            this.dirty = true;
+            this.render(banner);
+        },
+
+        /** 按横幅值刷新预览与移除按钮显隐 */
         render: function (banner) {
             banner = cssUrl(banner);
-            var b = $('owpcPreviewBanner');
-            if (b) b.style.backgroundImage = banner ? 'url("' + banner + '")' : 'none';
-            var rm = $('owpcRemoveBtn');
+            var p = $('owpcSetPreview');
+            if (p) p.style.backgroundImage = banner ? 'url("' + banner + '")' : 'none';
+            var rm = $('owpcSetRemoveBtn');
             if (rm) rm.style.display = banner ? '' : 'none';
-            var st = $('owpcState');
-            if (st) st.textContent = banner ? '已设置横幅' : '未设置 · 默认白色';
         },
 
-        /** 保存横幅（空串 = 移除） */
-        save: function (banner) {
-            OwApi.post('plugin_profile_card_save', { banner: banner }, function (r) {
-                toast(r.msg || (r.ok ? '已保存' : '保存失败'));
-                if (r.ok) OwPC.render(banner);
-            });
-        },
-
-        /** 上传图片 → 拿到 URL 直接采用（上传即保存，少一步确认） */
-        upload: function (file) {
-            if (file.size > 8 * 1024 * 1024) { toast('图片不能超过 8MB'); return; }
-            OwApi.upload('plugin_profile_card_upload', file, function (r) {
-                if (!r.ok) { toast(r.msg || '上传失败'); return; }
-                OwPC.save(r.url);
-            });
-        }
+        /** 保存成功后：以落库值为初始值，清掉脏标记 */
+        synced: function () { this.initial = this.staged; this.dirty = false; }
     };
     w.OwPC = OwPC;
 
-    /** 面板骨架（只建一次；#owSidePanels 的面板 div 跨标签切换常驻，不会被清掉） */
-    function buildSkeleton(panel) {
-        var me = OwChat.cfg.me || {};
-        panel.innerHTML =
-            '<div class="owpc-panel" id="owpcPanel">'
-            + '<div class="owpc-preview">'
-            +   '<div class="owpc-preview-banner" id="owpcPreviewBanner"></div>'
-            +   '<div class="owpc-preview-body">'
-            +     '<span class="ow-avatar ow-avatar-lg"><img src="' + esc(me.avatar) + '" alt=""></span>'
-            +     '<div class="owpc-preview-meta">'
-            +       '<div class="owpc-preview-name">' + esc(me.nickname) + '</div>'
-            +       '<div class="owpc-preview-state" id="owpcState">读取中…</div>'
-            +     '</div>'
-            +   '</div>'
-            + '</div>'
-            + '<div class="owpc-row">'
-            +   '<button class="ow-btn ow-btn-primary" id="owpcUploadBtn" type="button">上传横幅图片</button>'
-            +   '<button class="ow-btn ow-btn-ghost" id="owpcRemoveBtn" type="button" style="display:none">移除横幅</button>'
-            + '</div>'
-            + '<div class="owpc-row">'
-            +   '<input class="ow-input" id="owpcUrlInput" type="text" maxlength="500" placeholder="或粘贴图片链接（http/https）">'
-            +   '<button class="ow-btn" id="owpcUrlBtn" type="button">使用链接</button>'
-            + '</div>'
-            + '<p class="owpc-tip">横幅显示在他人查看你的资料卡时：默认白色，设置图片后头像会叠在图片上沿。过宽过高的图片会自动裁剪展示，建议选用宽幅图片。</p>'
-            + '<input type="file" id="owpcFile" accept="image/*" style="display:none">'
-            + '</div>';
-    }
+    /* ---------- 3. 包装核心：openSettings 注入 / saveSettings 提交 ---------- */
 
-    function bindPanel() {
-        var file = $('owpcFile');
-        $('owpcUploadBtn').onclick = function () { if (file) file.click(); };
-        if (file) {
-            file.onchange = function () {
-                if (!this.files || !this.files[0]) return;
-                var f = this.files[0];
-                this.value = '';                      // 清掉，允许再次选同一个文件
-                OwPC.upload(f);
-            };
+    var origOpenSettings = OwChat.openSettings;
+    OwChat.openSettings = function () {
+        origOpenSettings.call(this);
+        OwPC.inject();
+    };
+
+    var origSaveSettings = OwChat.saveSettings;
+    OwChat.saveSettings = function () {
+        origSaveSettings.call(this);                 // 先走核心的昵称保存
+        // 横幅**改了才提交**（路由是幂等 upsert，但没必要每次保存都打一次接口）。
+        // 与签名插件同一口径：两个保存相互独立、各自 toast；昵称保存失败时
+        // 核心不会关弹窗，横幅这一笔仍然有效（用户的意图就是改它）。
+        if (OwPC.dirty) {
+            var v = OwPC.staged;
+            OwApi.post('plugin_profile_card_save', { banner: v }, function (r) {
+                toast(r.msg || (r.ok ? '横幅已保存' : '横幅保存失败'));
+                if (r.ok) OwPC.synced();
+            });
         }
-        $('owpcUrlBtn').onclick = function () {
-            var v = $('owpcUrlInput').value.replace(/^\s+|\s+$/g, '');
-            if (!v) { toast('请先粘贴图片链接'); return; }
-            OwPC.save(v);
-        };
-        $('owpcRemoveBtn').onclick = function () { OwPC.save(''); };
-    }
-
-    /* ---------- 3. 注册 rail 入口（仅注册用户；游客按钮服务端根本没渲染） ---------- */
-
-    if (OwChat.cfg.me) {
-        OwChat.onRail({
-            id: TAB_ID,
-            label: '我的名片',
-            onShow: function (panel) {
-                if (!$('owpcPanel')) { buildSkeleton(panel); bindPanel(); }
-                OwPC.load();
-            }
-        });
-    }
+    };
 })(window, document);

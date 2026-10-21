@@ -4,10 +4,11 @@
  * 两部分：
  *   ① 资料卡「名片」布局 —— 由核心 onCardRendered 注入的 .owpc-banner 节点 +
  *      弹窗上的 .owpc-card 类驱动（JS 只插节点，不写一行布局）
- *   ② 左侧「名片」面板
+ *   ② 个人设置「资料」页的横幅区块（v1.0.1 从 rail 面板迁入，.owpc-set-*）
  *
  * 约定：全部走核心 --ow-* 变量，零硬编码色值；前缀 owpc-；
- *      不覆盖核心通用类（改动一律限定在 .ow-modal.owpc-card 作用域内）。
+ *      不覆盖核心通用类（改动一律限定在 .ow-modal.owpc-card /
+ *      .owpc-set-* 作用域内）。
  * ========================================================================== */
 
 /* ===================== ① 资料卡：横幅 + 头像叠压 ===================== */
@@ -74,65 +75,47 @@
     .ow-modal.owpc-card .ow-card-head > .ow-set-avatar-btn { margin-top: -28px; }
 }
 
-/* ===================== ② 「名片」面板 ===================== */
+/* ===================== ② 个人设置「资料」页的横幅区块（v1.0.1 迁入） ===================== */
 
-.owpc-panel { padding: 16px; max-width: 520px; }
-
-/* 预览 = 迷你资料卡：同一套「横幅 + 头像叠压」语言，所见即所得 */
-.owpc-preview {
+/* 预览条 = 迷你资料卡顶部：横幅 + 下半露的小头像，所见即所得。
+   底部 26px 外距是给半露头像留的位置（头像 bottom:-20px，40px 高露出一半）。 */
+.owpc-set-preview {
+    position: relative;
+    height: 84px;
+    margin-bottom: 26px;
     border: 1px solid var(--ow-border);
-    border-radius: 10px;
-    background: var(--ow-surface);
-    overflow: hidden;
-    margin-bottom: 14px;
-}
-.owpc-preview-banner {
-    height: 88px;
+    border-radius: 8px;
     background-color: var(--ow-surface);
     background-position: center center;
     background-repeat: no-repeat;
     background-size: cover;
 }
-.owpc-preview-body {
-    display: flex;
-    display: -webkit-flex;
-    align-items: flex-end;
-    -webkit-align-items: flex-end;
-    gap: 12px;
-    padding: 0 16px 14px;
-    margin-top: -26px;
-}
-.owpc-preview-body .ow-avatar {
-    -webkit-flex-shrink: 0;
-    flex-shrink: 0;
+.owpc-set-preview-av {
+    position: absolute;
+    left: 12px;
+    bottom: -20px;
+    width: 40px;
+    height: 40px;
+    line-height: 0;
+    border-radius: 50%;
     box-shadow: 0 0 0 3px var(--ow-surface);
-}
-.owpc-preview-meta { min-width: 0; padding-bottom: 2px; }
-.owpc-preview-name {
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--ow-text-title);
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }
-.owpc-preview-state { font-size: 12px; color: var(--ow-text-sub); margin-top: 2px; }
+.owpc-set-preview-av img { width: 100%; height: 100%; display: block; }
 
 /* 操作行：按钮组 + 链接输入行，全部复用核心 .ow-btn / .ow-input */
-.owpc-row {
+.owpc-set-row {
     display: flex;
     display: -webkit-flex;
     align-items: center;
     -webkit-align-items: center;
     gap: 8px;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
 }
-.owpc-row .ow-input { -webkit-flex: 1 1 auto; flex: 1 1 auto; min-width: 0; }
-.owpc-tip { font-size: 12px; color: var(--ow-text-sub); line-height: 1.6; margin: 4px 0 0; }
+.owpc-set-row .ow-input { -webkit-flex: 1 1 auto; flex: 1 1 auto; min-width: 0; }
 
-/* 窄屏：链接行的输入框独占一行，按钮落到下一行（不挤成两条细条） */
-@media (max-width: 720px) {
-    .owpc-panel { padding: 12px; }
-    .owpc-row { -webkit-flex-wrap: wrap; flex-wrap: wrap; }
-    .owpc-row .ow-input { -webkit-flex: 1 1 100%; flex: 1 1 100%; }
+/* 窄屏（设置弹窗导航横排的同档断点）：链接输入框独占一行，按钮落到下一行 */
+@media (max-width: 560px) {
+    .owpc-set-row { -webkit-flex-wrap: wrap; flex-wrap: wrap; }
+    .owpc-set-row .ow-input { -webkit-flex: 1 1 100%; flex: 1 1 100%; }
 }

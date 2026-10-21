@@ -1,10 +1,10 @@
 <?php
 /**
- * 用户名片插件（profile-card）v1.0.0
+ * 用户名片插件（profile-card）v1.0.1
  *
  * 功能：
  *   - 资料卡头部改为「名片」布局：顶部横幅背景图（默认白色）+ 头像叠压
- *   - 用户在左侧 rail「名片」面板里上传图片 / 粘贴链接 / 移除自己的横幅
+ *   - 用户在「个人设置 → 资料」里上传图片 / 粘贴链接 / 移除自己的横幅
  *   - 横幅 URL 随核心 user_card 接口一起下发（user.card 钩子写入 u.banner），
  *     前端无需再打一次接口
  *
@@ -110,28 +110,16 @@ Plugin::on('user.card', function (array &$u, array $actor): void {
     $u['banner'] = owpcBannerOf((int)($u['id'] ?? 0));
 });
 
-/* ===================== 左侧 rail 入口 ===================== */
+/* ===================== 入口说明 ===================== */
 
 /**
- * 「名片」入口按钮。与通知入口同一口径：只对注册用户开放（v1.3.52 起）——
- * 游客没有账号，给一个点进去只能吃「请先登录」的标签不如不给。
- * 登录态判定与 twofa / passkey 同一做法：直接读 $_SESSION['uid']。
+ * v1.0.1 起横幅管理**移入个人设置**（资料页），不再占左侧 rail 入口：
+ * 设置弹窗是站点既定的「改自己资料」所在地（昵称 / 头像都在这），横幅作为
+ * 同类资料放这里最顺；单独一个 rail 面板反而多一处入口、两套状态。
+ * 注入方式与 signature 插件同一口径：前端包装 OwChat.openSettings /
+ * OwChat.saveSettings（核心在保存按钮注释里明确「插件注入的字段挂在
+ * saveSettings 上」），服务端零改动。
  */
-Plugin::on('sidebar.rail', function (): string {
-    if (empty($_SESSION['uid'])) return '';
-    // 线性风格名片图标（stroke=currentColor），与核心 ow_icon 同一套语言；
-    // 自有字形只在本插件出现，不进核心注册表。
-    $svg = '<svg class="ow-ico" width="20" height="20" viewBox="0 0 24 24" fill="none"'
-         . ' stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"'
-         . ' xmlns="http://www.w3.org/2000/svg" aria-hidden="true">'
-         . '<rect x="3" y="5" width="18" height="14" rx="2"/>'
-         . '<circle cx="9" cy="11" r="2"/>'
-         . '<path d="M5.5 16.6c.6-1.6 1.9-2.6 3.5-2.6s2.9 1 3.5 2.6"/>'
-         . '<path d="M14 10h4.5M14 13.5h4.5"/></svg>';
-    return '<button class="ow-rail-btn" data-tab="profilecard" type="button"'
-         . ' title="我的名片" aria-label="我的名片">' . $svg
-         . '<span class="ow-rail-lb">名片</span></button>';
-});
 
 /* ===================== 静态资源 ===================== */
 
