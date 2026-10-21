@@ -1,0 +1,384 @@
+/**
+ * 用户管理插件 - 后台样式（v1.1.0 新增「登录网络 / IP 封禁」）
+ *
+ * 纪律：
+ *   - 只引核心 --ow-* 变量，不写死任何颜色（深浅两套主题自动跟随）；
+ *   - 类名一律 owum- 前缀，**不覆盖核心选择器** —— 本文件随 page.head 在
+ *     每个页面加载（插件后台页与聊天页都会引到），裸写 .ow-card / .ow-table
+ *     等于把全站样式改一遍；
+ *   - 移动端优先：所有横向排列在 560px 以下改竖排，网格用 auto-fit 自动降列。
+ */
+
+/* ---------- 页签（用户查询 / IP 封禁） ----------
+   复用核心 .ow-tabs，但两处必须按后台主区的场景改：
+   ① 外边距：那个 10px 12px 是给 240px 侧栏预留的，摆在主区里左边会多出一截；
+   ② 宽度：核心的 .ow-tab 是 flex:1（侧栏里三个标签要均分整条），
+      主区宽得多，照搬会让一个标签横跨半个屏幕 —— 改成按内容宽度 + 整条 inline-flex。 */
+.owum-tabs {
+    display: -webkit-inline-flex; display: inline-flex;
+    margin: 0 0 14px;
+    padding: 3px;
+    max-width: 100%;
+}
+.owum-tabs .ow-tab {
+    -webkit-flex: 0 0 auto; flex: 0 0 auto;
+    padding: 7px 18px;
+}
+.owum-pane { display: block; }
+.owum-hide { display: none; }
+
+/* ---------- 搜索行 ---------- */
+.owum-search {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    gap: 10px; -webkit-gap: 10px;
+}
+.owum-search .ow-input { flex: 1; -webkit-flex: 1; min-width: 0; }
+
+/* ---------- 通用小件 ---------- */
+/* IP / 接口地址这类「机器文本」用等宽字体：位数对齐，一眼能看出是不是同一个网段 */
+.owum-mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
+}
+.owum-head-sub { font-size: 12px; color: var(--ow-text-sub); }
+.owum-empty {
+    padding: 22px 6px;
+    text-align: center;
+    font-size: 13px;
+    color: var(--ow-text-sub);
+}
+
+/* ---------- 封禁表单 / 归属地表单 ---------- */
+.owum-banform {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.6fr) 108px auto;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 4px;
+}
+.owum-geoform {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 8px;
+    align-items: center;
+}
+
+/* ---------- 封禁规则列表 ---------- */
+.owum-banlist { margin-top: 10px; }
+.owum-ban-row {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    justify-content: space-between; -webkit-justify-content: space-between;
+    gap: 12px; -webkit-gap: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--ow-border);
+    border-radius: 10px;
+    background: var(--ow-bg-sub);
+}
+.owum-ban-row + .owum-ban-row { margin-top: 8px; }
+/* 已过期但还没删的规则：退到背景里，不占视觉重量 */
+.owum-ban-row.is-dead { opacity: .6; }
+.owum-ban-main { min-width: 0; -webkit-flex: 1; flex: 1; }
+.owum-ban-line {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    flex-wrap: wrap; -webkit-flex-wrap: wrap;
+    gap: 8px; -webkit-gap: 8px;
+}
+.owum-ban-ip { font-size: 14px; font-weight: 600; color: var(--ow-text-title); }
+.owum-ban-meta {
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--ow-text-sub);
+    word-break: break-word;
+}
+
+/* ---------- 状态胶囊 ---------- */
+.owum-pill {
+    display: inline-block;
+    padding: 1px 8px;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 16px;
+    border-radius: 3px;
+    background: var(--ow-bg-sub);
+    color: var(--ow-text-sub);
+    white-space: nowrap;
+}
+.owum-pill-red { background: var(--ow-warn-bg); color: var(--ow-red); }
+.owum-pill-green { background: var(--ow-blue-light); color: var(--ow-primary-dark); }
+/* 归属地等中性信息用描边胶囊：比实心块轻，长地名也不会变成色块 */
+.owum-chip {
+    display: inline-block;
+    padding: 0 8px;
+    font-size: 11px;
+    line-height: 18px;
+    border: 1px solid var(--ow-border);
+    border-radius: 9px;
+    color: var(--ow-text-sub);
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: 1px;
+}
+
+/* ---------- 高风险 IP ---------- */
+.owum-top-row {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    gap: 12px; -webkit-gap: 12px;
+    padding: 10px 2px;
+    border-bottom: 1px solid var(--ow-border);
+}
+.owum-top-row:last-child { border-bottom: none; }
+.owum-top-rank {
+    flex: 0 0 22px; -webkit-flex: 0 0 22px;
+    font-size: 12px;
+    color: var(--ow-text-sub);
+    font-variant-numeric: tabular-nums;
+}
+.owum-top-main { min-width: 0; -webkit-flex: 1; flex: 1; }
+.owum-top-n { font-size: 13px; color: var(--ow-text-sub); white-space: nowrap; }
+.owum-top-n b { font-size: 15px; color: var(--ow-orange); font-variant-numeric: tabular-nums; }
+
+/* ============================================================
+   安全画像（弹窗）
+   ============================================================ */
+.owum-modal { padding: 22px 24px 24px; }
+
+/* 头部：头像 + 昵称 + 标签 + 右侧动作 */
+.owum-phead {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    gap: 14px; -webkit-gap: 14px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--ow-border);
+    margin-bottom: 16px;
+}
+.owum-phead .ow-avatar { flex: 0 0 auto; -webkit-flex: 0 0 auto; }
+.owum-pid { min-width: 0; -webkit-flex: 1; flex: 1; }
+.owum-pname {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    flex-wrap: wrap; -webkit-flex-wrap: wrap;
+    gap: 8px; -webkit-gap: 8px;
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--ow-text-title);
+    line-height: 1.3;
+}
+.owum-psub {
+    margin-top: 3px;
+    font-size: 12px;
+    color: var(--ow-text-sub);
+}
+.owum-phead-act { flex: 0 0 auto; -webkit-flex: 0 0 auto; }
+
+/* 四张主卡：最近 IP / 归属地 / 登录次数 / 关联账号
+   —— 桌面两列、手机一列（最小 220px 自动降列，不必写媒体查询） */
+.owum-hero {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
+    margin-bottom: 16px;
+}
+.owum-hcard {
+    position: relative;
+    padding: 13px 14px 12px;
+    border: 1px solid var(--ow-border);
+    border-radius: 10px;
+    background: var(--ow-bg-sub);
+    min-width: 0;
+}
+/* 命中封禁的卡片换一条红边：与管理页的「红色=处置中」保持同一套语义 */
+.owum-hcard.is-banned { border-color: var(--ow-red); }
+.owum-hk {
+    font-size: 12px;
+    color: var(--ow-text-sub);
+    margin-bottom: 6px;
+}
+.owum-hv {
+    font-size: 19px;
+    font-weight: 600;
+    color: var(--ow-text-title);
+    line-height: 1.25;
+    word-break: break-all;
+}
+/* 「未解析 / 解析中」不是结论，只是状态：降一档字号和颜色，
+   免得一个占位文案在主卡里比真实数据还抢眼 */
+.owum-hv-muted { font-size: 15px; font-weight: 400; color: var(--ow-text-sub); }
+.owum-hv-num { font-variant-numeric: tabular-nums; }
+.owum-hv-sub { font-size: 13px; font-weight: 400; color: var(--ow-text-sub); }
+.owum-hf {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    flex-wrap: wrap; -webkit-flex-wrap: wrap;
+    gap: 6px; -webkit-gap: 6px;
+    margin-top: 8px;
+}
+
+/* 小指标格 */
+.owum-tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+    gap: 1px;
+    background: var(--ow-border);
+    border: 1px solid var(--ow-border);
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 18px;
+}
+/* 1px 缝隙 + 底色 = 发丝线分隔，比分给每格写边框干净（也不会出现双线） */
+.owum-tile {
+    background: var(--ow-bg);
+    padding: 10px 12px;
+    min-width: 0;
+}
+.owum-tile b {
+    display: block;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--ow-text-title);
+    line-height: 1.35;
+    font-variant-numeric: tabular-nums;
+    /* 时间类取值（10-22 00:41）比纯数字宽，必须 nowrap：
+       否则会被挤成「10-22 00:4 / 1」两行，数字反倒更难读 */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.owum-tile b.owum-tile-txt { font-size: 13px; }
+.owum-tile span { font-size: 11px; color: var(--ow-text-sub); }
+
+/* 分区标题 */
+.owum-sec {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    flex-wrap: wrap; -webkit-flex-wrap: wrap;
+    gap: 8px; -webkit-gap: 8px;
+    margin: 18px 0 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ow-text-title);
+}
+.owum-sec span { font-size: 12px; font-weight: 400; color: var(--ow-text-sub); }
+
+/* 登录网络行 */
+.owum-nets { display: block; }
+.owum-net {
+    display: flex; display: -webkit-flex;
+    align-items: flex-start; -webkit-align-items: flex-start;
+    gap: 10px; -webkit-gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--ow-border);
+    border-radius: 10px;
+}
+.owum-net + .owum-net { margin-top: 8px; }
+/* 命中封禁：只换红边 + 胶囊，不铺警示底色 —— 浅黄底配红边两种语义打架，
+   而且这一行本身要当「记录」读，不是当「警告块」读 */
+.owum-net.is-banned { border-color: var(--ow-red); }
+.owum-net-main { min-width: 0; -webkit-flex: 1; flex: 1; }
+.owum-net-line {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    flex-wrap: wrap; -webkit-flex-wrap: wrap;
+    gap: 8px; -webkit-gap: 8px;
+}
+.owum-net-ip {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ow-text-title);
+    word-break: break-all;
+}
+.owum-net-meta {
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--ow-text-sub);
+    line-height: 1.6;
+}
+.owum-net-meta em { font-style: normal; color: var(--ow-orange); }
+/* UA 只留一行：它是排错用的，不该把每条网络记录撑成三行高 */
+.owum-net-ua {
+    margin-top: 2px;
+    font-size: 11px;
+    color: var(--ow-text-sub);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+}
+.owum-net-act { flex: 0 0 auto; -webkit-flex: 0 0 auto; }
+
+/* 同 IP 其他账号 */
+.owum-shared {
+    display: flex; display: -webkit-flex;
+    flex-wrap: wrap; -webkit-flex-wrap: wrap;
+    gap: 8px; -webkit-gap: 8px;
+}
+.owum-shared-item {
+    display: inline-flex; display: -webkit-inline-flex;
+    align-items: center; -webkit-align-items: center;
+    gap: 6px; -webkit-gap: 6px;
+    max-width: 100%;
+    padding: 5px 10px 5px 6px;
+    border: 1px solid var(--ow-border);
+    border-radius: 999px;
+    background: var(--ow-bg-sub);
+    font-size: 12px;
+    color: var(--ow-text);
+    cursor: pointer;
+}
+.owum-shared-item:hover { border-color: var(--ow-primary); color: var(--ow-primary-dark); }
+.owum-shared-item i {
+    font-style: normal;
+    font-size: 11px;
+    color: var(--ow-text-sub);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.owum-shared-item img {
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex: 0 0 auto; -webkit-flex: 0 0 auto;
+}
+
+/* 账号信息沿用核心 .ow-card-meta，只补一条上边距 */
+.owum-meta { margin-top: 6px; }
+
+/* 弹窗里的小动作按钮不至于把行撑高 */
+.owum-net-act .ow-btn,
+.owum-ban-row .ow-btn { white-space: nowrap; }
+
+/* ============================================================
+   移动端：560px 以下全部改竖排
+   —— 后台页在手机上要能单手操作，横向四列表单一律不可用
+   ============================================================ */
+@media (max-width: 560px) {
+    .owum-search { flex-wrap: wrap; -webkit-flex-wrap: wrap; }
+    .owum-search .ow-input { flex: 1 1 100%; -webkit-flex: 1 1 100%; }
+    .owum-search .ow-btn { width: 100%; }
+
+    .owum-banform { grid-template-columns: 1fr; }
+    .owum-banform .ow-btn { width: 100%; }
+    .owum-geoform { grid-template-columns: 1fr; }
+    .owum-geoform .ow-btn { width: 100%; }
+
+    .owum-ban-row { flex-wrap: wrap; -webkit-flex-wrap: wrap; }
+    .owum-ban-row .ow-btn { width: 100%; }
+
+    .owum-hero { grid-template-columns: 1fr; }
+    .owum-tiles { grid-template-columns: repeat(2, 1fr); }
+
+    .owum-phead { flex-wrap: wrap; -webkit-flex-wrap: wrap; }
+    .owum-phead-act { width: 100%; }
+    .owum-phead-act .ow-btn { width: 100%; }
+
+    .owum-net { flex-wrap: wrap; -webkit-flex-wrap: wrap; }
+    .owum-net-act { width: 100%; }
+    .owum-net-act .ow-btn { width: 100%; }
+
+    .owum-modal { padding: 18px 16px 20px; }
+}
