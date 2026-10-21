@@ -140,6 +140,7 @@ function ck(name, actual, expect) {
   ck('昵称行仍在', await page.locator('#owModal .ow-card-name').count(), 1);
   ck('弹窗加宽到 420px（面板体量）', await page.$eval('#owModal', el => getComputedStyle(el).maxWidth), '420px');
   ck('昵称 20px 标题级', await page.$eval('#owModal .ow-card-name', el => getComputedStyle(el).fontSize), '20px');
+  ck('昵称无白色柔光（站方 v1.0.5 去掉）', await page.$eval('#owModal .ow-card-name', el => getComputedStyle(el).textShadow), 'none');
   ck('头像收小到 64px（站方：再小一点）', await page.$eval('#owModal .ow-card-head > .ow-set-avatar-btn .ow-avatar', el => getComputedStyle(el).width), '64px');
   ck('信息行变数据胶囊', await page.$eval('#owModal .ow-card-meta-row', el => getComputedStyle(el).borderRadius), '8px');
   ck('顶部无彩色边框（站方取消）', await page.$eval('#owModal .owpc-banner', el => getComputedStyle(el).borderTopWidth), '0px');

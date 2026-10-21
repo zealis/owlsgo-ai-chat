@@ -125,20 +125,19 @@
 }
 
 /* 昵称：主页主标题。字重 600、字号 20px（消息区昵称是 14px，这里是标题级）。
-   文字浮在横向图片上，给一圈同色柔光做保底 —— 深色横幅图上也不会糊成一片；
-   光晕用 --ow-surface（卡面色），深浅主题各自贴合。 */
+   ⚠️ 不加 text-shadow 柔光（v1.0.5 站方要求去掉）：白色光晕在浅色横幅图上
+   看成一团白雾，比「深色图上偶尔不够清晰」更难接受。 */
 .ow-modal.owpc-card .ow-card-name {
     font-size: 20px;
     font-weight: 600;
     letter-spacing: -.01em;
     color: var(--ow-text-title);
-    text-shadow: 0 0 6px var(--ow-surface), 0 0 2px var(--ow-surface);
 }
 /* 身份标签在昵称右侧，与标题同排时略微下移，别顶在天灵盖上 */
 .ow-modal.owpc-card .ow-card-name-row { align-items: center; -webkit-align-items: center; }
 .ow-modal.owpc-card .ow-card-badges-inline { margin-top: 0; }
 
-/* ID：等宽数字 + 字距，读起来像「编号」而不是一句话 */
+/* ID：等宽数字 + 字距，读起来像「编号」而不是一句话（同样不加柔光） */
 .ow-modal.owpc-card .ow-card-sub {
     margin-top: 6px;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
@@ -146,7 +145,6 @@
     letter-spacing: .12em;
     text-transform: uppercase;
     color: var(--ow-text-sub);
-    text-shadow: 0 0 5px var(--ow-surface), 0 0 2px var(--ow-surface);
 }
 
 /* 信息区：分隔线保留（数据段起点），行改成可换行的胶囊 */
