@@ -103,7 +103,7 @@
                 // 头像：与核心 avatarHtml 同款兜底（无头像 = 首字 + 按昵称长度取色）
                 var av;
                 if (u.avatar) {
-                    av = '<span class="ow-avatar ow-avatar-lg"><img src="' + esc(u.avatar) + '" alt=""></span>';
+                    av = '<span class="ow-avatar ow-avatar-lg"><img src="' + esc(u.avatar) + '" alt="" loading="lazy" decoding="async"></span>';
                 } else {
                     var colors = ['#0099FF', '#00558F', '#A05000', '#237804', '#5B21B6'];
                     var c = colors[(u.nickname || '').length % colors.length];

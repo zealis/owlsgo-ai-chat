@@ -788,7 +788,7 @@
                         + '<button type="button" class="ow-thumb-x" data-tm-act="cmtrm" data-i="' + i + '" title="移除" aria-label="移除">'
                         + ico('close', 12) + '</button></span>';
                 } else {
-                    h += '<span class="ow-tm-thumb"><img src="' + esc(m.url) + '" alt="">'
+                    h += '<span class="ow-tm-thumb"><img src="' + esc(m.url) + '" alt="" loading="lazy" decoding="async">'
                         + '<button type="button" class="ow-thumb-x" data-tm-act="cmtrm" data-i="' + i + '" title="移除" aria-label="移除">'
                         + ico('close', 12) + '</button></span>';
                 }
@@ -1061,7 +1061,7 @@
                         + '<span class="ow-tm-chip-s">' + esc(sizeText(m.size)) + '</span>'
                         + '<button type="button" class="ow-thumb-x" data-i="' + i + '" title="移除" aria-label="移除">' + ico('close', 12) + '</button></span>';
                 } else {
-                    h += '<span class="ow-tm-thumb"><img src="' + esc(m.url) + '" alt="">'
+                    h += '<span class="ow-tm-thumb"><img src="' + esc(m.url) + '" alt="" loading="lazy" decoding="async">'
                         + '<button type="button" class="ow-thumb-x" data-i="' + i + '" title="移除" aria-label="移除">' + ico('close', 12) + '</button></span>';
                 }
             }

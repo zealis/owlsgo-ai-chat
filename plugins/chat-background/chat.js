@@ -263,7 +263,10 @@
         for (var k = 0; k < thumbs.length; k++) {
             var url = previews[k];
             if (!url) continue;
-            thumbs[k].style.backgroundImage = "url('" + String(url).replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "')";
+            // v1.5.19：背景库缩略图用的是原图直链，屏外先不请求；
+            // 老核心没有 OwLazy 时退回原来的立即设置。
+            if (w.OwLazy) OwLazy.bg(thumbs[k], url);
+            else thumbs[k].style.backgroundImage = "url('" + String(url).replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "')";
         }
     }
 

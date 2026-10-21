@@ -166,7 +166,7 @@
             var h = '';
             for (var i = 0; i < imgs.length; i++) {
                 h += '<span class="ow-cr-shot">'
-                   + '<img src="' + esc(imgs[i]) + '" alt="举报截图 ' + (i + 1) + '">'
+                   + '<img src="' + esc(imgs[i]) + '" alt="举报截图 ' + (i + 1) + '" loading="lazy" decoding="async">'
                    + '<a href="javascript:;" class="ow-cr-shot-del" data-i="' + i + '"'
                    + ' title="移除这张截图" aria-label="移除这张截图">✕</a></span>';
             }
@@ -290,7 +290,7 @@
                 // 点开用**站内灯箱**（OwChat.viewImg，与消息里的图片同一套；它的 z-index 200
                 // 高于弹窗遮罩 100，所以能盖在弹窗上放大，不必新开标签页）
                 h += '<img src="' + esc(imgs[i]) + '" alt="举报截图 ' + (i + 1) + '"'
-                   + ' title="点击查看大图" onclick="OwChat.viewImg(this.src)">';
+                   + ' loading="lazy" decoding="async" title="点击查看大图" onclick="OwChat.viewImg(this.src)">';
             }
             h += '</div>';
         }
@@ -450,7 +450,7 @@
     function boxMsgHtml(m, isAdmin, av, nick) {
         var imgs = m.images || [], ih = '', k;
         for (k = 0; k < imgs.length; k++) {
-            ih += '<img class="ow-msg-img" src="' + esc(imgs[k]) + '" alt="举报截图" onclick="OwChat.viewImg(this.src)">';
+            ih += '<img class="ow-msg-img" src="' + esc(imgs[k]) + '" alt="举报截图" loading="lazy" decoding="async" onclick="OwChat.viewImg(this.src)">';
         }
         if (ih) ih = '<div class="ow-notice-imgs">' + ih + '</div>';
         // 时间与「系统通知」那条流同一个轮子（ChatList.time），两边看着才像一回事
@@ -459,7 +459,7 @@
             : new Date((m.at || 0) * 1000).toLocaleString();
         return '<div class="ow-msg ow-msg-notice ow-cr-boxmsg' + (parseInt(m.unread, 10) ? ' is-unread' : '') + '">'
             + (av ? '<span class="ow-msg-av"><span class="ow-avatar"><img src="' + esc(av)
-                  + '" alt="' + esc(nick) + '"></span></span>' : '')
+                  + '" alt="' + esc(nick) + '" loading="lazy" decoding="async"></span></span>' : '')
             + '<div class="ow-msg-body">'
             + '<div class="ow-msg-meta"><span class="ow-msg-nick">' + esc(nick) + '</span>'
             + '<span class="ow-msg-time">' + esc(tm) + '</span></div>'

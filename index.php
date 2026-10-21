@@ -1554,7 +1554,7 @@ function renderInstall(string $err): void
        . owThemeBootstrap()
        . '<link rel="stylesheet" href="assets/css/owlsgo.css?v=' . OWLSGO_VERSION . '"></head>'
        . '<body class="ow-auth-body"><div class="ow-auth-card" style="max-width:520px">'
-       . '<div class="ow-auth-logo"><img src="assets/img/logo.svg" alt="Owlsgo-Chat"><h1>安装 Owlsgo-Chat</h1><p>纯原生 PHP · 零依赖 · v' . OWLSGO_VERSION . '</p></div>'
+       . '<div class="ow-auth-logo"><img src="assets/img/logo.svg" alt="Owlsgo-Chat" loading="eager"><h1>安装 Owlsgo-Chat</h1><p>纯原生 PHP · 零依赖 · v' . OWLSGO_VERSION . '</p></div>'
        . ($err ? '<div class="ow-alert ow-alert-error">数据库连接失败：' . Sec::e($err) . '（SQLite 模式无需配置，可直接继续）</div>' : '')
        . '<form id="owInstallForm">'
        . '<div class="ow-form-item"><label>数据库类型</label><select name="driver" class="ow-input" onchange="document.getElementById(\'owDbMore\').style.display=this.value===\'sqlite\'?\'none\':\'block\'">'
@@ -1592,7 +1592,7 @@ function renderAuth(string $mode): void
     pageHead(['login' => '登录', 'register' => '注册', 'forgot' => '找回密码'][$mode]);
     $titles = ['login' => '欢迎回来', 'register' => '创建账号', 'forgot' => '找回密码'];
     echo '<body class="ow-auth-body" data-lang="' . ow_lang() . '"><div class="ow-auth-card">'
-       . '<div class="ow-auth-logo"><img src="assets/img/logo.svg" alt="Owlsgo-Chat"><h1>' . $titles[$mode] . '</h1>'
+       . '<div class="ow-auth-logo"><img src="assets/img/logo.svg" alt="Owlsgo-Chat" loading="eager"><h1>' . $titles[$mode] . '</h1>'
        . '<p>' . Sec::e(DB::setting('site_name', 'Owlsgo-Chat')) . '</p></div>';
     if ($mode === 'login') {
         // 从注册页跳转而来：提示注册成功、需手动登录（注册不自动登录）
@@ -1611,7 +1611,7 @@ function renderAuth(string $mode): void
            . '<div class="ow-form-item"><label>密码</label><input class="ow-input" type="password" name="password" required autocomplete="current-password"></div>'
            . ($cvHtml !== '' ? $cvHtml
                : '<div class="ow-form-item" id="owCaptchaRow" style="display:none"><label>图形验证码</label>'
-                 . '<div class="ow-captcha-row"><input class="ow-input" name="captcha"><img src="?action=captcha" id="owCaptchaImg" alt="验证码" title="点击刷新"></div></div>')
+                 . '<div class="ow-captcha-row"><input class="ow-input" name="captcha"><img src="?action=captcha" id="owCaptchaImg" alt="验证码" title="点击刷新" loading="eager"></div></div>')
            . '<button class="ow-btn ow-btn-primary ow-btn-block" type="submit">登 录</button><div class="ow-form-msg"></div></form>'
            . '<div class="ow-auth-links"><a href="?page=register">注册账号</a><a href="?page=forgot">忘记密码</a><a href="?page=chat">游客登录</a></div>';
     } elseif ($mode === 'register') {
@@ -1734,7 +1734,7 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
     // v1.5.0：用户胶囊（原 #owBrandMe）已挪进账号菜单首行，品牌条只剩 logo + 站点名。
     echo '<div class="ow-head">';
     echo '<header class="ow-brand">'
-       . '<img src="assets/img/logo.svg" alt="logo"><span class="ow-brand-name">' . Sec::e(DB::setting('site_name', 'Owlsgo-Chat')) . '</span>'
+       . '<img src="assets/img/logo.svg" alt="logo" loading="eager"><span class="ow-brand-name">' . Sec::e(DB::setting('site_name', 'Owlsgo-Chat')) . '</span>'
        . '</header>';
 
     // 消息顶栏：v1.5.0 从 .ow-main 内提到顶部带子右侧（DOM 位置变了，id 一个没动）
@@ -1908,7 +1908,7 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
 
     // 浮层：资料卡 / 图片预览 / 设置 / 密码房间
     echo '<div class="ow-modal-mask" id="owModalMask" style="display:none"><div class="ow-modal" id="owModal"></div></div>';
-    echo '<div class="ow-img-viewer" id="owImgViewer" style="display:none"><img id="owImgViewerImg" alt="预览"></div>';
+    echo '<div class="ow-img-viewer" id="owImgViewer" style="display:none"><img id="owImgViewerImg" alt="预览" loading="eager"></div>';
     echo '<div class="ow-ctx-menu" id="owCtxMenu" style="display:none"></div>';
     echo '<div class="ow-mask" id="owMask"></div>';
     echo '<div class="ow-toast" id="owToast" style="display:none"></div>';

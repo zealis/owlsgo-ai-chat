@@ -86,7 +86,7 @@
             div.innerHTML =
                 '<label>资料卡横幅</label>'
                 + '<div class="owpc-set-preview" id="owpcSetPreview">'
-                +   '<span class="owpc-set-preview-av"><img src="' + esc(me.avatar) + '" alt=""></span>'
+                +   '<span class="owpc-set-preview-av"><img src="' + esc(me.avatar) + '" alt="" loading="lazy" decoding="async"></span>'
                 + '</div>'
                 + '<div class="owpc-set-row">'
                 +   '<button class="ow-btn" id="owpcSetUploadBtn" type="button">上传图片</button>'

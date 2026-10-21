@@ -136,8 +136,22 @@ Plugin::asset('js', 'user-manager/admin.js');   // 相对插件目录；css 同�
 
 - 合并输出地址：`?action=assets&type=js` / `?action=assets&type=css`（免签名 GET，纯静态无写操作）。
 - **后台页面**已自动引入 `<script src="?action=assets&type=js">`：需要后台交互的插件在此声明 JS，交互对象挂为全局（如 `window.OwUM`），页面 HTML 里用 `onclick="OwUM.search()"` 调用。
-- 脚本可复用主程序暴露的全局：`OwApi`（AJAX + 自动签名）、`OwBusy`（按钮防重入，见下节）、`esc`、`toast`、`fmtUid`、`opts`、`ROLE_CN`、`OwAdmin`、`OwChat`。不要重复实现这些能力。
+- 脚本可复用主程序暴露的全局：`OwApi`（AJAX + 自动签名）、`OwBusy`（按钮防重入）、`OwLazy`（图片懒加载）、`esc`、`toast`、`fmtUid`、`opts`、`ROLE_CN`、`OwAdmin`、`OwChat`。不要重复实现这些能力。
 - 前端可从 `OwChat.cfg.site_url` 取当前站点根地址（后端 `ow_site_url()`，未配置时为自动识别值）。
+
+### 站点地址（ow_site_url / ow_abs_url）
+
+需要生成绝对 URL（邮件链接、分享、回调地址）时用主程序助手，不要自行拼 `$_SERVER`：
+
+```php
+ow_site_url();                 // 站点根地址：后台「固定网站地址」优先，留空则自动识别（兼容反代头与子目录）
+ow_site_url(true);             // 只取「手动配置」的值，自动识别不参与
+ow_abs_url('uploads/a.jpg');    // 拼接绝对地址；第二个参数默认 true（仅手动配置生效），
+                                // 未配置时原样返回相对路径，避免自动识别误判写入不可访问的地址
+```
+
+- 自动识别顺序：`X-Forwarded-Proto` / `HTTPS` → `X-Forwarded-Host` / `Host` / `SERVER_NAME`（仅兜底时补非标准端口）→ 子目录部署路径。容器反代下不会误拼服务器内部端口（如 `:80`）。
+- 后台设置项 `site_url`：留空自动识别；填写时后端校验必须以 `http://` 或 `https://` 开头。
 
 ## 前端按钮防重入（OwBusy，v1.5.18 起）
 
@@ -209,19 +223,71 @@ fetch('/…').finally(function () { release(); });
 - **不要**给「本来就该连点」的按钮加锁（例如发送消息、翻页、表情切换）；防重入只针对会重复提交副作用的动作。
 - 原生按钮被禁用后不会再触发 `click`，所以服务端仍然必须自己做幂等/频率校验 —— 前端锁只防手抖，不防恶意并发。
 
-### 站点地址（ow_site_url / ow_abs_url）
+## 图片懒加载（OwLazy，v1.5.19 起）
 
-需要生成绝对 URL（邮件链接、分享、回调地址）时用主程序助手，不要自行拼 `$_SERVER`：
+本站**不引入 lazysizes**：零依赖是硬约束，现代浏览器原生 `loading="lazy"` 已覆盖大多数场景。
+`OwLazy` 只补原生方案顾不到的两块，并把全站写法收口。
 
-```php
-ow_site_url();                 // 站点根地址：后台「固定网站地址」优先，留空则自动识别（兼容反代头与子目录）
-ow_site_url(true);             // 只取「手动配置」的值，自动识别不参与
-ow_abs_url('uploads/a.jpg');    // 拼接绝对地址；第二个参数默认 true（仅手动配置生效），
-                                // 未配置时原样返回相对路径，避免自动识别误判写入不可访问的地址
+### 自动兜底
+
+- 首屏与之后动态插入的 `<img>` 会自动补 `loading="lazy" decoding="async"`（MutationObserver 兜底）。
+- 但**生成 HTML 时请直接写属性**：浏览器可能在 MutationObserver 回调之前就开始取图，
+  自动补属性只能兜住「还没开始加载」的图。
+- 先拼片段、后插入的场景，可在插入前调 `OwLazy.scan(fragment)`。
+- `loading="lazy"` 是浏览器的**加载提示**，不是严格保证；对「屏外绝对不许请求」的
+  大图/长列表，请用下面的 `data-src` + IntersectionObserver 方案。
+
+### 哪些不懒加载
+
+- 图片或任一祖先带 `data-ow-eager`，或图片自己写了 `loading="eager"`；
+- 核心自动排除：`.ow-auth-logo`、`.ow-brand`、`.ow-img-viewer`、`.ow-captcha-row`
+  （登录 Logo / 品牌 Logo / 灯箱大图 / 图形验证码）；
+- `src` 是 `data:` / `blob:` 的本地即时预览（附件待发区）——延后只会让预览晚一拍；
+- CSS `background-image` 默认不动：聊天主背景、名片横幅都是一打开就该看到的，延后反而闪白。
+
+### `data-src`：老内核兜底
+
+原生 lazy 只认 `src`，不认 `data-src`。需要兼容没有原生 lazy 的老内核时这样写：
+
+```html
+<img data-src="https://…/large.jpg" data-srcset="… 1x, … 2x" alt="">
 ```
 
-- 自动识别顺序：`X-Forwarded-Proto` / `HTTPS` → `X-Forwarded-Host` / `Host` / `SERVER_NAME`（仅兜底时补非标准端口）→ 子目录部署路径。容器反代下不会误拼服务器内部端口（如 `:80`）。
-- 后台设置项 `site_url`：留空自动识别；填写时后端校验必须以 `http://` 或 `https://` 开头。
+`OwLazy` 用 IntersectionObserver（提前 600px）接管，命中后才写 `src` / `srcset`；
+没有 IntersectionObserver 的浏览器立即加载，不会把图卡死。现代浏览器同样走这条观察链。
+
+> 用了 `data-src` 的图如果要接灯箱，点击参数请取 `this.getAttribute('data-src')||this.src`
+> （或先 `OwLazy.reveal(this)`），否则拿到的可能是空串。
+
+### CSS 背景图：显式调用
+
+```js
+OwLazy.bg(el, url);   // 进入视口附近才写入 el.style.background-image
+OwLazy.bg(el, '');    // 清除
+```
+
+只在**明确需要**时用（例如背景库几十张原图缩略图）；首屏背景不要用。
+`chat-background` 的前后台背景库已接入。
+
+### API
+
+| 方法 | 说明 |
+|---|---|
+| `OwLazy.scan(root)` | 扫描元素 / DocumentFragment / document，给其中的 `<img>` 补属性 |
+| `OwLazy.stamp(img)` | 处理单张图片（幂等） |
+| `OwLazy.observe(img)` | 让带 `data-src` 的图片立即参与观察 |
+| `OwLazy.reveal(img)` | 立即把 `data-src` / `data-srcset` 落到真实属性 |
+| `OwLazy.bg(el, url)` | 显式懒加载 CSS 背景图（`url` 传空串清除） |
+| `OwLazy.eager(img)` | 标记为不懒加载（等价于 `data-ow-eager`） |
+| `OwLazy.native` | 只读诊断：浏览器是否原生支持 `loading="lazy"` |
+
+### 不要懒加载
+
+- 首屏 Logo、图形验证码、灯箱大图；
+- 上传后的本地预览（`blob:` / `data:`）；
+- 依赖「插入时 `img.src` 已经有值」的旧逻辑 —— 若改用 `data-src`，记得同步改点击/取址代码。
+
+参考实现：核心头像 / 消息图 / 贴纸面板，`content-report` 举报截图，`chat-background` 背景库缩略图。
 
 ## 样式与主题（禁止硬编码颜色）
 
@@ -802,6 +868,7 @@ function mount() {
 插件放在 plugins/<插件ID>/，使用 Plugin::adminPage / route / asset / on 注册能力。
 样式只引用核心 --ow-* 变量，不写死颜色（深浅两套主题都要能看）。
 按钮防重入：经 OwApi 发起的请求已自动锁按钮；上传/WebAuthn 等异步入口用 OwBusy.run/form 包一层。
+图片懒加载：<img> 自动补 loading=lazy/decoding=async；首屏/验证码/灯箱标 data-ow-eager；大列表背景图用 OwLazy.bg。
 需求：<清楚描述功能、入口、权限>
 完成后执行 php -l 与 node --check，并在后台启用插件做真实验证。
 ```

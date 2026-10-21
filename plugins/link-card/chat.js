@@ -206,6 +206,7 @@
             im.className = 'lc-msgcard-img';
             im.alt = '';
             im.setAttribute('loading', 'lazy');
+            im.setAttribute('decoding', 'async');
             im.setAttribute('referrerpolicy', 'no-referrer');
             im.onerror = function () {
                 if (im.parentNode) im.parentNode.replaceChild(placeholder(p), im);

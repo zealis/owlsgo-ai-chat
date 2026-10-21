@@ -99,7 +99,9 @@
             for (var k = 0; k < thumbs.length; k++) {
                 var url = previews[k];
                 if (!url) continue;
-                thumbs[k].style.backgroundImage = "url('" + String(url).replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "')";
+                // v1.5.19：后台背景库也可能是几十张原图，屏外先不请求
+                if (w.OwLazy) OwLazy.bg(thumbs[k], url);
+                else thumbs[k].style.backgroundImage = "url('" + String(url).replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "')";
             }
         },
 

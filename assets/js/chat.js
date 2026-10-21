@@ -617,7 +617,7 @@
                       + '" controls muted preload="none" playsinline></video>'
                       + (cap ? '<span class="ow-rich-name">' + esc(cap) + '</span>' : '') + '</span>'
                     : '<img class="ow-rich-img" src="' + esc(p.media[i].url) + '" data-url="' + esc(p.media[i].url)
-                      + '" loading="lazy" alt="图片" onclick="OwChat.viewImg(this.src)">';
+                      + '" loading="lazy" decoding="async" alt="图片" onclick="OwChat.viewImg(this.src)">';
             }
             h += '</span>';
         }
@@ -1075,6 +1075,193 @@
         };
     })();
 
+    /* ==========================================================================
+       OwLazy：图片懒加载（v1.5.19，通用轮子）
+       --------------------------------------------------------------------------
+       选型：不引入 lazysizes —— 本站是零依赖交付，且现代浏览器原生
+       loading="lazy" 已覆盖大多数场景。这里只补它顾不到的两块：
+         ① 生成式 HTML 经常漏写 loading 属性 → stamp / scan 自动补齐；
+         ② 老内核没有原生 lazy → data-src / data-srcset 走 IntersectionObserver
+            （原生 lazy 只认 src，不认 data-src，所以这条在现代浏览器也要跑）。
+
+       用法：
+         OwLazy.scan(el)        // 新片段插入前/后扫一遍（MutationObserver 也会兜底）
+         OwLazy.stamp(img)      // 单个 <img> 补属性
+         OwLazy.observe(img)    // 让 data-src 立即参与观察
+         OwLazy.eager(img)      // 显式标记「不要懒加载」
+
+       约定：
+         · 需要延后的图写 <img data-src="…" data-srcset="…">，不要直接写 src；
+         · 首屏 Logo / 验证码 / 灯箱加 data-ow-eager（或 loading="eager"）；
+         · CSS background-image 不在本范围内（背景图一打开就该看到，延后反而闪白），
+           内容图请用 <img>。
+       ========================================================================== */
+    var OwLazy = (function () {
+        var native = false;
+        try { native = 'loading' in d.createElement('img'); } catch (e) {}
+        var io = null;
+        var ROOT_MARGIN = '600px 0px';
+        var EAGER_CLASS = /(^|\s)(ow-auth-logo|ow-brand|ow-img-viewer|ow-captcha-row)(\s|$)/;
+        var queue = [], timer = 0, mo = null;
+
+        /** 首屏/灯箱/验证码等不该延后的图：自己或任一祖先带 data-ow-eager 即放过 */
+        function isEager(img) {
+            if ((img.getAttribute('loading') || '').toLowerCase() === 'eager') return true;
+            if (img.id === 'owCaptchaImg' || img.id === 'owImgViewerImg') return true;
+            var n = img;
+            while (n && n.nodeType === 1) {
+                if (n.getAttribute && n.getAttribute('data-ow-eager') !== null) return true;
+                if (typeof n.className === 'string' && EAGER_CLASS.test(n.className)) return true;
+                n = n.parentNode;
+            }
+            return false;
+        }
+
+        function reveal(img) {
+            var src = img.getAttribute('data-src');
+            if (src) { img.setAttribute('src', src); img.removeAttribute('data-src'); }
+            var ss = img.getAttribute('data-srcset');
+            if (ss) { img.setAttribute('srcset', ss); img.removeAttribute('data-srcset'); }
+            if (io) { try { io.unobserve(img); } catch (e) {} }
+            img.__owLazyObserved = false;   // 允许之后重新设置 data-src 再次观察
+        }
+
+        function observe(img) {
+            if (!img || img.tagName !== 'IMG' || img.__owLazyObserved) return;
+            img.__owLazyObserved = true;
+            if (!io) { reveal(img); return; }   // 老内核无 IO：立即加载，不把图卡死
+            try { io.observe(img); } catch (e) { reveal(img); }
+        }
+
+        /**
+         * 显式懒加载 CSS 背景图（background-image 没有原生 loading 属性）。
+         * 只在调用方明确需要时使用；首屏背景、聊天主背景不要走这里。
+         */
+        function bg(el, url) {
+            if (!el || el.nodeType !== 1) return;
+            if (!url) {
+                el.style.backgroundImage = '';
+                el.__owLazyBg = '';
+                if (io) { try { io.unobserve(el); } catch (e) {} }
+                el.__owLazyObserved = false;
+                return;
+            }
+            if (!io) { el.__owLazyBg = url; applyBg(el); return; }
+            if (el.__owLazyObserved) { el.__owLazyBg = url; return; }
+            el.__owLazyObserved = true;
+            el.__owLazyBg = url;
+            try { io.observe(el); } catch (e) { applyBg(el); }
+        }
+
+        /** 把待加载的背景图写进 style（IO 命中 / 无 IO 兜底共用） */
+        function applyBg(el) {
+            var url = el.__owLazyBg;
+            if (!url) return;
+            el.__owLazyBg = '';
+            if (io) { try { io.unobserve(el); } catch (e) {} }
+            el.__owLazyObserved = false;
+            if (!el.parentNode) return;   // 弹窗已关，别再写样式
+            // 与插件原来的转义口径一致：单引号和反斜杠不能破坏 url('…')
+            el.style.backgroundImage = "url('" + String(url).replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "')";
+        }
+
+        function initIO() {
+            if (io || typeof w.IntersectionObserver === 'undefined') return;
+            try {
+                io = new w.IntersectionObserver(function (entries) {
+                    for (var i = 0; i < entries.length; i++) {
+                        if (!entries[i].isIntersecting) continue;
+                        var t = entries[i].target;
+                        // __owLazyBg 优先：同一元素既被当背景容器又被当图片的极端情况
+                        if (t.__owLazyBg) applyBg(t);
+                        else if (t.tagName === 'IMG') reveal(t);
+                    }
+                }, { rootMargin: ROOT_MARGIN });
+            } catch (e) { io = null; }
+        }
+
+        /**
+         * 给一张图补懒加载属性。
+         * ⚠️ 只处理「有网络请求的图」：data:/blob: 是本地即时预览（附件待发区），
+         *    延后加载只会让预览晚一拍，得不偿失。
+         */
+        function stamp(img) {
+            if (!img || img.tagName !== 'IMG' || isEager(img)) return;
+            var src = img.getAttribute('src') || '';
+            var data = img.getAttribute('data-src') || img.getAttribute('data-srcset') || '';
+            if (!data && /^(data|blob):/i.test(src)) return;
+            if (!img.getAttribute('loading')) img.setAttribute('loading', 'lazy');
+            if (!img.getAttribute('decoding')) img.setAttribute('decoding', 'async');
+            if (data) observe(img);
+        }
+
+        /** 扫一个容器（元素 / DocumentFragment / document）；root 本身是 img 也支持 */
+        function scan(root) {
+            var scope = (root && root.nodeType === 1) ? root : (root || d);
+            if (scope.tagName === 'IMG') { stamp(scope); return; }
+            if (!scope.querySelectorAll) return;
+            var imgs = scope.querySelectorAll('img');
+            for (var i = 0; i < imgs.length; i++) stamp(imgs[i]);
+        }
+
+        function flush() {
+            timer = 0;
+            var q = queue;
+            queue = [];
+            for (var i = 0; i < q.length; i++) scan(q[i]);
+        }
+
+        function enqueue(node) {
+            if (!node || node.nodeType !== 1) return;
+            if (node.tagName === 'IMG') queue.push(node);
+            else if (node.getElementsByTagName) {
+                // 消息区/插件弹窗会整块 innerHTML 替换；只对含图的子树入队
+                if (!node.getElementsByTagName('img').length) return;
+                queue.push(node);
+            } else return;
+            if (!timer) timer = setTimeout(flush, 0);
+        }
+
+        function watch() {
+            if (mo || !w.MutationObserver) return;
+            var host = d.body || d.documentElement;
+            if (!host) return;
+            try {
+                mo = new w.MutationObserver(function (recs) {
+                    for (var i = 0; i < recs.length; i++) {
+                        var add = recs[i].addedNodes;
+                        for (var j = 0; j < add.length; j++) enqueue(add[j]);
+                    }
+                });
+                mo.observe(host, { childList: true, subtree: true });
+            } catch (e) { mo = null; }
+        }
+
+        function boot() {
+            initIO();
+            scan(d);
+            watch();
+        }
+
+        if (d.readyState === 'loading') {
+            d.addEventListener('DOMContentLoaded', boot, false);
+        } else {
+            boot();
+        }
+
+        return {
+            native: native,   // 仅供诊断：浏览器是否原生支持 loading="lazy"
+            stamp: stamp,
+            scan: scan,
+            observe: observe,
+            reveal: reveal,
+            bg: bg,
+            eager: function (img) {
+                if (img && img.setAttribute) img.setAttribute('data-ow-eager', '1');
+            }
+        };
+    })();
+
     var OwApi = {
         key: '',
         tsOffset: 0,   // 客户端时钟与服务器的偏差（秒），由页面下发的服务器时间校正
@@ -1248,7 +1435,7 @@
             : (sm === 'md' ? ' ow-avatar-md' : (sm ? ' ow-avatar-sm' : '')));
         var cls = 'ow-avatar' + sizeCls;
         var src = url || OwAvatar.identicon(name || role || 'owl');
-        return '<span class="' + cls + '"><img src="' + esc(src) + '" alt="' + esc(name || '') + '" loading="lazy" onerror="OwAvatar.fallback(this)"></span>';
+        return '<span class="' + cls + '"><img src="' + esc(src) + '" alt="' + esc(name || '') + '" loading="lazy" decoding="async" onerror="OwAvatar.fallback(this)"></span>';
     }
 
     /* v1.3.11：群聊默认头像（room-default.svg 双人剪影）已移除 ——
@@ -1342,7 +1529,7 @@
             : (sm === 'md' ? ' ow-avatar-md' : (sm ? ' ow-avatar-sm' : '')));
         var cls = extra || ('ow-avatar' + sizeCls);
         var src = url || (OwAvatar.identicon('room'));
-        return '<span class="' + cls + '"><img src="' + esc(src) + '" alt="" loading="lazy" onerror="OwAvatar.fallback(this)"></span>';
+        return '<span class="' + cls + '"><img src="' + esc(src) + '" alt="" loading="lazy" decoding="async" onerror="OwAvatar.fallback(this)"></span>';
     }
 
     /* ---------- 线性图标表（v1.3.85 合并成一张） ----------
@@ -1747,7 +1934,7 @@
                 var icon = isRoom
                     ? roomAvatarHtml(c.avatar, true, 'ow-cl-icon')
                     : (c.avatar
-                        ? '<span class="ow-cl-icon"><img src="' + esc(c.avatar) + '" alt=""></span>'
+                        ? '<span class="ow-cl-icon"><img src="' + esc(c.avatar) + '" alt="" loading="lazy" decoding="async"></span>'
                         : '<span class="ow-cl-icon">' + esc((c.name || '?').charAt(0)) + '</span>');
                 html += '<li class="ow-cl-item' + (key === opts.activeKey ? ' active' : '') + (c.pinned ? ' is-pinned' : '') + '" data-key="' + esc(key) + '"'
                       + (c.conv === 'dm' ? ' data-dm="' + esc(c.peer) + '"' : ' data-room="' + (c.conv === 'room' ? c.id : 0) + '"')
@@ -3984,7 +4171,7 @@
             // markRecalled 的 outerHTML 替换与引用跳转的 querySelector('.ow-msg-content')，
             // 去掉节点最干净。留空 span 反而会破坏 flex 基线对齐。
             else if (m.type === 'file') content = '<span class="ow-msg-plain">' + fileCardHtml(m) + '</span>';
-            else if (m.type === 'image') content = '<span class="ow-msg-plain"><img class="ow-msg-img" src="' + esc(m.content) + '" onclick="OwChat.viewImg(this.src)" alt="图片"></span>';
+            else if (m.type === 'image') content = '<span class="ow-msg-plain"><img class="ow-msg-img" src="' + esc(m.content) + '" loading="lazy" decoding="async" onclick="OwChat.viewImg(this.src)" alt="图片"></span>';
             // 混排消息**带文字**，所以走气泡（.ow-msg-content）而不是 .ow-msg-plain：
             // 纯图/纯文件才需要「无底座」，有文字却没气泡会显得半句话悬在空中。
             else if (m.type === 'rich') content = '<span class="ow-msg-content ow-msg-rich">' + richHtml(m) + '</span>';
@@ -4611,7 +4798,7 @@
                 html += '<div class="ow-msr-item" data-uid="' + uid + '"'
                       + ' data-nick="' + esc(u.nickname) + '" data-kind="' + esc(u.kind) + '"'
                       + ' data-role="' + esc(u.role || '') + '">'
-                      + '<img class="ow-msr-av" src="' + esc(u.avatar || '') + '" alt="">'
+                      + '<img class="ow-msr-av" src="' + esc(u.avatar || '') + '" alt="" loading="lazy" decoding="async">'
                       + '<div class="ow-msr-main">'
                       + '<div class="ow-msr-nick">' + esc(u.nickname) + '</div>'
                       + '<div class="ow-msr-meta">' + esc(meta) + '</div>'
@@ -5426,7 +5613,7 @@
                 // 与消息图片共用 .ow-msg-img / OwChat.viewImg（#owImgViewer 是现成的 200 层灯箱）
                 var imgs = r.images || [], ih = '', k;
                 for (k = 0; k < imgs.length; k++) {
-                    ih += '<img class="ow-msg-img" src="' + esc(imgs[k]) + '" onclick="OwChat.viewImg(this.src)" alt="图片">';
+                    ih += '<img class="ow-msg-img" src="' + esc(imgs[k]) + '" loading="lazy" decoding="async" onclick="OwChat.viewImg(this.src)" alt="图片">';
                 }
                 if (ih) ih = '<div class="ow-notice-imgs">' + ih + '</div>';
                 h += '<div class="ow-msg ow-msg-notice">'
@@ -5943,7 +6130,7 @@
             } else {
                 OwApi.post('stickers', {}, function (r) {
                     if (!r.ok || !r.data.length) { grid.innerHTML = '<p style="padding:20px;color:var(--ow-text-sub);font-size:12px">暂无贴纸：把鼠标悬停在图片消息上点击「收藏贴纸」即可添加</p>'; return; }
-                    for (i = 0; i < r.data.length; i++) html += '<img class="ow-sticker-item" src="' + esc(r.data[i].url) + '">';
+                    for (i = 0; i < r.data.length; i++) html += '<img class="ow-sticker-item" src="' + esc(r.data[i].url) + '" loading="lazy" decoding="async">';
                     grid.innerHTML = html;
                     var imgs = grid.getElementsByTagName('img');
                     for (i = 0; i < imgs.length; i++) {
@@ -7183,7 +7370,7 @@
                     for (var i = 0; i < r.data.length; i++) {
                         var o = r.data[i];
                         h += '<button class="ow-av-cell" type="button" data-slug="' + esc(o.slug) + '" title="' + esc(o.label) + '">'
-                           + '<img src="' + esc(o.url) + '" alt="' + esc(o.label) + '" loading="lazy">'
+                           + '<img src="' + esc(o.url) + '" alt="' + esc(o.label) + '" loading="lazy" decoding="async">'
                            + '<span>' + esc(o.label) + '</span></button>';
                     }
                     h += '</div><div class="ow-av-hint">先选一种插图风格，再挑其中一张。</div>';
@@ -7220,7 +7407,7 @@
                     for (var i = 0; i < r.data.length; i++) {
                         var v = r.data[i];
                         h += '<button class="ow-av-cell" type="button" data-seed="' + v.seed + '" title="第 ' + v.seed + ' 号">'
-                           + '<img src="' + esc(v.url) + '" alt="" loading="lazy"></button>';
+                           + '<img src="' + esc(v.url) + '" alt="" loading="lazy" decoding="async"></button>';
                     }
                     h += '</div><div class="ow-av-hint">共 ' + r.data.length + ' 个头像，点一下即刻生效。</div>';
                     box.innerHTML = h;
@@ -8817,7 +9004,7 @@
                 for (var i = 0; i < d.list.length; i++) {
                     var d2 = d.list[i];
                     var av = d2.avatar
-                        ? '<img src="' + esc(d2.avatar) + '" style="width:28px;height:28px;border-radius:50%;object-fit:cover;display:block">'
+                        ? '<img src="' + esc(d2.avatar) + '" loading="lazy" decoding="async" style="width:28px;height:28px;border-radius:50%;object-fit:cover;display:block">'
                         : '<span style="display:block;width:28px;height:28px;border-radius:50%;background:var(--ow-bg-sub);color:var(--ow-text-sub);font-size:12px;line-height:28px;text-align:center">' + esc(d2.name.charAt(0)) + '</span>';
                     h += '<tr><td><input type="checkbox" class="owRVChk" value="' + d2.id + '" onchange="OwAdmin.roomSyncBatch()"></td>'
                        + '<td>' + esc(fmtUid(d2.id)) + '</td><td>' + av + '</td><td>' + esc(d2.name) + '</td>'
@@ -9312,6 +9499,8 @@
     w.OwApi = OwApi;   // 暴露给插件脚本（如用户管理插件 OwUM）使用
     // v1.5.18：按钮防重入通用轮子（OwApi 已自动接入；插件里不经过 OwApi 的异步按钮用 run/form）
     w.OwBusy = OwBusy;
+    // v1.5.19：图片懒加载通用轮子（自动补 loading/decoding；data-src 走 IntersectionObserver）
+    w.OwLazy = OwLazy;
     // 通用助手同样暴露：插件脚本与主程序共用渲染与提示
     w.esc = esc; w.toast = toast; w.fmtUid = fmtUid; w.opts = opts; w.ROLE_CN = ROLE_CN;
     // owTr 也暴露：插件把文案写进**已存在**的节点时，i18n 的 MutationObserver 只看新增元素，

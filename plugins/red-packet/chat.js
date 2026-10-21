@@ -439,7 +439,7 @@
     function envHtml(p) {
         var pn = esc(p.points_name || RP.pn);
         var av = p.sender_avatar
-            ? '<span class="owrp-env-av"><img src="' + esc(p.sender_avatar) + '" alt=""></span>'
+            ? '<span class="owrp-env-av"><img src="' + esc(p.sender_avatar) + '" alt="" loading="lazy" decoding="async"></span>'
             : '';
         var hint;
         if (p.kind === 'welfare') {

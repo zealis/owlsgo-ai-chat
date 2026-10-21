@@ -1108,7 +1108,7 @@ Plugin::adminPage('content-report', '内容举报', function () {
         . '<div class="ow-form-item"><label>通知头像</label>'
         . '<div class="ow-cr-av">'
         . '<span class="ow-cr-av-prev" id="owCRNotifyAvatarPrev">'
-        . ($avPrev !== '' ? '<img src="' . Sec::e($avPrev) . '" alt="通知头像">' : '')
+        . ($avPrev !== '' ? '<img src="' . Sec::e($avPrev) . '" alt="通知头像" loading="lazy" decoding="async">' : '')
         . '</span>'
         . '<div class="ow-cr-av-main">'
         . '<div class="ow-cr-av-ops">'

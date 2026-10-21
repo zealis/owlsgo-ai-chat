@@ -163,7 +163,7 @@
         paintAvatar: function (url) {
             var box = $('owCRNotifyAvatarPrev');
             if (!box) return;
-            box.innerHTML = url ? '<img src="' + esc(url) + '" alt="通知头像">' : '';
+            box.innerHTML = url ? '<img src="' + esc(url) + '" alt="通知头像" loading="lazy" decoding="async">' : '';
         },
 
         setAvatar: function (url) {
@@ -225,7 +225,7 @@
                     for (var i = 0; i < r.data.length; i++) {
                         var o = r.data[i];
                         h += '<button class="ow-av-cell" type="button" data-slug="' + esc(o.slug) + '" title="' + esc(o.label) + '">'
-                           + '<img src="' + esc(o.url) + '" alt="" loading="lazy">'
+                           + '<img src="' + esc(o.url) + '" alt="" loading="lazy" decoding="async">'
                            + '<span>' + esc(o.label) + '</span></button>';
                     }
                     box.innerHTML = h + '</div><div class="ow-av-hint">先选一种插图风格，再挑其中一张。</div>';
@@ -254,7 +254,7 @@
                     for (var i = 0; i < r.data.length; i++) {
                         var v = r.data[i];
                         h += '<button class="ow-av-cell" type="button" data-url="' + esc(v.url) + '" title="第 ' + esc(v.seed) + ' 号">'
-                           + '<img src="' + esc(v.url) + '" alt="" loading="lazy"></button>';
+                           + '<img src="' + esc(v.url) + '" alt="" loading="lazy" decoding="async"></button>';
                     }
                     box.innerHTML = h + '</div><div class="ow-av-hint">共 ' + r.data.length + ' 张，点一下即刻保存。</div>';
                     // ⚠️ 顺序有讲究：先只给「带 data-url 的变体」绑事件，再单独绑返回按钮 ——
@@ -340,7 +340,7 @@
             var h = '<div class="ow-cr-thumbs">';
             for (var i = 0; i < imgs.length && i < 3; i++) {
                 h += '<a href="' + esc(imgs[i]) + '" target="_blank" rel="noopener">'
-                   + '<img src="' + esc(imgs[i]) + '" alt="截图 ' + (i + 1) + '"></a>';
+                   + '<img src="' + esc(imgs[i]) + '" alt="截图 ' + (i + 1) + '" loading="lazy" decoding="async"></a>';
             }
             if (imgs.length > 3) h += '<span class="ow-cr-more">+' + (imgs.length - 3) + '</span>';
             return h + '</div>';
