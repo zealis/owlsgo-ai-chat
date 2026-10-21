@@ -2,23 +2,184 @@
  * 用户名片插件（profile-card）样式
  *
  * 两部分：
- *   ① 资料卡「名片」布局 —— 由核心 onCardRendered 注入的 .owpc-banner 节点 +
+ *   ① 资料卡「科技感个人主页」—— 核心 onCardRendered 注入的 .owpc-banner 节点 +
  *      弹窗上的 .owpc-card 类驱动（JS 只插节点，不写一行布局）
- *   ② 个人设置「资料」页的横幅区块（v1.0.1 从 rail 面板迁入，.owpc-set-*）
+ *   ② 个人设置「资料」页的横幅区块（.owpc-set-*，与卡片同一套视觉语言）
  *
- * 约定：全部走核心 --ow-* 变量，零硬编码色值；前缀 owpc-；
- *      不覆盖核心通用类（改动一律限定在 .ow-modal.owpc-card /
- *      .owpc-set-* 作用域内）。
+ * 设计语言（v1.0.2）：
+ *   · 主视觉 = 横幅「指挥中心」：网格底纹 + 品牌色辉光 + 顶部 2px 光条 + 底部渐隐，
+ *     头像放大到 84px 压在横幅下沿，外圈同色描边环把头像从背景里剥出来；
+ *   · 信息区 = 数据胶囊（.ow-card-meta-row 整行变 chip），核心/插件的行（等级、
+ *     注册、签名）自动同化，不挑顺序、不挑条数；
+ *   · 操作区 = 等宽大按钮，主色实心 + 轻投影。
+ *
+ * 约定：功能色全部走核心 --ow-* 变量；装饰层（网格/辉光）用本插件局部 token
+ *      --owpc-*（深色主题单独给值）；前缀 owpc-；不覆盖核心通用类。
  * ========================================================================== */
 
-/* ===================== ① 资料卡：横幅 + 头像叠压 ===================== */
+/* ===================== ① 资料卡：科技感个人主页 ===================== */
 
-/* 原标题「用户资料」收起来：横幅卡的标题就是横幅本身，
-   再压一行文字会破坏顶部的干净留白（✕ 关闭按钮保留，见下）。 */
+/* 局部 token：装饰层的灰度按主题给（网格在深色下要提亮），辉光直接复用品牌色 */
+.ow-modal.owpc-card {
+    --owpc-grid: rgba(0, 0, 0, .05);
+    --owpc-line: var(--ow-primary);
+}
+[data-theme="dark"] .ow-modal.owpc-card {
+    --owpc-grid: rgba(255, 255, 255, .055);
+}
+
+/* 弹窗本体：比通用弹窗宽一档（380 → 420），加一圈细边 + 大圆角，
+   让整张卡有「面板」而不是「对话框」的体量感 */
+.ow-modal.owpc-card {
+    max-width: 420px;
+    border: 1px solid var(--ow-border);
+    border-radius: 14px;
+}
+
+/* 原标题「用户资料」收起来：主页的标题就是横幅本身 */
 .ow-modal.owpc-card > h3 { display: none; }
 
-/* 关闭按钮浮到横幅右上角（Discord 式）：给一圈同色底 + 轻投影，
-   压在任何颜色的横幅图上都保证可见（不改核心 .ow-modal-close 的布局，只加外观）。 */
+/* 横幅：向弹窗四边出血（抵消 24px 内边距），顶部两角继承圆角。
+   默认底色 = --ow-surface（浅色即白，深色随卡面）；有图时 cover 居中。 */
+.ow-modal.owpc-card .owpc-banner {
+    position: relative;
+    height: 132px;
+    margin: -24px -24px 0;
+    background-color: var(--ow-surface);
+    background-position: center center;
+    background-repeat: no-repeat;
+    background-size: cover;
+    border-radius: 13px 13px 0 0;
+    border-top: 2px solid var(--owpc-line);          /* 顶部光条：科技面板的「状态线」 */
+    /* 底部渐隐：图片与卡面交界不留硬边（无图时白→白，不可见）。
+       74% 起渐——再高头像就压在「已渐没」的区域上，叠压感会消失。 */
+    -webkit-mask-image: linear-gradient(180deg, #000 74%, transparent 100%);
+    mask-image: linear-gradient(180deg, #000 74%, transparent 100%);
+}
+/* 网格底纹：细密方格，只做质感不抢内容（有图/无图都铺，opacity 极低） */
+.ow-modal.owpc-card .owpc-banner::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    pointer-events: none;
+    background-image:
+        repeating-linear-gradient(0deg, var(--owpc-grid) 0, var(--owpc-grid) 1px, transparent 1px, transparent 22px),
+        repeating-linear-gradient(90deg, var(--owpc-grid) 0, var(--owpc-grid) 1px, transparent 1px, transparent 22px);
+}
+/* 品牌辉光：右上角一团主色雾（用 opacity 控强度，主题换色时自动跟随） */
+.ow-modal.owpc-card .owpc-banner::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    pointer-events: none;
+    background: radial-gradient(120% 100% at 82% 0%, var(--ow-primary) 0%, transparent 58%);
+    opacity: .14;
+}
+[data-theme="dark"] .ow-modal.owpc-card .owpc-banner::after { opacity: .22; }
+
+/* 头部纵排：头像独占一行压在横幅下沿，昵称/身份/ID 整体落到下方 */
+.ow-modal.owpc-card .ow-card-head {
+    -webkit-flex-direction: column;
+    flex-direction: column;
+    align-items: flex-start;
+    -webkit-align-items: flex-start;
+    gap: 4px;
+    margin-bottom: 14px;
+}
+.ow-modal.owpc-card .ow-card-id { width: 100%; }
+
+/* 头像：64 → 84px（主页主视觉），上移 46px 叠压横幅。
+   ⚠️ 用 box-shadow 而不是 border 做描边环：不改布局盒，不会把文字推走；
+   第二层是柔和投影，让头像从横幅图片里「浮」出来。 */
+.ow-modal.owpc-card .ow-card-head > .ow-avatar,
+.ow-modal.owpc-card .ow-card-head > .ow-set-avatar-btn {
+    margin-top: -46px;
+    position: relative;
+    z-index: 2;
+    box-shadow: 0 0 0 4px var(--ow-bg), 0 14px 30px -14px rgba(0, 0, 0, .45);
+}
+.ow-modal.owpc-card .ow-card-head > .ow-avatar,
+.ow-modal.owpc-card .ow-card-head > .ow-set-avatar-btn .ow-avatar {
+    width: 84px;
+    height: 84px;
+    line-height: 84px;
+    font-size: 30px;
+}
+
+/* 昵称：主页主标题。字重 600、字号 20px（消息区昵称是 14px，这里是标题级） */
+.ow-modal.owpc-card .ow-card-name {
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: -.01em;
+    color: var(--ow-text-title);
+}
+/* 身份标签在昵称右侧，与标题同排时略微下移，别顶在天灵盖上 */
+.ow-modal.owpc-card .ow-card-name-row { align-items: center; -webkit-align-items: center; }
+.ow-modal.owpc-card .ow-card-badges-inline { margin-top: 0; }
+
+/* ID：等宽数字 + 字距，读起来像「编号」而不是一句话 */
+.ow-modal.owpc-card .ow-card-sub {
+    margin-top: 6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
+    font-size: 11px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--ow-text-sub);
+}
+
+/* 信息区：分隔线保留（数据段起点），行改成可换行的胶囊 */
+.ow-modal.owpc-card .ow-card-meta {
+    display: flex;
+    display: -webkit-flex;
+    -webkit-flex-wrap: wrap;
+    flex-wrap: wrap;
+    gap: 8px;
+    border-top: 1px solid var(--ow-border);
+    padding-top: 14px;
+    font-size: 12px;
+}
+.ow-modal.owpc-card .ow-card-meta-row {
+    display: inline-flex;
+    display: -webkit-inline-flex;
+    align-items: baseline;
+    -webkit-align-items: baseline;
+    gap: 7px;
+    max-width: 100%;
+    padding: 7px 11px;
+    border-radius: 8px;
+    background: var(--ow-bg-sub);
+    border: 1px solid var(--ow-border);
+    text-decoration: none;                 /* 等级行是 <a>，去掉下划线 */
+    transition: background .15s;
+}
+.ow-modal.owpc-card .ow-card-meta-row:hover { background: var(--ow-bg-chat-hover); }
+.ow-modal.owpc-card .ow-card-meta-k {
+    font-size: 11px;
+    letter-spacing: .04em;
+    color: var(--ow-text-sub);
+}
+.ow-modal.owpc-card .ow-card-meta-v {
+    color: var(--ow-text-title);
+    font-weight: 500;
+    word-break: break-word;
+}
+
+/* 操作区：按钮等高铺满一行，主按钮带一层跟主色无关的中性投影（不挑配色方案） */
+.ow-modal.owpc-card .ow-modal-actions {
+    margin-top: 18px;
+    gap: 10px;
+}
+.ow-modal.owpc-card .ow-modal-actions .ow-btn {
+    -webkit-flex: 1 1 auto;
+    flex: 1 1 auto;
+    padding-top: 10px;
+    padding-bottom: 10px;
+    border-radius: 10px;
+    box-shadow: 0 10px 22px -12px rgba(0, 0, 0, .45);
+}
+.ow-modal.owpc-card .ow-modal-actions .ow-btn-primary { box-shadow: 0 10px 22px -12px rgba(0, 0, 0, .5); }
+
+/* 关闭按钮：浮在横幅右上角，白圆 + 投影（压在任何图上都可见） */
 .ow-modal.owpc-card .ow-modal-close {
     position: relative;
     z-index: 3;
@@ -28,78 +189,69 @@
     text-align: center;
     border-radius: 50%;
     background: var(--ow-surface);
-    box-shadow: 0 1px 4px rgba(0, 0, 0, .18);
+    box-shadow: 0 1px 6px rgba(0, 0, 0, .2);
 }
 
-/* 横幅区：向弹窗四边出血（抵消 .ow-modal 的 24px 内边距，与 .ow-card > .ow-list-head
-   同一手法），顶部两角继承弹窗 10px 圆角。
-   默认背景 = --ow-surface（浅色主题即白色，与卡面融为一体；深色主题随卡面走），
-   有图时 cover 居中裁剪。 */
-.ow-modal.owpc-card .owpc-banner {
-    height: 96px;
-    margin: -24px -24px 0;
-    background-color: var(--ow-surface);
-    background-position: center center;
-    background-repeat: no-repeat;
-    background-size: cover;
-    border-radius: 10px 10px 0 0;
-}
-
-/* 头部改纵排：头像独占一行并上移压住横幅，昵称 / 身份标签 / ID 整体落到头像下方。
-   只作用于 .ow-modal.owpc-card 内的资料卡，不碰其它弹窗的 .ow-card-head。 */
-.ow-modal.owpc-card .ow-card-head {
-    -webkit-flex-direction: column;
-    flex-direction: column;
-    align-items: flex-start;
-    -webkit-align-items: flex-start;
-    gap: 2px;
-    margin-bottom: 14px;
-}
-.ow-modal.owpc-card .ow-card-id { width: 100%; }
-
-/* 头像（自己的卡片是 .ow-set-avatar-btn 壳）上移压横幅；
-   白描边环在有图时把头像从背景里剥出来，无图（默认白）时与卡面同色自然隐形。
-   ⚠️ 用 box-shadow 而不是 border：不改布局盒尺寸，不会把后面的文字推走。 */
-.ow-modal.owpc-card .ow-card-head > .ow-avatar,
-.ow-modal.owpc-card .ow-card-head > .ow-set-avatar-btn {
-    margin-top: -34px;
-    position: relative;
-    z-index: 1;
-    box-shadow: 0 0 0 4px var(--ow-surface);
-}
-
-/* 窄屏：横幅与叠压幅度等比收一档（弹窗内边距移动端不变，-24px 出血照旧成立） */
+/* 窄屏：横幅/头像/叠压等比收一档，其余保持不变 */
 @media (max-width: 720px) {
-    .ow-modal.owpc-card .owpc-banner { height: 76px; }
+    .ow-modal.owpc-card .owpc-banner { height: 104px; }
     .ow-modal.owpc-card .ow-card-head > .ow-avatar,
-    .ow-modal.owpc-card .ow-card-head > .ow-set-avatar-btn { margin-top: -28px; }
+    .ow-modal.owpc-card .ow-card-head > .ow-set-avatar-btn { margin-top: -38px; }
+    .ow-modal.owpc-card .ow-card-head > .ow-avatar,
+    .ow-modal.owpc-card .ow-card-head > .ow-set-avatar-btn .ow-avatar {
+        width: 72px;
+        height: 72px;
+        line-height: 72px;
+        font-size: 26px;
+    }
+    .ow-modal.owpc-card .ow-card-name { font-size: 18px; }
 }
 
-/* ===================== ② 个人设置「资料」页的横幅区块（v1.0.1 迁入） ===================== */
+/* ===================== ② 个人设置「资料」页的横幅区块 ===================== */
 
-/* 预览条 = 迷你资料卡顶部：横幅 + 下半露的小头像，所见即所得。
-   底部 26px 外距是给半露头像留的位置（头像 bottom:-20px，40px 高露出一半）。 */
+/* 预览条 = 主视觉同一套语言（网格 + 顶部光条 + 半露小头像），所见即所得。
+   底部 28px 外距是给半露头像留的位置（头像 bottom:-22px，44px 高露出一半）。 */
 .owpc-set-preview {
     position: relative;
-    height: 84px;
-    margin-bottom: 26px;
+    height: 96px;
+    margin-bottom: 30px;
     border: 1px solid var(--ow-border);
+    border-top: 2px solid var(--ow-primary);
     border-radius: 8px;
     background-color: var(--ow-surface);
     background-position: center center;
     background-repeat: no-repeat;
     background-size: cover;
+    /* ⚠️ 这里刻意**不加**卡片主视觉那条底部渐隐遮罩：遮罩会连四周描边一起
+       渐隐（元素级 mask 作用于整个渲染结果），预览框会变成「有底无边的鬼框」。
+       主视觉的横幅本来就只有顶部一条光条，不受影响。 */
+}
+.owpc-set-preview::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    pointer-events: none;
+    border-radius: inherit;
+    background-image:
+        repeating-linear-gradient(0deg, rgba(0, 0, 0, .05) 0, rgba(0, 0, 0, .05) 1px, transparent 1px, transparent 20px),
+        repeating-linear-gradient(90deg, rgba(0, 0, 0, .05) 0, rgba(0, 0, 0, .05) 1px, transparent 1px, transparent 20px);
+}
+[data-theme="dark"] .owpc-set-preview::before {
+    background-image:
+        repeating-linear-gradient(0deg, rgba(255, 255, 255, .06) 0, rgba(255, 255, 255, .06) 1px, transparent 1px, transparent 20px),
+        repeating-linear-gradient(90deg, rgba(255, 255, 255, .06) 0, rgba(255, 255, 255, .06) 1px, transparent 1px, transparent 20px);
 }
 .owpc-set-preview-av {
     position: absolute;
-    left: 12px;
-    bottom: -20px;
-    width: 40px;
-    height: 40px;
+    left: 14px;
+    bottom: -22px;
+    width: 44px;
+    height: 44px;
     line-height: 0;
     border-radius: 50%;
-    box-shadow: 0 0 0 3px var(--ow-surface);
     overflow: hidden;
+    z-index: 1;
+    box-shadow: 0 0 0 3px var(--ow-bg), 0 8px 18px -10px rgba(0, 0, 0, .4);
 }
 .owpc-set-preview-av img { width: 100%; height: 100%; display: block; }
 

@@ -68,8 +68,8 @@ function ck(name, actual, expect) {
   }, { timeout: 8000 });
   ck('初始无横幅：移除按钮收起', await page.locator('#owpcSetRemoveBtn').isVisible(), false);
   ck('预览条存在（默认白）', await page.$eval('#owpcSetPreview', el => getComputedStyle(el).backgroundImage), 'none');
-  ck('预览条高度 84px', await page.$eval('#owpcSetPreview', el => getComputedStyle(el).height), '84px');
-  ck('预览里有半露小头像', await page.$eval('.owpc-set-preview-av', el => getComputedStyle(el).bottom), '-20px');
+  ck('预览条高度 96px', await page.$eval('#owpcSetPreview', el => getComputedStyle(el).height), '96px');
+  ck('预览里有半露小头像', await page.$eval('.owpc-set-preview-av', el => getComputedStyle(el).bottom), '-22px');
   ck('上传 / 链接 / 移除三件套齐', await page.locator('#owpcSetUploadBtn,#owpcSetUrlBtn,#owpcSetRemoveBtn').count(), 3);
   await page.screenshot({ path: path.join(OUT, 'pc-1-settings-empty.png') });
 
@@ -103,12 +103,12 @@ function ck(name, actual, expect) {
     const cs = getComputedStyle(el);
     return { h: cs.height, mt: cs.marginTop, ml: cs.marginLeft, bg: cs.backgroundImage, bgc: cs.backgroundColor, radius: cs.borderTopLeftRadius };
   });
-  ck('横幅高度 96px', bannerBox.h, '96px');
+  ck('横幅高度 132px', bannerBox.h, '132px');
   ck('横幅向上出血 -24px（抵消弹窗内边距）', bannerBox.mt, '-24px');
   ck('横幅左右出血 -24px', bannerBox.ml, '-24px');
   ck('横幅背景图为上传的图', /url\(/.test(bannerBox.bg), true);
   ck('默认底色为白（--ow-surface）', bannerBox.bgc, 'rgb(255, 255, 255)');
-  ck('横幅顶部圆角继承弹窗', bannerBox.radius, '10px');
+  ck('横幅顶部圆角继承弹窗', bannerBox.radius, '13px');
   const headBox = await page.$eval('#owModal .ow-card-head', el => {
     const cs = getComputedStyle(el);
     return { dir: cs.flexDirection, align: cs.alignItems };
@@ -119,11 +119,17 @@ function ck(name, actual, expect) {
     const cs = getComputedStyle(el);
     return { mt: cs.marginTop, shadow: cs.boxShadow };
   });
-  ck('头像上移叠压横幅 -34px', avBox.mt, '-34px');
+  ck('头像上移叠压横幅 -46px', avBox.mt, '-46px');
   ck('头像 4px 同色描边环', /4px/.test(avBox.shadow), true);
   ck('原标题被收起', await page.$eval('#owModal > h3', el => getComputedStyle(el).display), 'none');
   ck('关闭按钮有衬底（压横幅可见）', await page.$eval('#owModal .ow-modal-close', el => getComputedStyle(el).borderRadius), '50%');
   ck('昵称行仍在', await page.locator('#owModal .ow-card-name').count(), 1);
+  ck('弹窗加宽到 420px（面板体量）', await page.$eval('#owModal', el => getComputedStyle(el).maxWidth), '420px');
+  ck('昵称 20px 标题级', await page.$eval('#owModal .ow-card-name', el => getComputedStyle(el).fontSize), '20px');
+  ck('头像放大到 84px', await page.$eval('#owModal .ow-card-head > .ow-set-avatar-btn .ow-avatar', el => getComputedStyle(el).width), '84px');
+  ck('信息行变数据胶囊', await page.$eval('#owModal .ow-card-meta-row', el => getComputedStyle(el).borderRadius), '8px');
+  ck('顶部光条 2px', await page.$eval('#owModal .owpc-banner', el => getComputedStyle(el).borderTopWidth), '2px');
+  ck('横幅底部渐隐遮罩生效', /linear-gradient/.test(await page.$eval('#owModal .owpc-banner', el => getComputedStyle(el).webkitMaskImage)), true);
   await page.screenshot({ path: path.join(OUT, 'pc-3-card-self.png') });
 
   /* ---------- 3. 别人的资料卡（.ow-avatar 裸路径 + 别人设的横幅） ---------- */
@@ -136,7 +142,7 @@ function ck(name, actual, expect) {
   ck('他人横幅按各自设置显示（banner-b）', /banner-b\.png/.test(otherBg), true);
   ck('他人头像走裸 .ow-avatar 路径', await page.locator('#owModal .ow-card-head > .ow-avatar').count(), 1);
   const avBox2 = await page.$eval('#owModal .ow-card-head > .ow-avatar', el => getComputedStyle(el).marginTop);
-  ck('他人头像同样叠压 -34px', avBox2, '-34px');
+  ck('他人头像同样叠压 -46px', avBox2, '-46px');
   await page.screenshot({ path: path.join(OUT, 'pc-4-card-other.png') });
 
   /* ---------- 4. 设置里移除 → 默认白 ---------- */
@@ -192,8 +198,8 @@ function ck(name, actual, expect) {
   await page.evaluate(() => OwChat.userCard(900002));
   await page.waitForSelector('#owModal.owpc-card', { timeout: 8000 });
   await page.waitForTimeout(400);
-  ck('窄屏横幅 76px', await page.$eval('#owModal .owpc-banner', el => getComputedStyle(el).height), '76px');
-  ck('窄屏头像叠压 -28px', await page.$eval('#owModal .ow-card-head > .ow-set-avatar-btn', el => getComputedStyle(el).marginTop), '-28px');
+  ck('窄屏横幅 104px', await page.$eval('#owModal .owpc-banner', el => getComputedStyle(el).height), '104px');
+  ck('窄屏头像叠压 -38px', await page.$eval('#owModal .ow-card-head > .ow-set-avatar-btn', el => getComputedStyle(el).marginTop), '-38px');
   await page.screenshot({ path: path.join(OUT, 'pc-6-card-mobile.png') });
   await page.evaluate(() => OwChat.closeModal());
   // 设置弹窗窄屏：区块可见、资料面板无横向溢出
@@ -211,7 +217,7 @@ function ck(name, actual, expect) {
   });
   ck('窄屏资料面板无横向溢出', mob.paneOverflow <= 1, true);
   ck('窄屏操作行允许换行', mob.rowWrap, 'wrap');
-  ck('窄屏预览条仍是 84px', mob.previewH, '84px');
+  ck('窄屏预览条仍是 96px', mob.previewH, '96px');
   await page.screenshot({ path: path.join(OUT, 'pc-7-settings-mobile.png') });
 
   /* ---------- 汇总 ---------- */
