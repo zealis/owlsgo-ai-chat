@@ -128,7 +128,7 @@ function ck(name, actual, expect) {
   ck('昵称 20px 标题级', await page.$eval('#owModal .ow-card-name', el => getComputedStyle(el).fontSize), '20px');
   ck('头像放大到 84px', await page.$eval('#owModal .ow-card-head > .ow-set-avatar-btn .ow-avatar', el => getComputedStyle(el).width), '84px');
   ck('信息行变数据胶囊', await page.$eval('#owModal .ow-card-meta-row', el => getComputedStyle(el).borderRadius), '8px');
-  ck('顶部光条 2px', await page.$eval('#owModal .owpc-banner', el => getComputedStyle(el).borderTopWidth), '2px');
+  ck('顶部无彩色边框（站方取消）', await page.$eval('#owModal .owpc-banner', el => getComputedStyle(el).borderTopWidth), '0px');
   ck('横幅底部渐隐遮罩生效', /linear-gradient/.test(await page.$eval('#owModal .owpc-banner', el => getComputedStyle(el).webkitMaskImage)), true);
   await page.screenshot({ path: path.join(OUT, 'pc-3-card-self.png') });
 

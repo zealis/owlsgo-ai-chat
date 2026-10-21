@@ -22,7 +22,6 @@
 /* 局部 token：装饰层的灰度按主题给（网格在深色下要提亮），辉光直接复用品牌色 */
 .ow-modal.owpc-card {
     --owpc-grid: rgba(0, 0, 0, .05);
-    --owpc-line: var(--ow-primary);
 }
 [data-theme="dark"] .ow-modal.owpc-card {
     --owpc-grid: rgba(255, 255, 255, .055);
@@ -50,7 +49,8 @@
     background-repeat: no-repeat;
     background-size: cover;
     border-radius: 13px 13px 0 0;
-    border-top: 2px solid var(--owpc-line);          /* 顶部光条：科技面板的「状态线」 */
+    /* 顶部不再压主色光条（站方：取消资料卡上面的颜色边框）——
+       横幅顶端直接是图片/底色，避免「图上又贴一条色带」的割裂感。 */
     /* 底部渐隐：图片与卡面交界不留硬边（无图时白→白，不可见）。
        74% 起渐——再高头像就压在「已渐没」的区域上，叠压感会消失。 */
     -webkit-mask-image: linear-gradient(180deg, #000 74%, transparent 100%);
@@ -216,7 +216,6 @@
     height: 96px;
     margin-bottom: 30px;
     border: 1px solid var(--ow-border);
-    border-top: 2px solid var(--ow-primary);
     border-radius: 8px;
     background-color: var(--ow-surface);
     background-position: center center;

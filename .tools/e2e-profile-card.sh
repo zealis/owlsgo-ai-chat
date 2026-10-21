@@ -17,7 +17,15 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # -k 接受自签证书，X-Forwarded-Proto 由代理统一补，curl 不再自带。
 B="https://127.0.0.1:8845"
 PIDS=()
-cleanup() { for p in "${PIDS[@]:-}"; do kill "$p" 2>/dev/null; done; rm -rf "$ROOT/.t-pc"; }
+# ⚠️ 清理一律用 find -delete 而不是 rm -rf：本机 shell 的 rm 被「安全删除」钩子
+# 接管（转回收站），批量删目录时常失败；失败被吞掉后 .t-pc 会留下半残旧副本
+# （上一轮实测：只剩 data/plugins/uploads，随后 cp 合并旧文件 → 插件 JS 是旧版，
+# 设置区块压根不注入，症状极像「插件坏了」）。find -delete 不受钩子影响。
+cleanup() {
+  for p in "${PIDS[@]:-}"; do kill "$p" 2>/dev/null; done
+  find "$ROOT/.t-pc" -mindepth 1 -delete 2>/dev/null
+  rmdir "$ROOT/.t-pc" 2>/dev/null
+}
 trap cleanup EXIT
 
 PASS=0; FAIL=0
@@ -52,12 +60,17 @@ login() { local C="$1" ID="$2" name="$3"
 
 echo "=== 0) 建隔离副本 .t-pc ==="
 cd "$ROOT"
-rm -rf .t-pc && mkdir -p .t-pc
+find .t-pc -mindepth 1 -delete 2>/dev/null; mkdir -p .t-pc
 for item in index.php ws-server.php VERSION PLUGIN.md README.md LICENSE nginx-server.conf core assets plugins data uploads; do
   cp -r "$item" .t-pc/ || { echo "拷贝 $item 失败"; exit 1; }
 done
 rm -rf .t-pc/data/cache
 "$PHP" -r 'file_put_contents(".t-pc/data/install.lock", date("c")." e2e");'
+# 复制自检：确认关键文件在、且插件 JS 是当前版本（防「旧副本混入」类假失败）
+for f in index.php core/plugin.php assets/js/chat.js assets/css/owlsgo.css plugins/profile-card/chat.js plugins/profile-card/style.css; do
+  [ -f ".t-pc/$f" ] || { echo "副本缺文件：$f"; exit 1; }
+done
+grep -q "OwPC.inject" .t-pc/plugins/profile-card/chat.js || { echo "副本里的插件 JS 不是当前版本"; exit 1; }
 # 测试数据：900002 登录口令 + 启用插件；900003 带 banner-b；生成横幅图 banner-a
 "$PHP" -r '
 $db=new PDO("sqlite:.t-pc/data/owlsgo.db");
@@ -109,7 +122,7 @@ H=$(curl -sk -b .t-pc/u.txt "$B/")
 # v1.0.1 起横幅管理移入个人设置，rail 不再有「名片」入口（回归：防复活）
 if printf '%s' "$H" | grep -q 'data-tab="profilecard"'; then
   FAIL=$((FAIL+1)); echo "  [FAIL] 聊天页不应再有名片 rail 按钮（已移入设置）"; else PASS=$((PASS+1)); echo "  [PASS] 聊天页无名片 rail 按钮"; fi
-has "聊天页含名片样式 link（带 pv 版本键）" 'plugin=profile-card&file=style.css&v=1.5.17&pv=1.0.2' "$H"
+has "聊天页含名片样式 link（带 pv 版本键）" 'plugin=profile-card&file=style.css&v=1.5.17&pv=1.0.3' "$H"
 has "JS 合并包含名片插件代码（__owPcLoaded 哨兵）" '__owPcLoaded' "$(curl -sk -b .t-pc/u.txt "$B/?action=assets&type=js")"
 has "CSS 端点非空（两件套落地）" 'owpc-set-preview' "$(curl -sk "$B/?action=assets&type=css&plugin=profile-card&file=style.css")"
 
