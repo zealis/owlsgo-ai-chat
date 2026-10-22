@@ -176,7 +176,32 @@ ck "room_join 仍有 is_member" "$(jqk "$R" 'isset($d["is_member"]) ? 1 : 0')" "
 R=$(api "$T/owner.jar" room_join --data-urlencode "room_id=1" --data-urlencode "want_members=1")
 ck "room_join want_members=1 有 members" "$(jqk "$R" 'count($d["members"] ?? [])')" "2"
 
-# ---------- 12) 服务端日志无致命错误 ----------
+# ---------- 12) poll timeout=0：立即返回 + 限流（v1.5.30） ----------
+echo
+echo "=== 11) poll timeout=0：窗口聚焦补标已读的短路径 ==="
+MAXID=$("$PHP" -r 'echo (int)(new PDO("sqlite:" . $argv[1]))->query("SELECT COALESCE(MAX(id),0) FROM messages WHERE room_id=1")->fetchColumn();' "$T/data/owlsgo.db")
+
+# 先连发两次：第一次放行、2 秒窗口内第二次必须被限流
+T0=$(date +%s%N); R1=$(api "$T/owner.jar" poll --data-urlencode "room_id=1" --data-urlencode "since=$MAXID" --data-urlencode "timeout=0"); T1=$(date +%s%N)
+R2=$(api "$T/owner.jar" poll --data-urlencode "room_id=1" --data-urlencode "since=$MAXID" --data-urlencode "timeout=0")
+echo "  首次耗时 $(( (T1 - T0) / 1000000 ))ms"
+# 对照：同一条 helper 打一个确定不做等待的接口，用来区分「poll 慢」还是「脚本开销大」
+T2=$(date +%s%N); api "$T/owner.jar" room_members --data-urlencode "room_id=1" --data-urlencode "lite=1" >/dev/null; T3=$(date +%s%N)
+echo "  对照（room_members lite）耗时 $(( (T3 - T2) / 1000000 ))ms"
+ck "第一次放行（无 throttled 标记）" "$(jqk "$R1" '($d["throttled"] ?? 0)')" "0"
+ck "5 秒窗口内第二次被限流（throttled=1）" "$(jqk "$R2" '($d["throttled"] ?? 0)')" "1"
+ck "限流响应仍是 ok（前端不会因此断轮询）" "$(jqk "$R2" '$d["ok"] ? 1 : 0')" "1"
+
+# 等限流窗口过去，再单独计时 —— 证明「0 = 立即返回」而不是默认 5/20 秒
+sleep 2.2
+T0=$(date +%s%N)
+R=$(api "$T/owner.jar" poll --data-urlencode "room_id=1" --data-urlencode "since=$MAXID" --data-urlencode "timeout=0")
+T1=$(date +%s%N)
+MS=$(( (T1 - T0) / 1000000 ))
+ck "timeout=0 立即返回（< 2000ms，实得 ${MS}ms）" "$( [ "$MS" -lt 2000 ] && echo 1 || echo 0 )" "1"
+ck "未阻塞（若按默认 20 秒长轮询，此断言必挂）" "$( [ "$MS" -lt 5000 ] && echo 1 || echo 0 )" "1"
+
+# ---------- 13) 服务端日志无致命错误 ----------
 echo
 echo "=== 10) 服务端日志 ==="
 case "$(cat "$T/srv.log" 2>/dev/null)" in

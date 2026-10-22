@@ -1917,6 +1917,25 @@
         render: function (list, opts) {
             var box = typeof opts.container === 'string' ? $(opts.container) : opts.container;
             if (!box) return;
+            /* v1.5.30：内容没变就不重排。
+               每来一条新消息都会 loadConversations() → render()，无条件 innerHTML 会把
+               左侧列表的滚动位置拽回顶部（会话多时尤其明显），并把所有头像 <img> 重建一遍。
+               签名挂在**容器**上 —— 同一个渲染器被会话列表 / 联系人列表 / 通知列表共用，
+               用模块级变量会让三者互相作废。 */
+            var sig = (opts.activeKey || '') + '|' + (opts.hideTime ? 1 : 0) + '|' + (opts.emptyText || '')
+                    // 时间文案依赖「今天/昨天」的判定：页面挂着跨天时要重渲一次，
+                    // 否则昨天 23:59 的消息会一直显示成「23:59」。
+                    + '|' + new Date().toDateString();
+            var sigList = list || [], si, sc;
+            for (si = 0; si < sigList.length; si++) {
+                sc = sigList[si];
+                sig += '|' + sc.conv + ':' + (sc.conv === 'dm' ? sc.peer : sc.id)
+                     + ',' + (sc.name || '') + ',' + (sc.last_text || '') + ',' + (sc.last_at || 0)
+                     + ',' + (sc.unread || 0) + ',' + (sc.pinned ? 1 : 0) + ',' + (sc.avatar || '')
+                     + ',' + (sc.tag || '') + ',' + (sc.need_password ? 1 : 0) + ',' + (sc.role || '');
+            }
+            if (box._clSig === sig) return;
+            box._clSig = sig;
             if (!list || !list.length) {
                 box.innerHTML = '<li class="ow-cl-empty">' + esc(opts.emptyText || '暂无会话') + '</li>';
                 return;
@@ -2704,7 +2723,9 @@
                 // ⚠️ 不能直接用 self.since —— 那是上次轮询的位置，切走期间到达的消息
                 //   id 更大，会被漏标成未读。这里按视图分别问一次「现在末条是多少」。
                 if (self.dm && self.dm.peer) {
-                    OwApi.post('dm_poll', { peer: self.dm.peer, since_id: self.since }, function (r) {
+                    // v1.5.30：timeout=0 —— 只问「现在末条是多少」，立即返回。
+                    // 以前不传，服务端按默认 20 秒长轮询处理，切回标签页要白等一轮。
+                    OwApi.post('dm_poll', { peer: self.dm.peer, since_id: self.since, timeout: 0 }, function (r) {
                         if (r && r.ok && r.messages && r.messages.length) {
                             self.since = r.messages[r.messages.length - 1].id;
                             self.markRead(self.since);

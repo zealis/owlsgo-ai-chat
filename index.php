@@ -801,7 +801,13 @@ if ($action !== '') {
         case 'dm_poll':         // 私聊增量轮询（长挂起）
             $peer = Chat::dmPeerKey($actor, $p('peer'));
             if (!$peer) Api::json(['ok' => false, 'msg' => '私聊对象不合法']);
-            Api::json(['ok' => true] + Chat::dmPoll($actor, $peer, (int)$p('since_id', '0')));
+            // v1.5.30：timeout<=0 = 立即返回（窗口聚焦补标已读），与 poll 同款限流
+            $dmTimeout = (int)$p('timeout', '20');
+            if ($dmTimeout <= 0 && !Sec::rateLimit('dm_quick', $actor['kind'] . ':' . (int)($actor['id'] ?? 0), 5, 1)) {
+                Api::json(['ok' => true, 'since' => (int)$p('since_id', '0'), 'messages' => []]);
+            }
+            Api::json(['ok' => true] + Chat::dmPoll($actor, $peer, (int)$p('since_id', '0'),
+                $dmTimeout > 0 ? $dmTimeout : 0));
 
         case 'room_join':
             $room = Chat::room((int)$p('room_id'));
@@ -947,8 +953,17 @@ if ($action !== '') {
             if ($actor['kind'] === 'none') Api::json(['ok' => false, 'msg' => '请先登录', 'need_login' => true]);
             // v1.5.29：成员名单按需 —— 前端「所有成员」面板打开着才要（收起时省掉整段
             // allMembers 查询：join + online 集合 + 游客 GROUP BY + 逐个头像解析）。
-            Api::json(['ok' => true] + Chat::poll($actor, $roomId, (int)$p('since', '0'), 20,
-                $p('want_members') === '1' || $p('want_members') === 1));
+            // v1.5.30：timeout<=0 = 立即返回（窗口聚焦补标已读）。这条短路径绕过了
+            // 长轮询「一轮 20 秒」的天然节流，单独限流，免得变成高频查库入口。
+            $wantMem = $p('want_members') === '1' || $p('want_members') === 1;
+            $timeout = (int)$p('timeout', '20');
+            if ($timeout <= 0 && !Sec::rateLimit('poll_quick', $actor['kind'] . ':' . (int)($actor['id'] ?? 0), 5, 1)) {
+                // throttled 只是给调试/回归留的标记，前端不读（它只看 messages/since）
+                Api::json(['ok' => true, 'since' => (int)$p('since', '0'), 'messages' => [],
+                    'server_time' => time(), 'throttled' => 1]);
+            }
+            Api::json(['ok' => true] + Chat::poll($actor, $roomId, (int)$p('since', '0'),
+                $timeout > 0 ? $timeout : 0, $wantMem));
 
         case 'history':
             $roomId = (int)$p('room_id');
@@ -1296,7 +1311,15 @@ if ($action !== '') {
 $frontPages = Plugin::frontPageTitles();
 $frontPg = isset($frontPages[$page]) ? Plugin::frontPageFor($page) : null;
 if ($frontPg) {
-    renderPluginPage($page, $frontPg, $actor, $user);
+    /* v1.5.30：插件页要跑插件自己的前端代码（pageHead + index.js + 合并包），
+       必须有**身份与 API 密钥**。此前这里直接用了分发前的 $actor：游客首次直达
+       （一个 cookie 都没有）时它是 kind=none / key=''，页面下发空密钥 →
+       插件 JS 调任何 ?action= 都是空 key 签名 → 服务端 403「签名验证失败」→
+       OwApi.onSignExpired 自动 reload，用户看到「插件页莫名自己刷新一次」，
+       刷新后依旧（15 秒内只自动刷一次）。
+       与聊天页 default 分支同款：先建立游客身份（ensureGuest 会 Set-Cookie）。 */
+    if (!$user && !$guest) $guest = Auth::ensureGuest();
+    renderPluginPage($page, $frontPg, Auth::actor($user, $guest), $user);
 } else {
     switch ($page) {
         case 'login':    renderAuth('login'); break;
@@ -1344,6 +1367,13 @@ function renderPluginPage(string $slug, array $pg, array $actor, ?array $user): 
     echo '</main>'
        . '<div class="ow-toast" id="owToast" style="display:none"></div>'
        . '<script src="index.js?v=' . OWLSGO_ASSET_VERSION . '"></script>';
+    /* v1.5.30：下发前端 API 密钥 + 服务器时间。index.js 里的 OwApi.key 只有
+       聊天页的 OwChat.init()、登录页/后台的 boot 会设 —— 插件页此前是空串，
+       插件 JS 在这里调任何 ?action= 都会拿到「签名验证失败」（空的 key 参与 md5）。
+       位置必须在合并包**之前**：插件脚本在合并包里立即执行（e2ee-dm 的 boot()
+       首屏就查 state），晚一步就还是有请求带着空 key 出去。 */
+    echo '<script>OwApi.key=' . json_encode((string)($actor['key'] ?? ''))
+       . ';OwApi.setServerTime(' . time() . ');</script>';
     define('OWLSGO_ASSETS_JS_EMITTED', true);
     echo '<script src="?action=assets&type=js&v=' . OWLSGO_ASSET_VERSION . '"></script>'
        . '</body></html>';

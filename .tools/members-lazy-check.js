@@ -8,7 +8,10 @@
  *   ① 首屏右侧栏默认收起 → 不发完整 room_members（只有 lite 闸门请求），列表不渲染；
  *   ② 点开面板 → 发一次完整 room_members，列表渲染出成员行、计数正确；
  *   ③ 关掉再打开 → 再拉一次（打开即刷新，不依赖轮询）；
- *   ④ 全程无 JS 报错。
+ *   ④ 关掉再打开 → 再拉一次；
+ *   ⑤ 全程无 JS 报错；
+ *   ⑥ 插件页（?page=level）游客首次直达：无签名自愈刷新、无「签名验证失败」、下发了 API 密钥；
+ *   ⑦ 左侧会话列表：数据没变时不重排 DOM（节点身份不变），数据变了必须重排。
  *
  * 用法：node .tools/members-lazy-check.js
  * 前置：运行副本已是本次改动后的代码（core/chat.php + index.php + index.js）。
@@ -115,6 +118,60 @@ const ck = (m, cond, extra) => (cond ? ok : bad)(m, extra);
   console.log('== ⑤ 运行时无报错 ==');
   ck('无未捕获 JS 错误', errs.length === 0, errs.slice(0, 2).join(' | '));
   ck('核心对象就绪', await page.evaluate(() => typeof window.OwChat === 'object' && typeof window.OwApi === 'object'));
+
+  console.log('== ⑥ 插件页游客首次直达：密钥下发 + 无自愈刷新 ==');
+  {
+    // 用**全新 context**（没有任何 cookie）复现「游客第一次点进插件页」
+    const ctx2 = await browser.newContext({
+      viewport: { width: 1440, height: 900 },
+      ignoreHTTPSErrors: true,
+      serviceWorkers: 'block',
+    });
+    const p2 = await ctx2.newPage();
+    const navs = [];
+    const signFails = [];
+    p2.on('framenavigated', (f) => navs.push(f.url()));
+    p2.on('response', async (r) => {
+      const u = r.url();
+      // 只看接口 JSON。assets 合并包的**源码里**就有「签名验证失败」这句文案
+      // （前端拿来判断 msg 的），按字符串匹配会把自己的代码当成失败响应。
+      if (u.indexOf('action=') < 0 || u.indexOf('action=assets') >= 0) return;
+      if ((r.headers()['content-type'] || '').indexOf('json') < 0) return;
+      let t = '';
+      try { t = await r.text(); } catch (e) { return; }
+      if (t.indexOf('签名验证失败') >= 0) signFails.push(u.replace(BASE, ''));
+    });
+    await p2.goto(BASE + '/?page=level', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await p2.waitForTimeout(3500);
+    const st = await p2.evaluate(() => ({
+      key: (window.OwApi && window.OwApi.key) ? String(window.OwApi.key).length : -1,
+      ts: window.OwApi ? window.OwApi.tsOffset : null,
+    }));
+    ck('插件页只导航 1 次（没有签名自愈刷新）', navs.length === 1, 'navigations=' + navs.length);
+    ck('插件页无「签名验证失败」响应', signFails.length === 0, signFails.slice(0, 2).join(' | '));
+    ck('插件页下发了 32 位 API 密钥', st.key === 32, 'len=' + st.key);
+    await ctx2.close();
+  }
+
+  console.log('== ⑦ 左侧会话列表：没变不重排 ==');
+  {
+    const h = await page.evaluateHandle(() => document.querySelector('#owRoomList li'));
+    const hasRow = await page.evaluate((el) => !!el, h);
+    ck('会话列表有行', hasRow);
+    await page.evaluate(() => { window.OwChat.loadConversations(); });
+    await page.waitForTimeout(1200);
+    const sameNode = await page.evaluate((el) => document.querySelector('#owRoomList li') === el, h);
+    ck('数据未变 → 同一 DOM 节点（没重排，滚动位置不丢）', sameNode);
+
+    // 反证：动一下数据必须重排
+    await page.evaluate(() => {
+      const c = (window.OwChat.conversations || [])[0];
+      if (c) c.last_text = String(c.last_text || '') + ' ·';
+      window.OwChat.renderConversations();
+    });
+    const changed = await page.evaluate((el) => document.querySelector('#owRoomList li') !== el, h);
+    ck('数据变了 → 重新渲染（签名缓存不会挡住更新）', changed);
+  }
 
   await browser.close();
   console.log('');

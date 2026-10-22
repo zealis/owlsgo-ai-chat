@@ -1257,7 +1257,10 @@ class Chat
     public static function poll(array $actor, int $roomId, int $sinceId, int $timeout = 20, bool $wantMembers = false): array
     {
         self::heartbeat($actor, $roomId);
-        $deadline = time() + max(5, min(30, $timeout));
+        // v1.5.30：$timeout <= 0 = 「只要当前水位，立即返回」（窗口聚焦补标已读用）。
+        // 旧实现无条件 max(5, …)，即便客户端传 timeout:0 也会阻塞至少 5 秒 ——
+        // 前端 bindFocusRead 就是这么传的，等于每次切回标签页白占一个 worker 20 秒。
+        $deadline = $timeout <= 0 ? 0 : time() + max(5, min(30, $timeout));
         $new = [];
         $hidden = self::hiddenIds($actor);
         while (time() < $deadline) {
@@ -2256,7 +2259,8 @@ class Chat
     /** 私聊增量轮询：与 poll 同构（长挂起），返回新消息 */
     public static function dmPoll(array $actor, array $peer, int $sinceId, int $timeout = 20): array
     {
-        $deadline = time() + max(5, min(30, $timeout));
+        // v1.5.30：同 poll —— 0 表示立即返回，不做等待窗（窗口聚焦补标已读）
+        $deadline = $timeout <= 0 ? 0 : time() + max(5, min(30, $timeout));
         $new = [];
         $hidden = self::hiddenIds($actor);
         while (time() < $deadline) {
