@@ -13,7 +13,7 @@
  *     缓存到 data/cache/plugins.json；仅在首次部署、新增启用、插件文件变更后重建一次；
  *   - 钩子触发 / 路由分发 / 后台页渲染时按清单精确加载涉及的插件，
  *     与当前请求无关的插件代码不再进入请求周期；
- *   - ?action=assets 的合并输出做文件级缓存（参与文件集合与 mtime 未变则直接复用）。
+ *   - ?action=assets 的合并输出做文件级缓存（参与文件集合与「mtime+字节数」未变则直接复用）。
  * v1.5.24 收尾（热路径零加载 + 清单权威化）：
  *   - 后台页 / 前台页的「slug=>标题」进清单：后台壳、插件管理列表、?page= 路由
  *     只读清单即可渲染菜单与路由表，不再为拿几个标题把全部页面型插件 require 进来；
@@ -133,7 +133,7 @@ class Plugin
             if (preg_match('/^[a-zA-Z0-9_-]+$/', $n)) $dirs[$n] = (int)@filemtime($d);
         }
 
-        // 2) 读缓存并按签名（目录 / main.php / plugin.json 的 mtime）校验
+        // 2) 读缓存并按签名（目录 mtime + main.php / plugin.json 的 mtime+字节数）校验
         $cache = self::readCache();
         $stale = [];
         foreach ($dirs as $n => $dm) {
@@ -182,11 +182,25 @@ class Plugin
 
     private static function sigOf(string $name, ?int $dirMtime = null): array
     {
+        $d = self::$dir . '/' . $name;
         return [
-            'd' => $dirMtime ?? (int)@filemtime(self::$dir . '/' . $name),
-            'm' => (int)@filemtime(self::$dir . '/' . $name . '/main.php'),
-            'j' => (int)@filemtime(self::$dir . '/' . $name . '/plugin.json'),
+            'd' => $dirMtime ?? (int)@filemtime($d),
+            'm' => self::stamp($d . '/main.php'),
+            'j' => self::stamp($d . '/plugin.json'),
         ];
+    }
+
+    /**
+     * 单文件新鲜度标记 = mtime + 字节数（一次 stat 顺带取到，不读文件内容）。
+     * ⚠️ 只看 mtime 会漏部署：rsync -a / unzip / cp -p 都保留**源文件**的 mtime，
+     *    内容换了而 mtime 正好撞车时，清单与元数据会永远判定「未变」——
+     *    症状是后台版本号已经是新的（plugin.json 被单独改动过）、页面却还是旧代码渲染的。
+     *    缺文件统一返回 '0:0'，与任何真实文件都不相等。
+     */
+    private static function stamp(string $f): string
+    {
+        $s = @stat($f);
+        return $s === false ? '0:0' : ((int)$s['mtime'] . ':' . (int)$s['size']);
     }
 
     private static function readMeta(string $name): array
@@ -807,11 +821,11 @@ class Plugin
         }
         $files = array_values(array_unique($files));
 
-        // 合并缓存：参与文件集合与 mtime 未变则直接复用
+        // 合并缓存：参与文件集合与「mtime+字节数」未变则直接复用（stamp 的理由见 sigOf）
         $sig = [];
         foreach ($files as $p) {
             $f = self::$dir . '/' . ltrim($p, '/');
-            $sig[$p] = is_file($f) ? (int)@filemtime($f) : 0;
+            $sig[$p] = self::stamp($f);
         }
         $key = md5(json_encode([$type, $only, $file, $sig]));
         $cfile = self::$cacheDir !== '' ? self::$cacheDir . '/assets-' . $key . '.json' : '';
