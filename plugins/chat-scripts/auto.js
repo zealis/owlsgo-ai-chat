@@ -110,7 +110,7 @@
     /**
      * 「自动化」图标：一圈不闭合的圆 + 箭头 = 自动 / 循环。
      * 插件自带 path，不去动核心的图标注册表 —— 那边加一个图标要同时改
-     * index.php 的 ow_icon 与 assets/js/chat.js 的 OW_ICONS，而 assets/ 与
+     * index.php 的 ow_icon 与 index.js 的 OW_ICONS，而 assets/ 与
      * index.php 属主程序，插件不该伸手（.tools/icon-audit.php 也不会扫到内联 svg）。
      */
     function autoIcon() {

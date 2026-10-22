@@ -496,7 +496,7 @@ Plugin::route('plugin_captcha_verify_test', function (array $ctx) {
  * **一条都没生效**，表现成"改了 CSS 页面毫无变化"。与 email-verify 同一做法。
  */
 Plugin::on('page.head', function (): void {
-    echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=captcha-verify&file=style.css&v=' . OWLSGO_VERSION . '">';
+    echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=captcha-verify&file=style.css&v=' . OWLSGO_ASSET_VERSION . '">';
 });
 
 Plugin::asset('js', 'captcha-verify/admin.js');

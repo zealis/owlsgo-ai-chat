@@ -231,35 +231,35 @@ Plugin::route('plugin_e2ee_dm_register', function (array $ctx) {
     $devId = rtrim(strtr(base64_encode(substr(hash('sha256', $rawIk, true), 0, 12)), '+/', '-_'), '=');
 
     try {
-        DB::pdo()->beginTransaction();
-        // 作废旧设备与该设备的预密钥
-        DB::run('DELETE FROM plugin_e2ee_opk WHERE user_id=?', [$me]);
-        DB::run('DELETE FROM plugin_e2ee_devices WHERE user_id=?', [$me]);
-        DB::insert('plugin_e2ee_devices', [
-            'user_id' => $me, 'dev_id' => $devId,
-            'ik_dh' => $ikDh, 'ik_sig' => $ikSig,
-            'spk' => $spk, 'spk_id' => $spkId, 'spk_sig' => $spkSig,
-            'dev_name' => $name, 'ua' => mb_substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 120),
-            'created_at' => $now, 'last_seen' => $now,
-        ]);
-        // v1.5.20：一次多行写预密钥，别逐枚 INSERT
-        $opkRows = [];
-        foreach ($opks as $o) {
-            if (!is_array($o)) continue;
-            $kid = (int)($o['id'] ?? 0);
-            $pub = (string)($o['pub'] ?? '');
-            if ($kid <= 0 || !preg_match('/^[A-Za-z0-9_-]{80,96}$/', $pub)) continue;
-            $opkRows[$kid] = [
-                'dev_id' => $devId, 'user_id' => $me, 'key_id' => $kid,
-                'pub' => $pub, 'used' => 0, 'created_at' => $now,
-            ];
-        }
-        foreach (array_chunk(array_values($opkRows), 100) as $chunk) {
-            DB::insertMany('plugin_e2ee_opk', $chunk);
-        }
-        DB::pdo()->commit();
+        // v1.5.22：统一走 DB::tx（自动提交 / 异常回滚），不再手写 begin/commit/rollBack
+        DB::tx(function () use ($me, $devId, $ikDh, $ikSig, $spk, $spkId, $spkSig, $name, $now, $opks) {
+            // 作废旧设备与该设备的预密钥
+            DB::run('DELETE FROM plugin_e2ee_opk WHERE user_id=?', [$me]);
+            DB::run('DELETE FROM plugin_e2ee_devices WHERE user_id=?', [$me]);
+            DB::insert('plugin_e2ee_devices', [
+                'user_id' => $me, 'dev_id' => $devId,
+                'ik_dh' => $ikDh, 'ik_sig' => $ikSig,
+                'spk' => $spk, 'spk_id' => $spkId, 'spk_sig' => $spkSig,
+                'dev_name' => $name, 'ua' => mb_substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 120),
+                'created_at' => $now, 'last_seen' => $now,
+            ]);
+            // v1.5.20：一次多行写预密钥，别逐枚 INSERT
+            $opkRows = [];
+            foreach ($opks as $o) {
+                if (!is_array($o)) continue;
+                $kid = (int)($o['id'] ?? 0);
+                $pub = (string)($o['pub'] ?? '');
+                if ($kid <= 0 || !preg_match('/^[A-Za-z0-9_-]{80,96}$/', $pub)) continue;
+                $opkRows[$kid] = [
+                    'dev_id' => $devId, 'user_id' => $me, 'key_id' => $kid,
+                    'pub' => $pub, 'used' => 0, 'created_at' => $now,
+                ];
+            }
+            foreach (array_chunk(array_values($opkRows), 100) as $chunk) {
+                DB::insertMany('plugin_e2ee_opk', $chunk);
+            }
+        });
     } catch (Throwable $e) {
-        if (DB::pdo()->inTransaction()) DB::pdo()->rollBack();
         Api::json(['ok' => false, 'msg' => '保存密钥失败，请重试']);
     }
 
@@ -658,7 +658,7 @@ Plugin::sensitive('plugin_e2ee_dm_dev_batch');
  * 服务端只负责把图标 SVG 交给前端，避免前端再抄一份图标路径。
  */
 Plugin::on('page.head', function () {
-    $v = rawurlencode(OWLSGO_VERSION);
+    $v = rawurlencode(OWLSGO_ASSET_VERSION);
     echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=e2ee-dm&file=style.css&v=' . $v . '">' . "\n";
     echo '<script>window.OWED_ICON=' . json_encode(ow_icon('shield', 13), JSON_UNESCAPED_UNICODE) . ';</script>' . "\n";
 });

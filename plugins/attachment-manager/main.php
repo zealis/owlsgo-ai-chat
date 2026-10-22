@@ -676,7 +676,7 @@ Plugin::route('plugin_attachment_manager_cfg_save', function (array $ctx) use ($
  * 通过 page.head 钩子注入 <link> 标签，确保后台样式生效。
  */
 Plugin::on('page.head', function () {
-    echo '<link rel="stylesheet" href="?action=assets&type=css&am=' . OWLSGO_VERSION . '">';
+    echo '<link rel="stylesheet" href="?action=assets&type=css&am=' . OWLSGO_ASSET_VERSION . '">';
 });
 
 /**
@@ -695,7 +695,7 @@ Plugin::on('chat.toolbar', function (): string {
 
 Plugin::asset('js', 'attachment-manager/chat.js');
 // 前台样式（待发区 / 拖拽高亮 / 二选一弹窗）：跟 chat.js 一起登记，
-// 由上面那条 page.head 的 <link> 合并输出 —— 样式写死在 owlsgo.css 里
+// 由上面那条 page.head 的 <link> 合并输出 —— 样式写死在 index.css 里
 // 会让插件停用时留下一堆没人用的规则（gif-stickers 在 v1.3.78 踩过同样的坑）。
 Plugin::asset('css', 'attachment-manager/style.css');
 

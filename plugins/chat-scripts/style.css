@@ -96,7 +96,7 @@
    同一语言；灰槽坐进去才被「展示出来」，与时光机 .ow-tm-head 白面同一机制。
    前台面板（.ow-cs-panel 白底）与弹窗（.ow-modal 白底）不需要这块衬底，故只给后台用。
    ⚠️ 本规格已在两个插件各收敛出一份完全相同的实现（本类与 .ow-sh-tabs-bar），
-   下一步由站方提升为核心通用类 .ow-tabs-bar（落 assets/css/owlsgo.css，轮子进核心、
+   下一步由站方提升为核心通用类 .ow-tabs-bar（落 index.css，轮子进核心、
    不搞插件互相引用），两插件再改为调用核心类并删掉各自的私有类。 */
 .ow-cs-tabs-bar {
     background: var(--ow-bg);

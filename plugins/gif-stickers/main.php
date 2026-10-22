@@ -47,6 +47,11 @@ DB::run("CREATE TABLE IF NOT EXISTS plugin_gif_stickers_config (k VARCHAR(64) PR
       不是「把图搬回家」；图仍在他们图床上，撤图/换地址这张贴纸就打开不了（提示文案早已写明）。
    k 是 md5（32 字符），expire_at 用 BIGINT 存 unix 时间戳，两种驱动都能放。 */
 DB::run("CREATE TABLE IF NOT EXISTS plugin_gif_stickers_cache (k VARCHAR(64) PRIMARY KEY, v TEXT, expire_at BIGINT NOT NULL)");
+// v1.5.22：后台「刷新数据缓存」/ Cache::clear('all') 时一并清空接口结果缓存
+Plugin::on('cache.clear', function (string $area = 'all'): void {
+    if ($area !== 'all') return;
+    try { DB::run('DELETE FROM plugin_gif_stickers_cache'); } catch (Throwable $e) {}
+});
 
 /** 配置默认值。键名即配置表里的 k，也是保存接口的字段名。 */
 function owGSConf(): array
@@ -481,7 +486,7 @@ Plugin::on('sticker.allow', function (string &$allow, string $url, array $actor)
 
 /* ---------- 前端资源 ---------- */
 /**
- * 样式表必须自己发 <link>。核心只在页面里引 owlsgo.css 与合并 **JS**，
+ * 样式表必须自己发 <link>。核心只在页面里引 index.css 与合并 **JS**，
  * 合并 CSS 端点（?action=assets&type=css）没有任何地方引用它 ——
  * attachment-manager 自己的注释就写着「主程序未引入 …… 插件 CSS 不会自动加载」。
  *
@@ -492,7 +497,7 @@ Plugin::on('sticker.allow', function (string &$allow, string $url, array $actor)
  * 现在只发自己那一份，不依赖任何别的插件是否启用。
  */
 Plugin::on('page.head', function (): void {
-    echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=gif-stickers&file=style.css&v=' . OWLSGO_VERSION . '">';
+    echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=gif-stickers&file=style.css&v=' . OWLSGO_ASSET_VERSION . '">';
 });
 
 /**

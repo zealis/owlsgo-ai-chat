@@ -970,7 +970,7 @@ function owumBlockHtml(string $ip, array $hit): string
         . 'var d=(m==="auto")?(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"):m;'
         . 'document.documentElement.setAttribute("data-theme",d);'
         . 'document.documentElement.style.colorScheme=d;}catch(e){}})();</script>'
-        . '<link rel="stylesheet" href="' . Sec::e($base) . '/assets/css/owlsgo.css?v=' . Sec::e(OWLSGO_VERSION) . '">'
+        . '<link rel="stylesheet" href="' . Sec::e($base) . '/index.css?v=' . Sec::e(OWLSGO_ASSET_VERSION) . '">'
         . '<style>'
         . 'html,body{height:100%}'
         . 'body{display:flex;align-items:center;justify-content:center;padding:24px;'
@@ -1035,7 +1035,7 @@ Plugin::asset('css', 'user-manager/style.css');
 Plugin::on('page.head', function (): void {
     $t = @filemtime(__DIR__ . '/style.css') ?: 0;
     echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=user-manager&file=style.css&v='
-        . OWLSGO_VERSION . '&t=' . $t . '">';
+        . OWLSGO_ASSET_VERSION . '&t=' . $t . '">';
 });
 
 /* ---------- 积分发放的通知模板（v1.0.2） ---------- */

@@ -334,7 +334,7 @@ Plugin::adminPage('twofa', '两步验证', function () {
 //    （原先靠 chat.js 内的 __haTwoFALoaded 兜底，那只救得了本插件，救不了别人。）
 Plugin::on('page.footer', function () {
     if (defined('OWLSGO_ASSETS_JS_EMITTED')) return;
-    echo '<script src="?action=assets&type=js"></script>';
+    echo '<script src="?action=assets&type=js&v=' . OWLSGO_ASSET_VERSION . '"></script>';
 });
 
 Plugin::asset('js', 'twofa/chat.js');

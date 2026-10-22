@@ -468,11 +468,11 @@ Plugin::asset('css', 'time-machine/style.css');
  * 核心「消息/联系人」标签是 display 切换，插件面板交给 onShow 后主区归插件管，
  * 样式必须无条件注入（弹窗里的发波文编辑器也用它），做法与 batch-ops 同一口径。
  * ⚠️ 版本参数用**插件自己的版本**（pv）：核心版本不变时只改插件 CSS，
- *    若只带 OWLSGO_VERSION，浏览器会命中旧缓存，站方会以为样式没生效。
+ *    若只带程序版本、不带资源版本，浏览器会命中旧缓存，站方会以为样式没生效。
  */
 Plugin::on('page.head', function (): void {
     echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=time-machine&file=style.css&v='
-        . OWLSGO_VERSION . '&pv=' . rawurlencode(owTmVersion()) . '">' . "\n";
+        . OWLSGO_ASSET_VERSION . '&pv=' . rawurlencode(owTmVersion()) . '">' . "\n";
 });
 
 /** 插件自身版本（取自 plugin.json；读不到就回落到 0，只影响缓存键） */

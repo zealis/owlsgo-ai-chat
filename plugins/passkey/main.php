@@ -994,7 +994,7 @@ Plugin::adminPage('passkey', '通行密钥', function (): string {
 // ⚠️ 用 plugin= / file= 单文件形式：登录页也会加载，几 KB 的静态文件不影响。
 Plugin::on('page.head', function (): void {
     echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=passkey&file=style.css&v='
-        . OWLSGO_VERSION . '">' . "\n";
+        . OWLSGO_ASSET_VERSION . '">' . "\n";
 });
 
 Plugin::asset('js', 'passkey/chat.js');

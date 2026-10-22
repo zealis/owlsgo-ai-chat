@@ -17,5 +17,5 @@ Plugin::asset('js', 'lang-en/lang.js');
 Plugin::on('page.footer', function () {
     if (defined('OWLSGO_ASSETS_JS_EMITTED')) return;
     define('OWLSGO_ASSETS_JS_EMITTED', true);
-    echo '<script src="?action=assets&type=js"></script>';
+    echo '<script src="?action=assets&type=js&v=' . OWLSGO_ASSET_VERSION . '"></script>';
 });

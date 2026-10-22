@@ -470,7 +470,7 @@ Plugin::on('chat.toolbar', function (): string {
  * 这里只取本插件那一份，避免依赖别的插件是否恰好整包输出。
  */
 Plugin::on('page.head', function (): void {
-    echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=red-packet&file=style.css&v=' . OWLSGO_VERSION . '">';
+    echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=red-packet&file=style.css&v=' . OWLSGO_ASSET_VERSION . '">';
 });
 
 Plugin::asset('css', 'red-packet/style.css');   // 供 ?action=assets&type=css&plugin=red-packet&file=style.css 取用
@@ -558,40 +558,49 @@ Plugin::route('plugin_red_packet_create', function (array $ctx) {
         if (mb_strlen($pass) > 20) Api::json(['ok' => false, 'msg' => '口令最多 20 个字']);
     }
 
-    // 扣积分：条件 UPDATE 一步完成「查余额 + 扣款」，并发下不会扣成负数
+    // v1.5.22：扣积分 + 红包主表 + 内容池必须一次性成功，避免「钱扣了、包没建」。
+    // 条件 UPDATE 一步完成「查余额 + 扣款」，并发下不会扣成负数；不足时抛给外层转提示。
     $cost = $total;
-    if ($cost > 0) {
-        $st = DB::run('UPDATE users SET points=points-? WHERE id=? AND points>=?', [$cost, $uid, $cost]);
-        if ($st->rowCount() < 1) {
+    $now = time();
+    try {
+        $pid = DB::tx(function () use ($cost, $uid, $roomId, $isDm, $toUserId, $actor, $kind, $total, $cnt, $pass,
+            $blessing, $now, $expireH, $items) {
+            if ($cost > 0) {
+                $st = DB::run('UPDATE users SET points=points-? WHERE id=? AND points>=?', [$cost, $uid, $cost]);
+                if ($st->rowCount() < 1) throw new RuntimeException('__OW_RP_NO_POINTS__');
+            }
+            $pid = DB::insert('plugin_red_packet', [
+                'room_id'      => $roomId,
+                'to_user_id'   => $isDm ? $toUserId : 0,
+                'sender_id'    => $uid,
+                'sender_nick'  => mb_substr((string)($actor['nickname'] ?? ''), 0, 40),
+                'kind'         => $kind,
+                'total'        => $total,
+                'cnt'          => $cnt,
+                'remain_cnt'   => $cnt,
+                'remain_total' => $total,
+                'pass_hash'    => $kind === 'password' ? password_hash($pass, PASSWORD_DEFAULT) : '',
+                'blessing'     => $blessing,
+                'msg_id'       => 0,
+                'status'       => 'active',
+                'created_at'   => $now,
+                'expire_at'    => $now + $expireH * 3600,
+            ]);
+            // v1.5.20：一次多行写入内容池，别逐条 INSERT
+            $itemRows = [];
+            foreach ($items as $line) {
+                $itemRows[] = ['packet_id' => $pid, 'content' => $line, 'claim_user' => 0, 'claim_at' => 0];
+            }
+            foreach (array_chunk($itemRows, 200) as $chunk) {
+                DB::insertMany('plugin_red_packet_item', $chunk);
+            }
+            return $pid;
+        });
+    } catch (Throwable $e) {
+        if ($e->getMessage() === '__OW_RP_NO_POINTS__') {
             Api::json(['ok' => false, 'msg' => $pn . '不足，当前 ' . owRPBalance($uid) . ' ' . $pn]);
         }
-    }
-
-    $now = time();
-    $pid = DB::insert('plugin_red_packet', [
-        'room_id'      => $roomId,
-        'to_user_id'   => $isDm ? $toUserId : 0,
-        'sender_id'    => $uid,
-        'sender_nick'  => mb_substr((string)($actor['nickname'] ?? ''), 0, 40),
-        'kind'         => $kind,
-        'total'        => $total,
-        'cnt'          => $cnt,
-        'remain_cnt'   => $cnt,
-        'remain_total' => $total,
-        'pass_hash'    => $kind === 'password' ? password_hash($pass, PASSWORD_DEFAULT) : '',
-        'blessing'     => $blessing,
-        'msg_id'       => 0,
-        'status'       => 'active',
-        'created_at'   => $now,
-        'expire_at'    => $now + $expireH * 3600,
-    ]);
-    // v1.5.20：一次多行写入内容池，别逐条 INSERT
-    $itemRows = [];
-    foreach ($items as $line) {
-        $itemRows[] = ['packet_id' => $pid, 'content' => $line, 'claim_user' => 0, 'claim_at' => 0];
-    }
-    foreach (array_chunk($itemRows, 200) as $chunk) {
-        DB::insertMany('plugin_red_packet_item', $chunk);
+        throw $e;
     }
 
     // 发消息：走核心 Chat::send，成员/禁言/敏感词/频率一套校验全部复用。
@@ -608,9 +617,12 @@ Plugin::route('plugin_red_packet_create', function (array $ctx) {
         $res = [false, '发送失败，请稍后再试'];
     }
     if (empty($res[0])) {
-        owRPRefundPoints($pid, 'void');
-        DB::run('DELETE FROM plugin_red_packet_item WHERE packet_id=?', [$pid]);
-        DB::run('DELETE FROM plugin_red_packet WHERE id=?', [$pid]);
+        // v1.5.22：退积分 + 删内容池 + 删主表也包成一个事务，避免退款成功但包残留。
+        DB::tx(function () use ($pid, $cost, $uid) {
+            if ($cost > 0) DB::run('UPDATE users SET points=points+? WHERE id=?', [$cost, $uid]);
+            DB::run('DELETE FROM plugin_red_packet_item WHERE packet_id=?', [$pid]);
+            DB::run('DELETE FROM plugin_red_packet WHERE id=?', [$pid]);
+        });
         Api::json(['ok' => false, 'msg' => '红包发送失败：' . (string)($res[1] ?? '请稍后再试')]);
     }
     $msgId = (int)($res[2] ?? 0);

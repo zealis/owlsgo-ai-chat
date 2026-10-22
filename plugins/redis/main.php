@@ -1083,6 +1083,13 @@ Plugin::on('room.created', 'owRdsOnRoomChanged');
 Plugin::on('room.after_update', 'owRdsOnRoomChanged');
 Plugin::on('room.restored', 'owRdsOnRoomChanged');
 
+/* v1.5.22：后台「刷新数据缓存」/ Cache::clear('all') 时，一并清本插件前缀下的键。
+   只响应 all —— 核心设置保存走 settings 区域，不该清空在线/限流这些临时数据。 */
+Plugin::on('cache.clear', function (string $area = 'all'): void {
+    if ($area !== 'all') return;
+    try { owRdsFlushPrefix(); } catch (Throwable $e) { /* Redis 不可用：文件缓存已经刷新 */ }
+});
+
 /* ============================ 计划任务 ============================ */
 
 /**

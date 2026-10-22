@@ -7,7 +7,7 @@
  * the engine skips #owMessages / #owRoomList / #owOnlineList entirely,
  * and free text will not match these keys as a whole node anyway.
  *
- * Add entries: grep the exact string in assets/js/chat.js / index.php first.
+ * Add entries: grep the exact string in index.js / index.php first.
  */
 (function (w, d) {
     'use strict';

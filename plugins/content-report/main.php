@@ -1695,5 +1695,5 @@ Plugin::asset('css', 'content-report/style.css');
  */
 Plugin::on('page.head', function () {
     echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=content-report&file=style.css&v='
-        . OWLSGO_VERSION . '">';
+        . OWLSGO_ASSET_VERSION . '">';
 });

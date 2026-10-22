@@ -194,7 +194,7 @@ Plugin::on('chat.toolbar', function (): string {
  * 只取本插件那一份，避免依赖别的插件是否恰好整包输出。
  */
 Plugin::on('page.head', function (): void {
-    echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=voice-msg&file=style.css&v=' . OWLSGO_VERSION . '">';
+    echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=voice-msg&file=style.css&v=' . OWLSGO_ASSET_VERSION . '">';
 });
 
 Plugin::asset('css', 'voice-msg/style.css');   // 录音面板 + 语音气泡

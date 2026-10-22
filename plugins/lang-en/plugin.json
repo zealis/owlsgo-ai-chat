@@ -1,6 +1,6 @@
 {
     "name": "English Language Pack",
-    "version": "1.0.11",
+    "version": "1.0.12",
     "description": "英语语言包：翻译系统界面文字（登录/聊天/后台），不翻译用户消息、昵称、群名。启用后在「系统设置 → 语言」设为默认，或访客在登录页右上角切换。",
     "author": "Owlsgo"
 }

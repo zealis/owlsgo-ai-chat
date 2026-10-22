@@ -1,0 +1,228 @@
+/**
+ * voice-input · 样式（v1.0.0）
+ *
+ * 形态：一块贴在输入栏上沿的浮层（1px 描边 + 14px 圆角），不是模态框 ——
+ * 语音输入是「往输入框填字」的辅助动作，弹窗会把正在看的聊天记录整个挡住。
+ *
+ * 视觉约束（与全站一致）：
+ *   · 颜色一律走 --ow-* 令牌，深浅两套主题自动跟随；本文件没有一处写死颜色。
+ *   · 不用渐变、不用毛玻璃、不用 box-shadow —— 层次靠描边与底色差表达。
+ *   · 小字号（11~12px）中文不写 font-weight: 600：粗体会把 CJK 字形撑宽、行高跟着抖。
+ */
+
+/* 浮层：display 由 .is-on 控制，定位常驻。挂在 .ow-inputbar 内部 ——
+   它是 position:relative，浮层用 bottom:100% 自动贴住输入栏上沿，
+   输入框自动增高或用户拖高时都不需要 JS 重算位置。
+   宽度**不拉满**：满宽的浮层在宽屏上会变成一条只有左端有内容的空槽，
+   ✕ / ✓ 被推到屏幕最右侧、离正文一臂远。定宽 520（与表情包面板同一取向：
+   左对齐、定宽）读起来像一张卡，按钮就贴在正文右侧。 */
+.ow-vi {
+    display: none;
+    position: absolute;
+    left: 12px;
+    right: auto;
+    bottom: 100%;
+    width: 520px;
+    max-width: calc(100% - 24px);
+    margin-bottom: 8px;
+    z-index: 45;                       /* 高于「N 条未读」按钮（40），略低于输入栏浮层 */
+    box-sizing: border-box;
+    padding: 11px 14px 12px;
+    background: var(--ow-surface);
+    border: 1px solid var(--ow-border);
+    border-radius: 14px;
+}
+.ow-vi.is-on { display: block; animation: owViIn .16s ease-out; }
+@keyframes owViIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: none; }
+}
+
+/* ---------- 顶行：波形 / 计时 / 模式标签 / 两个动作 ---------- */
+.ow-vi-bar {
+    display: flex; display: -webkit-flex;
+    align-items: center; -webkit-align-items: center;
+    gap: 8px;
+}
+
+/* 五根呼吸的竖条：表示「正在听」，不承载音量数据（不申请麦克风流，
+   所以拿不到真实音量 —— 假装成电平表只会误导）。 */
+.ow-vi-wave { display: inline-flex; display: -webkit-inline-flex; align-items: flex-end; -webkit-align-items: flex-end; gap: 3px; height: 18px; flex-shrink: 0; }
+.ow-vi-wave i {
+    display: block;
+    width: 3px;
+    height: 8px;
+    border-radius: 1.5px;
+    background: var(--ow-primary);
+    transform-origin: bottom;
+    animation: owViWave 1s ease-in-out infinite;
+}
+.ow-vi-wave i:nth-child(2) { animation-delay: .12s; }
+.ow-vi-wave i:nth-child(3) { animation-delay: .24s; }
+.ow-vi-wave i:nth-child(4) { animation-delay: .36s; }
+.ow-vi-wave i:nth-child(5) { animation-delay: .48s; }
+@keyframes owViWave {
+    0%, 100% { transform: scaleY(.45); opacity: .5; }
+    50%      { transform: scaleY(1.6); opacity: 1; }
+}
+
+.ow-vi-time {
+    font-family: var(--ow-mono);
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--ow-text-sub);
+    font-variant-numeric: tabular-nums;
+    min-width: 34px;
+    flex-shrink: 0;
+}
+
+/* 模式标签：本机识别 = 中性灰；在线识别 = 警示块配色（音频会离开设备，必须一眼看见） */
+.ow-vi-tag {
+    font-size: 11px;
+    line-height: 16px;
+    padding: 0 7px;
+    border-radius: 8px;
+    border: 1px solid var(--ow-border);
+    background: var(--ow-bg-sub);
+    color: var(--ow-text-sub);
+    white-space: nowrap;
+    flex-shrink: 0;
+    /* 模式标签靠右与动作按钮成组：左边是「在听」的两枚指示（波形 / 计时），
+       右边是「什么模式 + 怎么办」。中间留白比把按钮甩到最右边更像一张卡。 */
+    margin-left: auto;
+}
+.ow-vi-tag.is-cloud {
+    background: var(--ow-warn-bg);
+    border-color: var(--ow-warn-border);
+    color: var(--ow-yellow);
+}
+
+.ow-vi-btns {
+    display: inline-flex; display: -webkit-inline-flex;
+    align-items: center; -webkit-align-items: center;
+    gap: 6px;
+}
+.ow-vi-btn {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border-radius: 50%;
+    font-size: 13px;
+    line-height: 26px;
+    text-align: center;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background-color .15s, border-color .15s, color .15s;
+    -webkit-transition: background-color .15s, border-color .15s, color .15s;
+}
+.ow-vi-x {
+    border: 1px solid var(--ow-border-control);
+    background: transparent;
+    color: var(--ow-text-sub);
+}
+.ow-vi-x:hover { background: var(--ow-hover-bg); color: var(--ow-text); }
+.ow-vi-ok {
+    border: 1px solid var(--ow-primary-strong);
+    background: var(--ow-primary-strong);
+    color: var(--ow-on-accent);
+}
+.ow-vi-ok:hover { background: var(--ow-primary-dark); border-color: var(--ow-primary-dark); }
+.ow-vi-btn:focus-visible { outline: 2px solid var(--ow-primary); outline-offset: 2px; }
+
+/* ---------- 正文：已定稿 + 未定稿 + 光标 ---------- */
+.ow-vi-body {
+    margin-top: 9px;
+    max-height: 96px;
+    overflow-y: auto;
+    font-size: 15px;
+    line-height: 1.55;
+    color: var(--ow-text);
+    word-break: break-word;
+    overflow-wrap: break-word;
+}
+.ow-vi-ph { color: var(--ow-text-sub); }
+.ow-vi-final { white-space: pre-wrap; }
+/* 未定稿句子：浅色 —— 让「还在识别」与「已经算数」一眼可分 */
+.ow-vi-live { color: var(--ow-text-sub); white-space: pre-wrap; }
+.ow-vi-caret {
+    display: inline-block;
+    width: 2px;
+    height: 14px;
+    margin-left: 1px;
+    vertical-align: -2px;
+    background: var(--ow-primary);
+    animation: owViBlink 1s steps(1) infinite;
+}
+@keyframes owViBlink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+
+/* ---------- 等用户授权的状态：波形停、✓ 收起来（此刻没有在听） ---------- */
+.ow-vi.is-wait .ow-vi-wave i { animation-play-state: paused; opacity: .35; }
+.ow-vi.is-wait .ow-vi-caret { display: none; }
+.ow-vi.is-wait .ow-vi-ok { display: none; }
+
+/* ---------- 说明条（本机不可用 / 没有离线包时） ---------- */
+.ow-vi-note {
+    margin-top: 8px;
+    padding: 8px 10px;
+    background: var(--ow-warn-bg);
+    border: 1px solid var(--ow-warn-border);
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--ow-yellow);
+}
+.ow-vi-na {
+    display: flex; display: -webkit-flex;
+    justify-content: flex-end; -webkit-justify-content: flex-end;
+    gap: 8px;
+    margin-top: 8px;
+}
+.ow-vi-nb {
+    padding: 5px 12px;
+    font-size: 12px;
+    line-height: 18px;
+    border-radius: 6px;
+    border: 1px solid var(--ow-border-control);
+    background: var(--ow-surface);
+    color: var(--ow-text);
+    cursor: pointer;
+    font-family: inherit;
+}
+.ow-vi-nb:hover { background: var(--ow-hover-bg); }
+.ow-vi-nb.is-primary {
+    border-color: var(--ow-primary-strong);
+    background: var(--ow-primary-strong);
+    color: var(--ow-on-accent);
+}
+.ow-vi-nb.is-primary:hover { background: var(--ow-primary-dark); border-color: var(--ow-primary-dark); }
+
+/* ---------- 工具栏那颗按钮：录音中亮起（图标与底色都要变，只变一样在灰底上看不出来） ---------- */
+.ow-vi-entry.is-on {
+    color: var(--ow-primary-dark);
+    background: var(--ow-blue-light);
+}
+
+/* ---------- 移动端：贴边、热区放大 ----------
+   窄屏没有「定宽卡片」的余地：左右各留 8px 铺满，按钮从 28 拉到 34（触控目标），
+   正文降一档行高更紧凑。 */
+@media (max-width: 720px) {
+    .ow-vi {
+        left: 8px;
+        right: 8px;
+        width: auto;
+        max-width: none;
+        padding: 9px 11px 11px;
+        border-radius: 12px;
+    }
+    .ow-vi-body { max-height: 76px; font-size: 14px; line-height: 1.5; }
+    .ow-vi-btn { width: 34px; height: 34px; line-height: 32px; }
+    .ow-vi-time { min-width: 30px; }
+}
+
+/* 尊重系统「减少动态效果」：呼吸条与光标不再闪 */
+@media (prefers-reduced-motion: reduce) {
+    .ow-vi.is-on { animation: none; }
+    .ow-vi-wave i { animation: none; opacity: .8; transform: scaleY(.8); }
+    .ow-vi-caret { animation: none; }
+    .ow-vi-btn { transition: none; }
+}

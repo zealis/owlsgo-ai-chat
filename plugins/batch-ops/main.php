@@ -275,5 +275,5 @@ Plugin::asset('css', 'batch-ops/style.css');
  */
 Plugin::on('page.head', function (): void {
     echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=batch-ops&file=style.css&v='
-        . OWLSGO_VERSION . '">' . "\n";
+        . OWLSGO_ASSET_VERSION . '">' . "\n";
 });

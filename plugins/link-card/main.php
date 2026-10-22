@@ -651,7 +651,7 @@ function owLCGetPreview(string $url): array
  */
 Plugin::on('page.head', function (): void {
     echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=link-card&file=style.css&v='
-        . OWLSGO_VERSION . '">' . "\n";
+        . OWLSGO_ASSET_VERSION . '">' . "\n";
     if (($_GET['page'] ?? '') === 'admin') return;
     owLCBoot();
     owLCMeta();
@@ -863,6 +863,15 @@ Plugin::route('plugin_link_card_cfg', function (array $ctx) use ($lcGuard): void
         'cache_count' => (int)DB::val('SELECT COUNT(*) FROM plugin_link_card_preview'),
         'blocked_count' => count(owLCBlockedList()),
     ]);
+});
+
+// v1.5.22：后台「刷新数据缓存」/ Cache::clear('all') 时一并清空远程链接预览缓存
+Plugin::on('cache.clear', function (string $area = 'all'): void {
+    if ($area !== 'all') return;
+    try {
+        owLCPreviewBoot();
+        DB::run('DELETE FROM plugin_link_card_preview');
+    } catch (Throwable $e) {}
 });
 
 /** 清空预览缓存（删数据 = 敏感操作） */

@@ -1,6 +1,6 @@
 {
     "name": "邮箱验证",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "description": "邮件发送通道与模板：SMTP（SSL / STARTTLS / 明文）或 PHP mail()，配合核心的邮箱验证码策略。后台「插件 → 邮箱验证」可编辑各场景模板（注册 / 找回密码 / 修改密码，占位符 {{verification_code}} 等，也支持把 HTML 放进 data/mail-templates/ 直接覆盖），并查看发送统计（待发送 / 今日已发 / 失败 / 通道状态）。停用本插件后验证码仍照常生成与校验，只是发不出去。",
     "author": "Owlsgo"
 }

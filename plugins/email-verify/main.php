@@ -857,7 +857,7 @@ Plugin::cron('email_verify_purge_log', 86400, function () {
 
 /** 后台样式：核心不引合并 CSS 包，插件自己注入 <link>（只取本插件这一个文件）。 */
 Plugin::on('page.head', function (): void {
-    echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=email-verify&file=style.css&v=' . OWLSGO_VERSION . '">';
+    echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=email-verify&file=style.css&v=' . OWLSGO_ASSET_VERSION . '">';
 });
 
 Plugin::asset('js', 'email-verify/admin.js');

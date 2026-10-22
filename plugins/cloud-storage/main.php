@@ -1218,7 +1218,7 @@ Plugin::asset('js', 'cloud-storage/admin.js');
 
 /** 后台 CSS 不会自动引入，经 page.head 发 <link> */
 Plugin::on('page.head', function () {
-    echo '<link rel="stylesheet" href="?action=assets&type=css&cs=' . OWLSGO_VERSION . '">';
+    echo '<link rel="stylesheet" href="?action=assets&type=css&cs=' . OWLSGO_ASSET_VERSION . '">';
 });
 
 Plugin::adminPage('cloud-storage', '云存储', function () {

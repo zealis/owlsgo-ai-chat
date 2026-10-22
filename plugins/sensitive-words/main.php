@@ -1102,7 +1102,7 @@ function owSPlexDownload(?string &$err = null): array
     if (!$saved) { $err = '压缩包里没找到 Vocabulary/*.txt'; return []; }
 
     // 缓存签名看 mtime/size，文件刚换过必然失效；显式删掉只是为了不让旧文件留在盘上
-    @unlink(owSPlexCacheFile());
+    if (class_exists('Cache')) Cache::clear('lexicon'); else @unlink(owSPlexCacheFile());
     DB::setSetting('spam_lex_remote_at', $repo['at']);
     DB::setSetting('spam_lex_installed_at', (string)time());
     // 「有待更新」这个状态到此消解：后台状态行不再显示「远端有更新」，同一版本也不会被再次提醒
@@ -1295,7 +1295,7 @@ Plugin::adminPage('sensitive-words', '垃圾信息控制', function () {
     ];
     $h = '<h2>垃圾信息控制</h2><p class="ow-admin-desc">敏感词、违禁词库、刷屏、链接域名、访问申诉、AI 审核集中在一页管理。'
         . '每个标签独立保存，改动即时生效。</p>';
-    // 分组标签用核心通用轮子 owTabs（v1.3.113）：结构与配色都在 owlsgo.css / chat.js，
+    // 分组标签用核心通用轮子 owTabs（v1.3.113）：结构与配色都在 index.css / index.js，
     // 这里只出 HTML；点击走标签条上的 onclick 委托，插件侧不再写一份显隐逻辑。
     // 首个标签的 is-active 与其它面板的 display:none 都由这里一次性写定，是这一页的唯一真相。
     $h .= '<div class="ow-card"><div class="ow-pagetabs" id="owSpamTabs" onclick="owTabs.click(this, event)">';
@@ -1807,6 +1807,10 @@ Plugin::route('plugin_spam_lex_toggle', function (array $ctx) {
     if ($en) $dis = array_values(array_diff($dis, [$name]));
     elseif (!in_array($name, $dis, true)) $dis[] = $name;
     DB::setSetting('spam_lex_disabled', implode("\n", $dis));
+    // v1.5.22：停用名单变了，编译缓存立即作废
+    DB::afterCommit(function () {
+        if (class_exists('Cache')) Cache::clear('lexicon');
+    });
     Api::json(['ok' => true, 'msg' => $en ? '已启用' : '已停用']);
 });
 
@@ -1815,13 +1819,17 @@ Plugin::route('plugin_spam_lex_all', function (array $ctx) {
     if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);
     $all = (int)($ctx['post']['enabled'] ?? 1) === 1;
     DB::setSetting('spam_lex_disabled', $all ? '' : implode("\n", array_keys(owSPlexFiles())));
+    // v1.5.22：停用名单变了，编译缓存立即作废，下次请求按新名单重建
+    DB::afterCommit(function () {
+        if (class_exists('Cache')) Cache::clear('lexicon');
+    });
     Api::json(['ok' => true, 'msg' => $all ? '已全部启用' : '已全部停用']);
 });
 
 /** 重新扫描：丢掉编译缓存，按当前目录重建（管理员自己往目录里放了 txt 之后点这个） */
 Plugin::route('plugin_spam_lex_rescan', function (array $ctx) {
     if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' => '需要管理员权限'], 403);
-    @unlink(owSPlexCacheFile());
+    if (class_exists('Cache')) Cache::clear('lexicon'); else @unlink(owSPlexCacheFile());
     $c = owSPlexCompiled(true);
     Sec::log('spam_lexicon_rescan', (string)($ctx['actor']['nickname'] ?? ''),
         ['files' => count(owSPlexFiles()), 'words' => (int)$c['words']]);

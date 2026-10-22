@@ -6,7 +6,7 @@
  * 与核心的 owl_theme 同档「本机外观偏好」。
  *
  * 停用本插件即彻底回到核心默认：head 里的引擎不再注入 → 没有任何行内 CSS 变量 →
- * 界面就是 owlsgo.css 的样式表值（经典蓝）；设置弹窗里也不再出现「色系」段。
+ * 界面就是 index.css 的样式表值（经典蓝）；设置弹窗里也不再出现「色系」段。
  */
 declare(strict_types=1);
 
@@ -25,6 +25,6 @@ Plugin::asset('css', 'color-schemes/style.css');
  * 这里用 plugin= + file= 只取本插件那两个文件，不重复拉别人的合并结果。
  */
 Plugin::on('page.head', function () {
-    echo '<script src="?action=assets&type=js&plugin=color-schemes&file=boot.js&v=' . OWLSGO_VERSION . '"></script>'
-       . '<link rel="stylesheet" href="?action=assets&type=css&plugin=color-schemes&file=style.css&v=' . OWLSGO_VERSION . '">';
+    echo '<script src="?action=assets&type=js&plugin=color-schemes&file=boot.js&v=' . OWLSGO_ASSET_VERSION . '"></script>'
+       . '<link rel="stylesheet" href="?action=assets&type=css&plugin=color-schemes&file=style.css&v=' . OWLSGO_ASSET_VERSION . '">';
 });

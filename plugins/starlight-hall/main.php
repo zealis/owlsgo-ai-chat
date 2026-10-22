@@ -1929,23 +1929,31 @@ function owSHCSign(int $uid, string $day, string $kind = 'normal', bool $reward 
     $gain  = (int)$parts['total'];
     $now   = time();
 
-    try {
-        DB::run('INSERT INTO plugin_checkin_log (user_id, day, points, streak, kind, created_at) VALUES (?,?,?,?,?,?)',
-            [$uid, $day, $gain, $strk, $kind, $now]);
-    } catch (Throwable $e) {
-        // 唯一键冲突 = 并发下刚被签过；不视为成功，提示用户刷新
-        return ['ok' => false, 'msg' => '这一天已经签到过了'];
-    }
-
     $max = max((int)$u['max_streak'], $strk);
-    DB::run('UPDATE plugin_checkin_user SET total_days=total_days+1, streak=?, max_streak=?,'
-        . ' points=points+?, last_day=?, updated_at=? WHERE user_id=?',
-        [$strk, $max, $gain, $day, $now, $uid]);
+    // v1.5.22：签到日志 / 用户累计 / 积分三张表必须一起成或一起退。
+    // 以前日志先落、后续更新失败时用户会卡在「今天已签到但没积分」，无法重试。
+    try {
+        DB::tx(function () use ($uid, $day, $gain, $strk, $now, $max, $kind) {
+            DB::run('INSERT INTO plugin_checkin_log (user_id, day, points, streak, kind, created_at) VALUES (?,?,?,?,?,?)',
+                [$uid, $day, $gain, $strk, $kind, $now]);
+            $st = DB::run('UPDATE plugin_checkin_user SET total_days=total_days+1, streak=?, max_streak=?,'
+                . ' points=points+?, last_day=?, updated_at=? WHERE user_id=?',
+                [$strk, $max, $gain, $day, $now, $uid]);
+            if ($st->rowCount() < 1) throw new RuntimeException('签到数据写入失败');
+            if ($gain > 0) {
+                DB::run('UPDATE users SET points=points+? WHERE id=?', [$gain, $uid]);
+            }
+        });
+    } catch (Throwable $e) {
+        // 唯一键冲突 = 并发下刚被签过；回查确认，其他异常继续抛
+        if (owSHCSigned($uid, $day)) return ['ok' => false, 'msg' => '这一天已经签到过了'];
+        throw $e;
+    }
     if ($gain > 0) {
-        DB::run('UPDATE users SET points=points+? WHERE id=?', [$gain, $uid]);
         // 到账通知（v1.1.5）：普通签到 / 补签 / 管理员代签三条入口都走这里，口径只写一份。
         // 补签是 reward=false（$gain=0）—— 没发钱就不该发通知。
         // 代签另用一条模板：钱不是他自己点出来的。
+        // ⚠️ 通知放在事务提交之后：通知失败不该把已完成的签到回滚掉。
         $adminSign = ($kind === 'admin');
         Notice::push($uid, $adminSign ? 'shc_checkin_admin' : 'shc_checkin', $adminSign
             ? ['points' => $gain, 'day' => $day, 'unit' => ow_points_name()]
@@ -2113,14 +2121,23 @@ Plugin::route('plugin_starlight_hall_checkin_patch', function (array $ctx) {
     $cost = owSHCInt('patch_cost');
     if (owSHCPoints($uid) < $cost) Api::json(['ok' => false, 'msg' => ow_points_name() . '不足，补签需要 ' . $cost . ' ' . ow_points_name()]);
 
-    $r = owSHCSign($uid, $t['day'], 'patch', false);
-    if (!$r['ok']) Api::json(['ok' => false, 'msg' => $r['msg']]);
-
-    DB::run('UPDATE users SET points=points-? WHERE id=?', [$cost, $uid]);
+    // v1.5.22：补签记录 + 扣积分 + 补签计数必须原子完成。
+    // owSHCSign 自己也有事务（内层会走 SAVEPOINT），外层任一写入失败会整体回滚。
     $mon = date('Y-m');
     $used = ((string)$u['patch_mon'] === $mon) ? (int)$u['patch_used'] + 1 : 1;
-    DB::run('UPDATE plugin_checkin_user SET patch_used=?, patch_mon=? WHERE user_id=?', [$used, $mon, $uid]);
-    Sec::log('checkin_patch', (string)($ctx['actor']['nickname'] ?? ''), ['uid' => $uid, 'day' => $t['day'], 'cost' => $cost]);
+    try {
+        $r = DB::tx(function () use ($uid, $t, $cost, $mon, $used, $ctx) {
+            $r = owSHCSign($uid, $t['day'], 'patch', false);
+            if (!$r['ok']) throw new RuntimeException($r['msg']);
+            $st = DB::run('UPDATE users SET points=points-? WHERE id=? AND points>=?', [$cost, $uid, $cost]);
+            if ($st->rowCount() < 1) throw new RuntimeException(ow_points_name() . '不足');
+            DB::run('UPDATE plugin_checkin_user SET patch_used=?, patch_mon=? WHERE user_id=?', [$used, $mon, $uid]);
+            Sec::log('checkin_patch', (string)($ctx['actor']['nickname'] ?? ''), ['uid' => $uid, 'day' => $t['day'], 'cost' => $cost]);
+            return $r;
+        });
+    } catch (Throwable $e) {
+        Api::json(['ok' => false, 'msg' => $e->getMessage()]);
+    }
 
     Api::json(['ok' => true, 'msg' => '已补签 ' . $t['day'] . '，连续天数恢复到 ' . (int)$r['streak'] . ' 天',
                'cost' => $cost, 'streak' => (int)$r['streak']]);

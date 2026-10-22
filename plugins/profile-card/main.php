@@ -135,7 +135,7 @@ Plugin::asset('css', 'profile-card/style.css');
  */
 Plugin::on('page.head', function (): void {
     echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=profile-card&file=style.css&v='
-        . OWLSGO_VERSION . '&pv=' . rawurlencode(owpcVersion()) . '">' . "\n";
+        . OWLSGO_ASSET_VERSION . '&pv=' . rawurlencode(owpcVersion()) . '">' . "\n";
 });
 
 /** 插件自身版本（取自 plugin.json；读不到回落 0，只影响缓存键） */
