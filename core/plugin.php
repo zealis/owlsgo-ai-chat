@@ -519,15 +519,18 @@ class Plugin
             $interval = max(60, (int)$task['interval_sec']);
             // 状态与日志必须成对写：只更新状态没日志，后台看不出这次跑了什么；
             // 只写日志没更新状态，任务会被反复重跑。
-            DB::run('UPDATE cron_tasks SET last_run_at=?, next_run_at=?, last_status=?, run_count=run_count+1, updated_at=? WHERE id=?',
-                [$now, $now + $interval, $status, $now, (int)$task['id']]);
-            DB::insert('cron_logs', [
-                'name'       => $key,
-                'status'     => $status,
-                'message'    => mb_substr($message, 0, 400),
-                'duration'   => $duration,
-                'created_at' => $now,
-            ]);
+            // v1.5.22：两张表用事务包住，避免「状态改了、日志没落」的残缺。
+            DB::tx(function () use ($now, $interval, $status, $task, $key, $message, $duration) {
+                DB::run('UPDATE cron_tasks SET last_run_at=?, next_run_at=?, last_status=?, run_count=run_count+1, updated_at=? WHERE id=?',
+                    [$now, $now + $interval, $status, $now, (int)$task['id']]);
+                DB::insert('cron_logs', [
+                    'name'       => $key,
+                    'status'     => $status,
+                    'message'    => mb_substr($message, 0, 400),
+                    'duration'   => $duration,
+                    'created_at' => $now,
+                ]);
+            });
             $results[] = ['name' => $key, 'status' => $status, 'message' => $message, 'duration' => $duration];
         }
         return $results;
@@ -849,6 +852,8 @@ class Plugin
         if (!preg_match('/^[a-zA-Z0-9_-]+$/', $name)) return false;
         $dir = self::$dir . '/' . $name;
         if (!is_file($dir . '/plugin.json')) return false;
+        // v1.5.22：先在插件仍完整时清清单/资源缓存（钩子里的代码还在），再删库与目录
+        if (class_exists('Cache')) Cache::clear('plugin');
         // 先删注册（不是停用：卸载后列表不应留任何痕迹），再删目录
         DB::run('DELETE FROM plugins WHERE name=?', [$name]);
         self::rrmdir($dir);
@@ -890,6 +895,10 @@ class Plugin
         if (!preg_match('/^[a-zA-Z0-9_-]+$/', $name)) return;
         if (!is_file(self::$dir . "/$name/plugin.json")) return;
         DB::upsert('plugins', ['name' => $name, 'enabled' => $enable ? 1 : 0, 'config' => ''], ['name']);
+        // v1.5.22：启停后清插件清单/合并资源缓存，下次请求按新的启用清单重建
+        DB::afterCommit(function () {
+            if (class_exists('Cache')) Cache::clear('plugin');
+        });
         // 同步本进程的内存状态：否则同一请求里紧接着调 runCron()，看到的仍是启停**前**的
         // order / crons —— 表现为「刚启用却提示插件未启用」或「刚停用却照常执行」。
         // 跨请求自然一致，但请求内必须自己跟上。
@@ -937,6 +946,8 @@ class Plugin
             copy('zip://' . $f['tmp_name'] . '#' . $n, $target);
         }
         $zip->close();
+        // v1.5.22：新插件文件已落盘，清清单/资源缓存，下次请求重新扫描
+        if (class_exists('Cache')) Cache::clear('plugin');
         Sec::log('plugin_install', '', ['plugin' => $root]);
         return [true, '插件已安装：' . $root];
     }

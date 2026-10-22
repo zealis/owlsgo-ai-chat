@@ -139,19 +139,25 @@ class Admin
                 ]);
             };
             if ($act === 'reset_name') {
-                $trash('reset_name', ['name' => $room['name']]);
-                DB::run("UPDATE rooms SET name=? WHERE id=?", ['未命名群聊', $id]);
-                Sec::log('room_review', (string)$id, ['act' => 'reset_name']);
+                // v1.5.22：回收站快照 + 群名更新 + 审计日志必须一起成/退
+                DB::tx(function () use ($trash, $id, $room) {
+                    $trash('reset_name', ['name' => $room['name']]);
+                    DB::run("UPDATE rooms SET name=? WHERE id=?", ['未命名群聊', $id]);
+                    Sec::log('room_review', (string)$id, ['act' => 'reset_name']);
+                });
                 Plugin::fire('room.after_update', [$id, ['name' => '未命名群聊'], $actor]);
                 return [true, '已重置为「未命名群聊」（可在回收站撤销）'];
             }
             if ($act === 'reset_avatar') {
                 $old = (string)$room['avatar'];
-                $trash('reset_avatar', ['avatar' => $old]);
-                // v1.3.13：连带清 avatar_type/style/seed —— 只清路径的话，
-                // 生成式头像仍生效，「重置头像」等于没重置。
-                DB::run("UPDATE rooms SET avatar='', avatar_type='', avatar_style='', avatar_seed='' WHERE id=?", [$id]);
-                // 违规头像文件移入回收目录（不删除，撤销时移回）
+                DB::tx(function () use ($trash, $id, $old) {
+                    $trash('reset_avatar', ['avatar' => $old]);
+                    // v1.3.13：连带清 avatar_type/style/seed —— 只清路径的话，
+                    // 生成式头像仍生效，「重置头像」等于没重置。
+                    DB::run("UPDATE rooms SET avatar='', avatar_type='', avatar_style='', avatar_seed='' WHERE id=?", [$id]);
+                    Sec::log('room_review', (string)$id, ['act' => 'reset_avatar']);
+                });
+                // 文件操作不能回滚，放事务提交后：库已改成功再搬文件
                 if ($old !== '' && strpos($old, 'uploads/avatar/') === 0) {
                     $src = dirname(__DIR__) . '/' . $old;
                     if (is_file($src)) {
@@ -160,15 +166,16 @@ class Admin
                         @rename($src, $trashDir . '/' . basename($old));
                     }
                 }
-                Sec::log('room_review', (string)$id, ['act' => 'reset_avatar']);
                 Plugin::fire('room.after_update', [$id, ['avatar' => ''], $actor]);
                 return [true, '头像已恢复默认（可在回收站撤销）'];
             }
             if ($act === 'toggle_status') {
                 $to = (int)$room['status'] === 1 ? 0 : 1;
-                $trash('toggle_status', ['status' => (int)$room['status']]);
-                DB::run('UPDATE rooms SET status=? WHERE id=?', [$to, $id]);
-                Sec::log('room_review', (string)$id, ['act' => $to ? 'unban' : 'ban']);
+                DB::tx(function () use ($trash, $id, $room, $to) {
+                    $trash('toggle_status', ['status' => (int)$room['status']]);
+                    DB::run('UPDATE rooms SET status=? WHERE id=?', [$to, $id]);
+                    Sec::log('room_review', (string)$id, ['act' => $to ? 'unban' : 'ban']);
+                });
                 // v1.3.159：封禁 / 解封也要通知插件 —— redis 插件的「公开房间列表」缓存的正是
                 // status=1 那批行，不通知的话它最坏要等 TTL 过期才不再列出已封的群。
                 Plugin::fire('room.after_update', [$id, ['status' => $to], $actor]);
@@ -194,33 +201,45 @@ class Admin
             if ($t['action'] !== 'delete' && !$room) {
                 return [false, '该群聊已被删除，请先在回收站撤销对应的「删除」操作'];
             }
-            if ($t['action'] === 'reset_name') {
-                DB::run('UPDATE rooms SET name=? WHERE id=?', [(string)$before['name'], $roomId]);
-            } elseif ($t['action'] === 'reset_avatar') {
-                $old = (string)$before['avatar'];
-                // 头像文件从回收目录移回
+            $restored = null;
+            if ($t['action'] === 'delete') {
+                if ($room) return [false, '该群聊已存在，无需恢复'];
+                if ($roomId === 1) return [false, '默认群聊不可恢复为删除前状态'];
+                $restored = $before['row'] ?? null;
+                if (!is_array($restored)) return [false, '快照数据缺失，无法恢复'];
+            }
+            $old = $t['action'] === 'reset_avatar' ? (string)($before['avatar'] ?? '') : '';
+
+            // v1.5.22：恢复群行 / 写回审计、回收站标记同一事务；文件移动与插件通知放提交后。
+            DB::tx(function () use ($t, $before, $roomId, $tid, $old, $restored) {
+                if ($t['action'] === 'reset_name') {
+                    DB::run('UPDATE rooms SET name=? WHERE id=?', [(string)$before['name'], $roomId]);
+                } elseif ($t['action'] === 'reset_avatar') {
+                    DB::run('UPDATE rooms SET avatar=? WHERE id=?', [$old, $roomId]);
+                } elseif ($t['action'] === 'toggle_status') {
+                    DB::run('UPDATE rooms SET status=? WHERE id=?', [(int)$before['status'], $roomId]);
+                } elseif ($t['action'] === 'delete' && is_array($restored)) {
+                    $cols = array_keys($restored);
+                    DB::run('INSERT INTO rooms (' . implode(',', $cols) . ') VALUES (' . implode(',', array_fill(0, count($cols), '?')) . ')',
+                        array_values($restored));
+                }
+                DB::run('UPDATE room_review_trash SET undone=1 WHERE id=?', [$tid]);
+                Sec::log('room_undo', (string)$roomId, ['act' => $t['action'], 'trash' => $tid]);
+            });
+
+            if ($t['action'] === 'reset_avatar' && $old !== '') {
+                // 头像文件从回收目录移回（文件操作不能回滚，放事务后）
                 $trashFile = dirname(__DIR__) . '/data/avatar_trash/' . basename($old);
                 $dest = dirname(__DIR__) . '/' . $old;
-                if ($old !== '' && is_file($trashFile)) {
+                if (is_file($trashFile)) {
                     $destDir = dirname($dest);
                     if (!is_dir($destDir)) @mkdir($destDir, 0775, true);
                     @rename($trashFile, $dest);
                 }
-                DB::run('UPDATE rooms SET avatar=? WHERE id=?', [$old, $roomId]);
-            } elseif ($t['action'] === 'toggle_status') {
-                DB::run('UPDATE rooms SET status=? WHERE id=?', [(int)$before['status'], $roomId]);
-            } elseif ($t['action'] === 'delete') {
-                if ($room) return [false, '该群聊已存在，无需恢复'];
-                if ($roomId === 1) return [false, '默认群聊不可恢复为删除前状态'];
-                $row = $before['row'] ?? null;
-                if (!is_array($row)) return [false, '快照数据缺失，无法恢复'];
-                $cols = array_keys($row);
-                DB::run('INSERT INTO rooms (' . implode(',', $cols) . ') VALUES (' . implode(',', array_fill(0, count($cols), '?')) . ')',
-                    array_values($row));
-                Plugin::fire('room.restored', [$roomId, $row, $actor]);
             }
-            DB::run('UPDATE room_review_trash SET undone=1 WHERE id=?', [$tid]);
-            Sec::log('room_undo', (string)$roomId, ['act' => $t['action'], 'trash' => $tid]);
+            if ($t['action'] === 'delete' && is_array($restored)) {
+                Plugin::fire('room.restored', [$roomId, $restored, $actor]);
+            }
             return [true, '已撤销'];
         };
 
@@ -357,13 +376,16 @@ class Admin
                         if (!$del || (string)($del['slug'] ?? '') === 'public') {
                             $failB++; $lastMsg = '群聊不存在（默认房间不可删除）'; continue;
                         }
-                        DB::insert('room_review_trash', [
-                            'room_id' => $idB, 'room_name' => $del['name'],
-                            'action' => 'delete', 'before_data' => json_encode(['row' => $del], JSON_UNESCAPED_UNICODE),
-                            'undone' => 0, 'created_at' => time(),
-                        ]);
-                        DB::run('DELETE FROM rooms WHERE id=? AND slug!=?', [$idB, 'public']);
-                        Sec::log('room_review', (string)$idB, ['act' => 'delete']);
+                        // v1.5.22：快照入回收站 + 删群 + 审计日志同一事务
+                        DB::tx(function () use ($idB, $del) {
+                            DB::insert('room_review_trash', [
+                                'room_id' => $idB, 'room_name' => $del['name'],
+                                'action' => 'delete', 'before_data' => json_encode(['row' => $del], JSON_UNESCAPED_UNICODE),
+                                'undone' => 0, 'created_at' => time(),
+                            ]);
+                            DB::run('DELETE FROM rooms WHERE id=? AND slug!=?', [$idB, 'public']);
+                            Sec::log('room_review', (string)$idB, ['act' => 'delete']);
+                        });
                         // v1.3.159：删群同样要通知插件（房间列表缓存靠它精确失效，
                         // 否则最坏等 TTL 过期才不再列出这个已删的群）
                         Plugin::fire('room.after_update', [$idB, ['deleted' => 1], $actor]);
@@ -553,6 +575,15 @@ class Admin
                 }
                 Api::json(['ok' => true, 'msg' => '已刷新编译脚本缓存']);
 
+            // ---------- 数据缓存刷新（v1.5.22） ----------
+            case 'admin_cache_clear':
+                // 文件缓存（插件清单/合并资源/词库编译）+ 插件的 cache.clear 钩子（如 Redis）。
+                // 与「清理 OPcache」分开：那个是 PHP 字节码，这个是数据派生缓存。
+                if (!class_exists('Cache')) Api::json(['ok' => false, 'msg' => '缓存组件未加载'], 500);
+                $removed = Cache::clear('all');
+                Sec::log('admin_cache_clear', (string)($actor['nickname'] ?? ''), ['files' => count($removed)]);
+                Api::json(['ok' => true, 'msg' => '缓存已刷新（' . count($removed) . ' 个文件）']);
+
             // ---------- 在线升级（v1.3.39，实现见 core/upgrade.php） ----------
             case 'admin_upgrade_check':
                 $r = Upgrade::check($errUpd);
@@ -669,7 +700,12 @@ class Admin
                         ? (string)max(0, (int)$p($k))
                         : $p($k);
                 }
-                if ($toSave) DB::setSettings($toSave);
+                if ($toSave) {
+                    DB::setSettings($toSave);
+                    // v1.5.22：设置可能影响插件注册/资源/词库，提交后清派生缓存；
+                    // 无事务时 afterCommit 立即执行，有事务时等真提交，回滚不会误清。
+                    DB::afterCommit(function () { Cache::clear('settings'); });
+                }
                 Sec::log('admin_settings', $actor['nickname']);
                 Api::json(['ok' => true, 'msg' => '设置已保存']);
 

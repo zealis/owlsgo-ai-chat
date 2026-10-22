@@ -143,7 +143,7 @@ if (($ctx['actor']['role'] ?? '') !== 'admin') Api::json(['ok' => false, 'msg' =
 | `DB::insertIgnoreMany($table, $rows, $keys)` | 一次多行、冲突就跳过；返回实际插入行数 |
 | `DB::upsertMany($table, $rows, $keys)` | 一次多行 UPSERT（SQLite / MySQL / PG 同一写法） |
 | `DB::setSettings($map)` | 一组设置项一次写完 |
-| `DB::tx(fn)` | 事务包裹；已在事务里时不会嵌套 |
+| `DB::tx(fn)` | 事务包裹；嵌套自动走 SAVEPOINT，内层失败只回滚内层 |
 
 ### 正确写法
 
@@ -194,6 +194,75 @@ foreach ($keys as $k) $n = DB::val('SELECT COUNT(*) FROM messages WHERE …');
 - 评审时看到新增循环里有 `DB::`，先停下来：能用 `DB::in` / `insertMany` /
   `upsertMany` 的必须改成批量；不能改的写清例外原因。
 
+## 数据库事务（DB::tx，v1.5.22 起）
+
+**涉及 ≥2 张表、必须口径一致的写入，一律用 `DB::tx()` 包起来**，保证完整保存或全部回滚。
+
+```php
+$pid = DB::tx(function () use ($data, $rows) {
+    $id = DB::insert('plugin_packet', $data);       // 主表
+    DB::insertMany('plugin_packet_item', $rows);     // 明细
+    DB::run('UPDATE users SET points=points-? WHERE id=?', [$cost, $uid]);
+    return $id;                                     // 返回值原样给到调用方
+});
+```
+
+- 回调正常返回 → 提交；抛 `Throwable` → 回滚；返回值原样返回。
+- **嵌套调用用 SAVEPOINT**：内层失败只回滚内层，外层仍可继续；
+  SQLite / MySQL / PostgreSQL 三驱动语法一致，插件不需要自己判断。
+- **不要把 `Api::json()` / `exit` 放进回调**：脚本退出时连接关闭，事务不会提交。
+- **不要在事务里做 HTTP / WS / 上传 / 发信等慢操作**：事务只包数据库写，
+  外部副作用（消息推送、通知、文件移动、插件钩子）放到提交之后。
+- **不要在事务里 catch 数据库异常后继续执行**：PostgreSQL 会把整个事务标记为失败。
+  可选的写操作请单独包一层 `DB::tx()`，让它回滚并抛出，外层再决定是否忽略。
+- 通知/插件钩子失败不应回滚主数据：主数据事务提交后再调用它们。
+- DDL（建表 / 改表）在 MySQL 上不能回滚，不要放进业务事务；建表迁移走 `DB::migrate()`。
+- MySQL 表必须是 **InnoDB**：连接层已 `SET SESSION default_storage_engine=InnoDB`；
+  老库或手工建表若落到 MyISAM，事务会静默失效（不报错、但不回滚）。
+- 典型场景：红包（扣积分 + 主表 + 内容池）、签到（日志 + 累计 + 积分）、
+  后台改用户（资料 + 历史快照 + 积分）、群管理（回收站 + 群行 + 审计日志）、
+  安装（种子 + 管理员）、e2ee 设备（旧设备 + 新设备 + 预密钥）。
+
+参考实现：`Chat::recall`、`Plugin::runCron`、`plugins/starlight-hall`（签到/补签）、
+`plugins/red-packet`、`plugins/user-manager`、`plugins/e2ee-dm`。
+
+## 数据缓存刷新（Cache / cache.clear，v1.5.22 起）
+
+数据库写完后，派生缓存必须刷新，但**必须在事务提交之后**刷新：
+
+```php
+DB::tx(function () {
+    DB::run('UPDATE …');
+    // 回滚自动丢弃；只有外层事务真提交才会执行
+    DB::afterCommit(function () { Cache::clear('plugin'); });
+});
+```
+
+核心维护三份文件缓存（`data/cache/`），按数据来源分区清理：
+
+| 区域 | 清理内容 | 典型场景 |
+|---|---|---|
+| `plugin` | `plugins.json` + `assets-*.json` | 插件启用/停用/安装/卸载 |
+| `lexicon` | `lexicon.bin` | 词库文件/停用名单变化 |
+| `settings` | 上面三份文件，但钩子区传 settings | 后台保存系统设置 |
+| `all` | 上面三份文件 + 广播 `cache.clear` | 后台「刷新数据缓存」/ 手动全清 |
+
+- `Cache::clear($area)` 返回实际删除的文件名；文件缓存下次请求自动重建。
+- 插件自己的外部缓存（Redis、私有文件、DB 缓存表）监听钩子处理：
+
+```php
+Plugin::on('cache.clear', function (string $area = 'all', array $removed = []): void {
+    if ($area !== 'all') return;   // 按区域决定要不要动自己的缓存
+    my_plugin_flush_cache();
+});
+```
+
+- **顺序铁律：写库 → 提交 → 清缓存**。先清缓存再写库，并发请求会用旧数据把缓存重新填回去。
+- 回滚时 `DB::afterCommit` 回调自动丢弃；嵌套事务只在外层真提交后执行。
+- 后台手动入口：系统设置 → 系统与维护 → 运行缓存 → **刷新数据缓存**
+  （与「清理 OPcache」不同：前者清数据派生缓存，后者清 PHP 字节码）。
+- 插件若自己写文件缓存，同样遵守这个顺序，并在 `cache.clear` 钩子里按区域清理。
+
 ## 静态资源（Plugin::asset）
 
 ```php
@@ -204,6 +273,18 @@ Plugin::asset('js', 'user-manager/admin.js');   // 相对插件目录；css 同�
 - **后台页面**已自动引入 `<script src="?action=assets&type=js">`：需要后台交互的插件在此声明 JS，交互对象挂为全局（如 `window.OwUM`），页面 HTML 里用 `onclick="OwUM.search()"` 调用。
 - 脚本可复用主程序暴露的全局：`OwApi`（AJAX + 自动签名）、`OwBusy`（按钮防重入）、`OwLazy`（图片懒加载）、`esc`、`toast`、`fmtUid`、`opts`、`ROLE_CN`、`OwAdmin`、`OwChat`。不要重复实现这些能力。
 - 前端可从 `OwChat.cfg.site_url` 取当前站点根地址（后端 `ow_site_url()`，未配置时为自动识别值）。
+
+### 静态资源版本（v1.5.23 起）
+
+- 核心固定路径：`index.css?v=<ASSET_VERSION>`、`index.js?v=<ASSET_VERSION>`、
+  `assets/js/i18n.js?v=<ASSET_VERSION>`；合并包为 `?action=assets&type=js&v=<ASSET_VERSION>`。
+- 插件自己输出的 `<link>` / `<script>` 也用 `OWLSGO_ASSET_VERSION`（PHP 常量），
+  不要再拿 `OWLSGO_VERSION` 当静态资源版本 —— 两者解耦。
+- **每次修改 `index.css`、`index.js`、`assets/js/i18n.js` 或任意插件静态资源后，
+  递增根目录 `ASSET_VERSION`**（`v2.0` → `v2.1` → …）；浏览器/代理只认 URL，
+  版本不变就会继续吃旧文件。
+- 程序版本 `VERSION` 与静态资源版本 `ASSET_VERSION` 各管各的：只改 PHP 不必动资源版本，
+  只改 CSS/JS 也只需动资源版本。
 
 ### 站点地址（ow_site_url / ow_abs_url）
 
@@ -361,7 +442,7 @@ OwLazy.bg(el, '');    // 清除
 无论它出现在 `.css` 文件、PHP/JS 里的内联 `style="…"`，还是动态拼进 `innerHTML` 的 HTML 字符串里。
 
 原因：全站支持「浅色 / 深色 / 跟随系统」三档主题，实现方式是**只重定义 `--ow-*` CSS 变量**
-（见 `assets/css/owlsgo.css` 的 `[data-theme="dark"]` 块）。写死颜色等于绕开这套机制——
+（见 `index.css` 的 `[data-theme="dark"]` 块）。写死颜色等于绕开这套机制——
 深色模式下会表现为「深底 + 深字」「整块露白」这类不可读的亮斑，而且核心永远修不到插件里
 （v1.3.37 全量清理插件样式时，公告插件因为整套浅色写死，深色下整片坏掉）。
 
@@ -418,7 +499,7 @@ OwLazy.bg(el, '');    // 清除
 
 - 放进 `.ow-card` 会**自动满宽出血**（负边距对齐卡片内边距），下沿一条分割线接住表格；
 - **有分页 tab 的列表优先用它**：分页器 `.ow-pager` 落在顶栏里会自动靠右并去掉那档上边距
-  （后台「审核回收站」就是这么接的，见 `assets/js/chat.js` 的 `pages.rooms`）；
+  （后台「审核回收站」就是这么接的，见 `index.js` 的 `pages.rooms`）；
 - 吸顶（sticky）**刻意不在通用类里**：只有「面板自己就是滚动容器」时才有意义，插件自己加一条 ——
   参照 `plugins/time-machine/style.css` 的 `.ow-tm .ow-list-head { position: sticky; top: 0; z-index: 5; }`。
 
@@ -935,7 +1016,9 @@ function mount() {
 样式只引用核心 --ow-* 变量，不写死颜色（深浅两套主题都要能看）。
 按钮防重入：经 OwApi 发起的请求已自动锁按钮；上传/WebAuthn 等异步入口用 OwBusy.run/form 包一层。
 图片懒加载：<img> 自动补 loading=lazy/decoding=async；首屏/验证码/灯箱标 data-ow-eager；大列表背景图用 OwLazy.bg。
-数据库：循环内禁止 DB:: 查询/逐条写；用 DB::in / insertMany / upsertMany / tx 批量处理，例外必须注释原因。
+数据库：循环内禁止 DB:: 查询/逐条写；用 DB::in / insertMany / upsertMany 批量处理，例外必须注释原因。
+多表一致性写用 DB::tx 包住；事务里不放 Api::json/网络/文件操作，嵌套自动走 SAVEPOINT。
+数据改动后的缓存刷新用 DB::afterCommit + Cache::clear；顺序必须是写库→提交→清缓存。
 需求：<清楚描述功能、入口、权限>
 完成后执行 php -l 与 node --check，并在后台启用插件做真实验证。
 ```

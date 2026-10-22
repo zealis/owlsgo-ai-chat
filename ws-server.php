@@ -17,11 +17,13 @@ if (PHP_SAPI !== 'cli') {
 }
 
 define('OWLSGO_VERSION', trim((string)@file_get_contents(__DIR__ . '/VERSION')) ?: '0');
+define('OWLSGO_ASSET_VERSION', trim((string)@file_get_contents(__DIR__ . '/ASSET_VERSION')) ?: OWLSGO_VERSION);
 
 $CFG = require __DIR__ . '/core/config.php';
 date_default_timezone_set($CFG['timezone'] ?? 'Asia/Shanghai');
 
 require __DIR__ . '/core/db.php';
+require __DIR__ . '/core/cache.php';
 require __DIR__ . '/core/security.php';
 require __DIR__ . '/core/auth.php';
 require __DIR__ . '/core/plugin.php';

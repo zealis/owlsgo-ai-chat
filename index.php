@@ -9,6 +9,10 @@ declare(strict_types=1);
 // 版本号以根目录 VERSION 文件为准（历次发版只改 VERSION，此处不再硬编码，
 // 避免 CSS/JS 缓存参数 ?v= 永远停在旧版本）；文件缺失时兜底 1.0.33
 define('OWLSGO_VERSION', trim((string)@file_get_contents(__DIR__ . '/VERSION')) ?: '1.0.33');
+// 静态资源版本（v1.5.23 起）：与程序版本解耦。
+// ⚠️ 每次修改 index.css / index.js / assets/js/i18n.js / 任意插件静态资源后，递增 ASSET_VERSION。
+// 旧机型/代理缓存只认 URL，版本不变就会继续吃旧文件。
+define('OWLSGO_ASSET_VERSION', trim((string)@file_get_contents(__DIR__ . '/ASSET_VERSION')) ?: OWLSGO_VERSION);
 
 // ⚠️ DevTools 探测请求短路（v1.0.115）：Chrome 打开开发者工具时会自动请求
 // /.well-known/appspecific/com.chrome.devtools.json，该请求经 try_files 落入本入口，
@@ -28,6 +32,7 @@ $CFG = require __DIR__ . '/core/config.php';
 date_default_timezone_set($CFG['timezone'] ?? 'Asia/Shanghai');
 
 require __DIR__ . '/core/db.php';
+require __DIR__ . '/core/cache.php';
 require __DIR__ . '/core/security.php';
 require __DIR__ . '/core/mail.php';
 require __DIR__ . '/core/auth.php';
@@ -202,39 +207,34 @@ if (!$installed) {
             }
 
             // 事务：建表种子 + 管理员账号一次性提交，杜绝「装一半」（如种子已插入但账号创建失败）的中间态
-            $pdo = DB::pdo();
-            $pdo->beginTransaction();
-            try {
+            // v1.5.22：统一走 DB::tx（自动提交 / 异常回滚），不再手写 begin/commit/rollBack
+            DB::tx(function () use ($CFG) {
                 DB::defaults();
 
                 $n = trim($_POST['nickname'] ?? '');
-            $e = Auth::normEmail((string)($_POST['email'] ?? ''));   // 管理员邮箱同样归一化
-            $pw = (string)($_POST['password'] ?? '');
-            // 取消用户名后，账号显示名就是昵称；规则与注册/改资料共用 Auth::checkNickname
-            [$nickOk, $nickRes] = Auth::checkNickname($n, ['scene' => 'install']);   // 通过时返回归一化昵称，失败时返回错误文案
-            if (!$nickOk) throw new RuntimeException($nickRes);
-            if (!filter_var($e, FILTER_VALIDATE_EMAIL)) throw new RuntimeException('管理员邮箱格式不正确');
-            if (strlen($pw) < 6) throw new RuntimeException('管理员密码至少 6 位');
-            DB::insert('users', [
-                // 管理员固定占用 001（v1.0.37 起新用户 ID 为随机 3 位起步）
-                'id' => 1,
-                'nickname' => $nickRes, 'email' => $e,
-                'password' => password_hash($pw, PASSWORD_DEFAULT),
-                // v1.3.14：与普通注册一致，默认「小可爱」+ 随机一档
-                'avatar' => '', 'avatar_type' => 'generated',
-                'avatar_style' => Auth::AVATAR_DEFAULT_STYLE,
-                'avatar_seed' => (string)random_int(1, Auth::AVATAR_SEED_COUNT),
-                'role' => 'admin',
-                'client_key' => Sec::clientKey(), 'status' => 1,
-                'email_verified' => 1, 'created_at' => time(),
-                'reg_ip' => Sec::ip(),   // v1.2.56：与 Auth::register 口径一致，记录安装者 IP
-            ]);
-                @mkdir($CFG['data_dir'], 0775, true);
-                $pdo->commit();
-            } catch (Throwable $e) {
-                if ($pdo->inTransaction()) $pdo->rollBack();
-                throw $e;
-            }
+                $e = Auth::normEmail((string)($_POST['email'] ?? ''));   // 管理员邮箱同样归一化
+                $pw = (string)($_POST['password'] ?? '');
+                // 取消用户名后，账号显示名就是昵称；规则与注册/改资料共用 Auth::checkNickname
+                [$nickOk, $nickRes] = Auth::checkNickname($n, ['scene' => 'install']);   // 通过时返回归一化昵称，失败时返回错误文案
+                if (!$nickOk) throw new RuntimeException($nickRes);
+                if (!filter_var($e, FILTER_VALIDATE_EMAIL)) throw new RuntimeException('管理员邮箱格式不正确');
+                if (strlen($pw) < 6) throw new RuntimeException('管理员密码至少 6 位');
+                DB::insert('users', [
+                    // 管理员固定占用 001（v1.0.37 起新用户 ID 为随机 3 位起步）
+                    'id' => 1,
+                    'nickname' => $nickRes, 'email' => $e,
+                    'password' => password_hash($pw, PASSWORD_DEFAULT),
+                    // v1.3.14：与普通注册一致，默认「小可爱」+ 随机一档
+                    'avatar' => '', 'avatar_type' => 'generated',
+                    'avatar_style' => Auth::AVATAR_DEFAULT_STYLE,
+                    'avatar_seed' => (string)random_int(1, Auth::AVATAR_SEED_COUNT),
+                    'role' => 'admin',
+                    'client_key' => Sec::clientKey(), 'status' => 1,
+                    'email_verified' => 1, 'created_at' => time(),
+                    'reg_ip' => Sec::ip(),   // v1.2.56：与 Auth::register 口径一致，记录安装者 IP
+                ]);
+            });
+            @mkdir($CFG['data_dir'], 0775, true);   // 文件副作用放事务外
             file_put_contents($LOCK, date('c') . ' v' . OWLSGO_VERSION);
             Api::json(['ok' => true, 'msg' => '安装完成']);
         } catch (Throwable $e) {
@@ -1287,9 +1287,9 @@ function renderPluginPage(string $slug, array $pg, array $actor, ?array $user): 
     }
     echo '</main>'
        . '<div class="ow-toast" id="owToast" style="display:none"></div>'
-       . '<script src="assets/js/chat.js?v=' . OWLSGO_VERSION . '"></script>';
+       . '<script src="index.js?v=' . OWLSGO_ASSET_VERSION . '"></script>';
     define('OWLSGO_ASSETS_JS_EMITTED', true);
-    echo '<script src="?action=assets&type=js"></script>'
+    echo '<script src="?action=assets&type=js&v=' . OWLSGO_ASSET_VERSION . '"></script>'
        . '</body></html>';
 }
 
@@ -1518,7 +1518,7 @@ function pageHead(string $title): void
        . '<title>' . Sec::e($title) . ' - ' . $site . '</title>'
        . '<link rel="icon" href="assets/img/logo.svg" type="image/svg+xml">'
        . owThemeBootstrap()   // v1.3.25：先定主题再加载样式，避免首屏闪一下浅色
-       . '<link rel="stylesheet" href="assets/css/owlsgo.css?v=' . OWLSGO_VERSION . '">';
+       . '<link rel="stylesheet" href="index.css?v=' . OWLSGO_ASSET_VERSION . '">';
     // v1.3.51：色系引擎不再是核心文件 —— 改由 color-schemes 插件在 page.head 注入。
     // 该钩子在样式表之后，但注入的是**阻塞脚本**，仍在首帧绘制前执行完，不会闪色。
     Plugin::fire('page.head');
@@ -1552,7 +1552,7 @@ function renderInstall(string $err): void
        . '<meta name="viewport" content="width=device-width,initial-scale=1">'
        . '<title>安装 Owlsgo-Chat</title>'
        . owThemeBootstrap()
-       . '<link rel="stylesheet" href="assets/css/owlsgo.css?v=' . OWLSGO_VERSION . '"></head>'
+       . '<link rel="stylesheet" href="index.css?v=' . OWLSGO_ASSET_VERSION . '"></head>'
        . '<body class="ow-auth-body"><div class="ow-auth-card" style="max-width:520px">'
        . '<div class="ow-auth-logo"><img src="assets/img/logo.svg" alt="Owlsgo-Chat" loading="eager"><h1>安装 Owlsgo-Chat</h1><p>纯原生 PHP · 零依赖 · v' . OWLSGO_VERSION . '</p></div>'
        . ($err ? '<div class="ow-alert ow-alert-error">数据库连接失败：' . Sec::e($err) . '（SQLite 模式无需配置，可直接继续）</div>' : '')
@@ -1674,15 +1674,15 @@ function renderAuth(string $mode): void
         echo $form;
         echo '<div class="ow-auth-links"><a href="?page=login">返回登录</a></div>';
     }
-    echo '</div><script src="assets/js/i18n.js?v=' . OWLSGO_VERSION . '"></script>'
-       . '<script src="assets/js/chat.js?v=' . OWLSGO_VERSION . '"></script>';
+    echo '</div><script src="assets/js/i18n.js?v=' . OWLSGO_ASSET_VERSION . '"></script>'
+       . '<script src="index.js?v=' . OWLSGO_ASSET_VERSION . '"></script>';
     // v1.3.54：登录页也要加载插件 JS 包 —— 人机验证组件（captcha-verify 的 widget.js）
     // 就跑在这包里。此前只有聊天页与后台加载它，登录页拿不到，
     // 之前是靠 lang-en 插件的 page.footer 顺带注入的（那个插件一停用就断）。
     // 打上标记，插件自己的 page.footer 注入会被它自己的 define 判断跳过，不会重复加载。
     if (!defined('OWLSGO_ASSETS_JS_EMITTED')) {
         define('OWLSGO_ASSETS_JS_EMITTED', true);
-        echo '<script src="?action=assets&type=js"></script>';
+        echo '<script src="?action=assets&type=js&v=' . OWLSGO_ASSET_VERSION . '"></script>';
     }
     echo '<script>OwAuth.init(' . json_encode(['key' => Sec::anonKey(), 'ts' => time()]) . ');</script>';
     Plugin::fire('page.footer');
@@ -1994,10 +1994,10 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
     //    不标记的话聊天页会**加载两遍**合并包 —— 插件 JS 跑两次，
     //    凡「往数组里注册」的扩展点（onCardMetaTop 等）都会重复注册一行。
     define('OWLSGO_ASSETS_JS_EMITTED', true);
-    echo '<script src="assets/js/i18n.js?v=' . OWLSGO_VERSION . '"></script>'
-       . '<script src="assets/js/chat.js?v=' . OWLSGO_VERSION . '"></script>'
+    echo '<script src="assets/js/i18n.js?v=' . OWLSGO_ASSET_VERSION . '"></script>'
+       . '<script src="index.js?v=' . OWLSGO_ASSET_VERSION . '"></script>'
        . '<script>OwChat.init(' . json_encode($boot, JSON_UNESCAPED_UNICODE) . ');</script>'
-       . '<script src="?action=assets&type=js"></script>';
+       . '<script src="?action=assets&type=js&v=' . OWLSGO_ASSET_VERSION . '"></script>';
     Plugin::fire('page.footer');
     echo '</body></html>';
 }
@@ -2073,10 +2073,10 @@ function renderAdmin(array $actor): void
        // 移动端抽屉遮罩：点空白收起侧栏（桌面端不显示）
        . '<div class="ow-admin-mask" id="owAdminMask" style="display:none"></div>'
        . '<div class="ow-toast" id="owToast" style="display:none"></div>'
-       . '<script src="assets/js/i18n.js?v=' . OWLSGO_VERSION . '"></script>'
-       . '<script src="assets/js/chat.js?v=' . OWLSGO_VERSION . '"></script>'
+       . '<script src="assets/js/i18n.js?v=' . OWLSGO_ASSET_VERSION . '"></script>'
+       . '<script src="index.js?v=' . OWLSGO_ASSET_VERSION . '"></script>'
        // 插件注册的 JS 资源合并输出（用户管理等插件的后台交互脚本）
-       . '<script src="?action=assets&type=js"></script>'
+       . '<script src="?action=assets&type=js&v=' . OWLSGO_ASSET_VERSION . '"></script>'
        . '<script>OwAdmin.init(' . json_encode([
              'key' => $actor['key'], 'ts' => time(), 'version' => OWLSGO_VERSION,
              // v1.5.4：后台各页（含插件后台）统一从这里取「积分」的自定义名称

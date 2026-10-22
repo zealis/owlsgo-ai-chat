@@ -17,7 +17,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const CHAT = path.join(__dirname, '..', 'assets', 'js', 'chat.js');
+const CHAT = path.join(__dirname, '..', 'index.js');
 const OUT = path.join(__dirname, 'tmp');
 
 let pass = 0, fail = 0;
@@ -50,7 +50,7 @@ function extractFunc(src, name) {
     const src = fs.readFileSync(CHAT, 'utf8');
     const buildSrc = extractFunc(src, 'buildMessage');
     const refreshSrc = extractFunc(src, 'refreshBotTags');
-    console.log('已从 assets/js/chat.js 提取 buildMessage(' + buildSrc.length + ' 字节) 与 refreshBotTags(' + refreshSrc.length + ' 字节)');
+    console.log('已从 index.js 提取 buildMessage(' + buildSrc.length + ' 字节) 与 refreshBotTags(' + refreshSrc.length + ' 字节)');
 
     const browser = await chromium.launch({ channel: 'chrome' });
     const page = await browser.newPage({ viewport: { width: 900, height: 600 } });

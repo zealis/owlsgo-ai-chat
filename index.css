@@ -590,7 +590,7 @@ button.ow-busy[disabled] { cursor: not-allowed; }
 /* ---------- 开关（State 按钮，v1.1.5 通用样式轮子） ----------
    结构：.ow-switch-row（行） > label.ow-switch-label（左侧文字）
         + .ow-switch（右侧 iOS 风格开关） + p.ow-switch-hint（下方提示）
-   用法见 assets/js/chat.js 的 OwChat.switchHtml()，前后台与插件共用同一套。
+   用法见 index.js 的 OwChat.switchHtml()，前后台与插件共用同一套。
 
    ⚠️ 选择器写成 `.ow-switch-row, .ow-switch-row.ow-switch-row` 是刻意的：
    .ow-switch-row 本身就是 <label>，放进 .ow-form-item 里会被
@@ -1520,6 +1520,12 @@ input[type=range] {
    40px 占行高 71%；44px 73%；48px 75%。40px 与两行文字视觉重量匹配。
    ⚠️ 同宽的 .ow-avatar-sm 仍是 28px（成员列表等场景），**只改会话列表这一处**。 */
 .ow-cl-item {
+    /* v1.5.21：会话 / 通知 / 联系人列表行做浏览器原生懒渲染 —— 屏外行跳过布局与绘制，
+       滚动到附近才实际排版；不支持 content-visibility 的浏览器忽略这两行，行为不变。
+       ⚠️ contain-intrinsic-size 必须给，否则浏览器按 0 高估算，滚动条会随行数抖动
+       （与 .ow-sr-item 同一套处理）；57px 是本行「上下 padding 16 + 内容 40.4」的实测高度。 */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 57px;
     display: flex; display: -webkit-flex;
     /* v1.1.21：align-items 从 center 改为 **flex-start**。
        原因：头像 48px 与文字块 41px 不等高，center 会让文字块垂直居中 →
@@ -2910,7 +2916,7 @@ span.ow-panel-entry-ico.ow-avatar { width: 24px; height: 24px; line-height: 24px
 
 /* ---------- 表单说明气泡（v1.2.45） ----------
    把「输入框/选择框/开关下方的灰色说明」收进标题右侧的圆形 ⓘ，悬浮才显示。
-   前后台与所有插件共用：由 assets/js/chat.js 的 OwTip 自动扫 DOM 挂载，
+   前后台与所有插件共用：由 index.js 的 OwTip 自动扫 DOM 挂载，
    插件无需任何改动（按约定写 12px 灰色说明段落即可被自动收走）。
 
    ⚠️ 气泡用纯 CSS 悬浮显示（不靠 JS 算位置）：跟随滚动/缩放不会错位，

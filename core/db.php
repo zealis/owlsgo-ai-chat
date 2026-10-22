@@ -8,6 +8,8 @@ class DB
     private static ?PDO $pdo = null;
     private static string $driver = 'sqlite';
     private static array $cfg = [];
+    private static int $txSeq = 0;   // 嵌套事务的 SAVEPOINT 序号
+    private static array $afterCommit = [];   // 事务提交后回调栈（每层事务一帧）
 
     public static function init(array $cfg): void
     {
@@ -269,20 +271,89 @@ class DB
     }
 
     /**
-     * 事务包裹：批量写要么全成、要么全退。已在事务里时直接执行（不嵌套）。
-     * 用法：DB::tx(function () { DB::insertMany(...); });
+     * 统一事务工具：多表写要么完整保存、要么全部回滚。
+     *
+     * 嵌套调用用 SAVEPOINT 实现：内层失败只回滚内层，外层仍可决定继续或回滚；
+     * 三层驱动（SQLite / MySQL / PostgreSQL）语法一致。回调的返回值原样返回。
+     *
+     * 用法：
+     *   $pid = DB::tx(function () use ($data) {
+     *       $id = DB::insert('packet', $data);
+     *       DB::insertMany('packet_item', $rows);
+     *       return $id;
+     *   });
+     *
+     * 提交后要刷新缓存/发通知，用 DB::afterCommit(fn) 登记 —— 回滚时自动丢弃。
+     * ⚠️ 回调里不要调 Api::json() / exit —— 连接关闭时事务不会提交。
+     * ⚠️ 回调里不要做 HTTP、WS、文件上传等慢操作；事务只包数据库写。
+     * ⚠️ 不要在事务里 try/catch 掉数据库异常后继续执行：PostgreSQL 会把整个事务标记为失败。
+     *    可选写请单独包一层 DB::tx（走 SAVEPOINT），失败让它抛出即可。
      */
     public static function tx(callable $fn)
     {
         $own = !self::$pdo->inTransaction();
-        if ($own) self::$pdo->beginTransaction();
+        $sp = '';
+        if ($own) {
+            self::$pdo->beginTransaction();
+        } else {
+            $sp = 'ow_sp_' . (++self::$txSeq);
+            self::$pdo->exec('SAVEPOINT ' . $sp);
+        }
+        self::$afterCommit[] = [];
         try {
             $ret = $fn();
-            if ($own) self::$pdo->commit();
+            if ($own) {
+                self::$pdo->commit();
+            } else {
+                self::$pdo->exec('RELEASE SAVEPOINT ' . $sp);
+            }
+            $frame = array_pop(self::$afterCommit) ?: [];
+            if ($own) {
+                self::runAfterCommit($frame);
+            } elseif (self::$afterCommit) {
+                // 内层提交：回调并入外层帧，外层真提交时才执行
+                $i = count(self::$afterCommit) - 1;
+                self::$afterCommit[$i] = array_merge(self::$afterCommit[$i], $frame);
+            }
             return $ret;
         } catch (Throwable $e) {
-            if ($own && self::$pdo->inTransaction()) self::$pdo->rollBack();
+            array_pop(self::$afterCommit);
+            if ($own) {
+                if (self::$pdo->inTransaction()) self::$pdo->rollBack();
+                self::$afterCommit = [];   // 整笔回滚：所有层级的回调都作废
+            } elseif ($sp !== '') {
+                try {
+                    self::$pdo->exec('ROLLBACK TO SAVEPOINT ' . $sp);
+                    self::$pdo->exec('RELEASE SAVEPOINT ' . $sp);
+                } catch (Throwable $ignore) {
+                    // 外层事务已不可用：交给调用方处理，别用二次异常覆盖原始错误
+                }
+            }
             throw $e;
+        }
+    }
+
+    /**
+     * 注册「事务提交后」回调：缓存刷新、通知等**只能看到已落库数据**的副作用放这里。
+     * 事务回滚时回调自动丢弃；没有事务时立即执行。回调异常被吞掉（缓存刷新是尽力而为，
+     * 不能因为清缓存失败把已经提交的数据反过来报错）。
+     *
+     * ⚠️ 只在 DB::tx() 里可靠工作；手写 beginTransaction/commit 不会触发队列。
+     */
+    public static function afterCommit(callable $fn): void
+    {
+        if (!self::$pdo || !self::$pdo->inTransaction()) {
+            self::runAfterCommit([$fn]);
+            return;
+        }
+        if (!self::$afterCommit) self::$afterCommit[] = [];
+        self::$afterCommit[count(self::$afterCommit) - 1][] = $fn;
+    }
+
+    private static function runAfterCommit(array $fns): void
+    {
+        foreach ($fns as $fn) {
+            try { $fn(); } catch (Throwable $e) { /* 缓存刷新失败不影响已提交的数据 */ }
         }
     }
 

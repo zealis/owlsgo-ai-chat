@@ -2626,24 +2626,26 @@ class Chat
 
         // 真正删除：行彻底消失（不是软删除）。
         // message_hides 里的隐藏行会变成孤儿，由 purgeHides() 顺带清理。
-        $st = DB::run('DELETE FROM messages WHERE id=?', [$msgId]);
-        if (is_object($st) && method_exists($st, 'rowCount') && $st->rowCount() === 0) {
-            return [false, '消息不存在或已撤回'];
-        }
+        // v1.5.22：删行 + 审计日志同一事务；日志失败则消息保留，避免「撤回了但查无记录」。
+        $deleted = DB::tx(function () use ($msgId, $m, $actor, $isModerator) {
+            $st = DB::run('DELETE FROM messages WHERE id=?', [$msgId]);
+            if (is_object($st) && method_exists($st, 'rowCount') && $st->rowCount() === 0) return false;
+            Sec::log('msg_recall', (string)$msgId, [
+                'room' => (int)$m['room_id'],
+                'type' => (string)$m['type'],
+                'by'   => (string)($actor['kind'] ?? ''),
+                'mod'  => $isModerator,   // 是否为管理动作（撤他人违规内容）
+            ]);
+            return true;
+        });
+        if (!$deleted) return [false, '消息不存在或已撤回'];
 
         // 附件立即物理删除：撤回 = 内容不应继续留存。
-        // 只删 uploads/file/ 下、且经 fileAbs 二次校验的路径（阻断路径穿越）。
+        // 文件操作不能回滚，放事务提交后；只删 uploads/file/ 下、且经 fileAbs 二次校验的路径。
         if ($fileRel !== '') {
             $abs = Upload::fileAbs($fileRel);
             if ($abs) @unlink($abs);
         }
-
-        Sec::log('msg_recall', (string)$msgId, [
-            'room' => (int)$m['room_id'],
-            'type' => (string)$m['type'],
-            'by'   => (string)($actor['kind'] ?? ''),
-            'mod'  => $isModerator,   // 是否为管理动作（撤他人违规内容）
-        ]);
         Plugin::fire('msg.after_recall', [$msgId, $m, $actor]);
         // P2：撤回也推——它是全局物理删除，所有端（含发送方其他标签页）应立刻把气泡
         // 变成「此消息已撤回」占位（前端复用 markRecalled）。nudge-only：

@@ -67,7 +67,7 @@ done
 rm -rf .t-pc/data/cache
 "$PHP" -r 'file_put_contents(".t-pc/data/install.lock", date("c")." e2e");'
 # 复制自检：确认关键文件在、且插件 JS 是当前版本（防「旧副本混入」类假失败）
-for f in index.php core/plugin.php assets/js/chat.js assets/css/owlsgo.css plugins/profile-card/chat.js plugins/profile-card/style.css; do
+for f in index.php core/plugin.php index.js index.css plugins/profile-card/chat.js plugins/profile-card/style.css; do
   [ -f ".t-pc/$f" ] || { echo "副本缺文件：$f"; exit 1; }
 done
 grep -q "OwPC.inject" .t-pc/plugins/profile-card/chat.js || { echo "副本里的插件 JS 不是当前版本"; exit 1; }
@@ -165,7 +165,7 @@ ck "移除横幅" "$(printf '%s' "$R" | jget ok)" "1"
 has "移除后 banner 为空串" '"banner":""' "$(api .t-pc/u.txt "$UK" user_card "id=900002")"
 ck "数据库行仍在（值为空）" "$(q "SELECT COUNT(*) FROM plugin_profile_card WHERE user_id=900002")" "1"
 
-JS6="$(curl -sk "$B/assets/js/chat.js?v=1.5.17")"
+JS6="$(curl -sk "$B/index.js?v=2.0")"
 has "核心定义 onCardRendered" 'onCardRendered: function' "$JS6"
 has "核心在 userCard 里触发 fireCardRendered" 'fireCardRendered($' "$JS6"
 

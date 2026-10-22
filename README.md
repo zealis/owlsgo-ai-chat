@@ -39,7 +39,7 @@ v1.3.168 起内置了 WebSocket 实时层，零依赖的 PHP 常驻进程：心�
 鸟瞰图：`.birdview/architecture.html`
 
 `index.php`（页面 + AJAX API + 安装向导）→ `core/`（配置 / DB / 安全 / 认证 / 聊天 / 实时层 /
-后台 / 上传 / 插件）→ `plugins/`（可选功能）→ `assets/`（ow- 前缀自研扁平 UI）。
+后台 / 上传 / 插件）→ `plugins/`（可选功能）→ `index.css` / `index.js`（ow- 前缀自研扁平 UI）。
 
 ## 功能
 
@@ -63,9 +63,11 @@ v1.3.168 起内置了 WebSocket 实时层，零依赖的 PHP 常驻进程：心�
 
 ```
 index.php              统一入口（页面 + AJAX API + 安装向导）
+index.css / index.js   核心 UI 样式与前端脚本（对外固定路径，带 ?v=<ASSET_VERSION>）
+ASSET_VERSION          静态资源版本（每次改 CSS/JS/插件静态资源后递增）
 ws-server.php          WS 实时层守护进程入口（CLI，可选部署）
 core/                  配置 / 数据层 / 安全 / 认证 / 聊天 / 实时层 / 后台 / 上传 / 插件
-assets/                ow- 前缀自研扁平 UI（CSS + ES5 JS + SVG Logo）
+assets/                SVG Logo、i18n 引擎等辅助静态文件
 plugins/               插件目录（plugin.json + main.php）
 data/                  SQLite 数据库、安装锁、缓存、WS 票据（运行时生成）
 uploads/               头像 / 贴纸 / 图片 / 文件附件（运行时生成）

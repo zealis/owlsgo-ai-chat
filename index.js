@@ -1693,7 +1693,7 @@
        owTabs：通用分组标签（v1.3.113）
        ========================================================================== */
     /**
-     * 结构契约与配色见 owlsgo.css 的 .ow-tabs 注释。
+     * 结构契约与配色见 index.css 的 .ow-tabs 注释。
      * ⚠️ 作用域 = 标签条的父节点，面板必须是它的直接子元素：
      * 一个页面里两组标签（比如后台某页 + 弹窗）才会互不干扰。
      * 标签条上写 onclick="owTabs.click(this, event)" 即可，不需要初始化脚本 ——
@@ -6829,7 +6829,7 @@
                 }
             }
         },
-        /** 通用选项卡片组 HTML（结构与配色见 owlsgo.css 的 .ow-optgrid） */
+        /** 通用选项卡片组 HTML（结构与配色见 index.css 的 .ow-optgrid） */
         optGridHtml: function (opts, cur, handler) {
             var h = '<div class="ow-optgrid">';
             for (var i = 0; i < opts.length; i++) {
@@ -8069,6 +8069,18 @@
             });
         },
 
+        /** v1.5.22：刷新数据派生缓存（插件清单 / 合并资源 / 词库编译 / Redis 等插件缓存）。 */
+        cacheClear: function () {
+            var btn = $('owCacheBtn'), st = $('owCacheStat');
+            if (btn) btn.disabled = true;
+            if (st) st.textContent = '正在刷新…';
+            OwApi.post('admin_cache_clear', {}, function (r) {
+                if (btn) btn.disabled = false;
+                if (st) st.textContent = r.ok ? '（' + (r.msg || '已完成') + '）' : '';
+                toast(r.msg);
+            });
+        },
+
         /* ---------- 在线升级（v1.3.39，后端 core/upgrade.php） ----------
            检查 → 差异清单 → 确认升级（下载校验齐了才搬入，自动备份）→ 可恢复。
            apply / rollback 是敏感路由，必须走 OwApi.secure（一次性票据）。 */
@@ -8804,7 +8816,7 @@
                     function note(html) {
                         return '<p style="font-size:12px;color:var(--ow-text-sub);margin:4px 0 12px">' + html + '</p>';
                     }
-                    /* v1.2.53 折叠分组（.ow-fold，样式见 owlsgo.css）——与插件后台的分组同一思路，
+                    /* v1.2.53 折叠分组（.ow-fold，样式见 index.css）——与插件后台的分组同一思路，
                        点标题展开 / 收起。
                        v1.2.54：**默认全部收起**（用户定版）——先给分组目录，点哪个看哪个，
                        不用在一长条表单里找。收起时输入框仍在 DOM 里，settingsSave 照常提交
@@ -8925,10 +8937,12 @@
                             + '<div class="ow-form-item">'
                             + '<label>运行缓存</label>'
                             + '<button type="button" class="ow-btn ow-btn-ghost" id="owOpcacheBtn" onclick="OwAdmin.opcacheReset()">清理 OPcache</button>'
+                            + '<button type="button" class="ow-btn ow-btn-ghost" id="owCacheBtn" onclick="OwAdmin.cacheClear()" style="margin-left:8px">刷新数据缓存</button>'
                             + '<span id="owOpcacheStat" style="font-size:12px;color:var(--ow-text-sub);margin-left:10px"></span>'
+                            + '<span id="owCacheStat" style="font-size:12px;color:var(--ow-text-sub);margin-left:10px"></span>'
                             // 必须是<p> 且字号 ≤12.5px——OwTip.isHint() 就是按这两条认提示元素的，
                             // 写成 <span> 或 class 写错都不会被转成 ⓘ 气泡
-                            + '<p style="font-size:12px;color:var(--ow-text-sub);margin-top:4px">刷新已编译脚本缓存，适合代码更新后手动触发。'
+                            + '<p style="font-size:12px;color:var(--ow-text-sub);margin-top:4px">刷新已编译脚本缓存，适合代码更新后手动触发；「刷新数据缓存」会清插件清单、合并资源、词库编译与 Redis 缓存，插件启停或数据不同步时用。'
                             + 'PHP 会把源码编译成字节码缓存在内存里（OPcache），更新文件后若仍跑旧代码'
                             + '（尤其是关闭了时间戳校验时），清一次缓存即可立即生效。开启调试模式时会写 '
                             + 'data/logs/debug.log，本操作不影响它。</p>'
