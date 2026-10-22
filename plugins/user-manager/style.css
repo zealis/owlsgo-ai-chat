@@ -43,6 +43,15 @@
     letter-spacing: 0;
 }
 .owum-head-sub { font-size: 12px; color: var(--ow-text-sub); }
+/* 常驻可见的红字警示（「不能封禁自己的 IP」这类拦截性说明）。
+   ⚠️ 不能写成 .ow-form-item 里的 <p>：核心 OwTip 会把那个 <p> 摘走换成一枚 ⓘ，
+      元素直接消失、JS 再去取就是 null。 */
+.owum-warn {
+    margin: -2px 0 12px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--ow-red);
+}
 .owum-empty {
     padding: 22px 6px;
     text-align: center;

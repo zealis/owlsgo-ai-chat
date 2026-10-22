@@ -21,7 +21,8 @@
         user: null,      // 概览行（detail 接口）
         net: null,       // 网络数据（net 接口）
         geoBusy: false,
-        bans: null
+        bans: null,
+        myIp: ''         // 本次请求的出口 IP（服务端下发，用于关掉「封自己」的入口）
     };
 
     /**
@@ -66,17 +67,61 @@
     function pill(txt, kind) {
         return '<span class="owum-pill' + (kind ? ' owum-pill-' + kind : '') + '">' + esc(txt) + '</span>';
     }
-    /* 头像：与核心 avatarHtml 同款兜底（无头像 = 首字 + 按昵称长度取色）。
-       这里的五个颜色是**默认头像色板（数据）**，不是界面色，深浅两套主题下都保持同一张脸。 */
+
+    /**
+     * 头像。**优先用服务端算好的 avatar_url** —— 生成式头像（dicebear / 内置 identicon）
+     * 在 users.avatar 里是空串，只按 avatar 字段判断会退化成「首字 + 色块」，
+     * 站长看到的就是一个紫色的 O。只有连 avatar_url 都拿不到时才走首字兜底。
+     */
     function avatar(u, cls) {
         var c = cls || 'ow-avatar-lg';
-        if (u.avatar) {
-            return '<span class="ow-avatar ' + c + '"><img src="' + esc(u.avatar) + '" alt="" loading="lazy" decoding="async"></span>';
+        var src = u.avatar_url || u.avatar || '';
+        if (src) {
+            return '<span class="ow-avatar ' + c + '"><img src="' + esc(src) + '" alt="" loading="lazy" decoding="async"></span>';
         }
         var palette = ['#0099FF', '#00558F', '#A05000', '#237804', '#5B21B6'];
         var bg = palette[((u.nickname || '?').length) % palette.length];
         return '<span class="ow-avatar ' + c + '" style="background:' + bg + '">'
             + esc((u.nickname || '?').charAt(0)) + '</span>';
+    }
+
+    /* ---------- 「这是我自己在用的地址」判定 ----------
+       服务端已经会拒（ban_add 里比对 Sec::ip()），前端把它提前成「入口就没有」：
+       与其让管理员点一下再吃一个报错，不如直接把按钮换成说明。
+       通配规则（1.2.3.*）也要一起判：它命中的可能是自己。 */
+    function ipMatch(pattern, ip) {
+        if (!pattern || !ip) return false;
+        if (pattern === ip) return true;
+        if (pattern.indexOf('*') < 0) return false;
+        var re = new RegExp('^' + pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$');
+        return re.test(ip);
+    }
+    function isMyIp(ip) {
+        return !!st.myIp && ipMatch(ip, st.myIp);
+    }
+    /** 地址行右侧的动作：已封禁 → 解封；是自己 → 只说明；否则 → 封禁 */
+    function ipAction(ip, banned) {
+        if (banned) {
+            return '<button class="ow-btn ow-btn-ghost ow-btn-mini" onclick="OwUM.unban(\''
+                + esc(ip) + '\')">解封</button>';
+        }
+        if (isMyIp(ip)) {
+            return '<span class="owum-pill" title="这是你当前登录使用的地址，不能封禁">当前 IP</span>';
+        }
+        return '<button class="ow-btn ow-btn-ghost ow-btn-mini" onclick="OwUM.banDialog(\''
+            + esc(ip) + '\')">封禁</button>';
+    }
+
+    /** 封禁表单的自查：输入命中自己当前地址时禁掉按钮并把原因写在旁边 */
+    function syncBanForm() {
+        var el = $('owumBanIp');
+        if (!el) return false;
+        var block = isMyIp((el.value || '').replace(/^\s+|\s+$/g, ''));
+        var btn = $('owumBanBtn'), warn = $('owumBanSelf'), tip = $('owumBanSelfIp');
+        if (btn) btn.disabled = block;
+        if (warn) warn.style.display = block ? '' : 'none';
+        if (tip) tip.textContent = st.myIp || '';
+        return block;
     }
 
     /* ============================================================
@@ -109,6 +154,11 @@
             + '<p class="ow-modal-desc">该地址打开任何页面都会被拦下；管理员账号不受影响。</p>'
             + '<div class="ow-form-item"><label>IP / 网段</label>'
             + '<input class="ow-input owum-mono" id="owumDlgIp" value="' + esc(pattern) + '" maxlength="64"></div>'
+            // ⚠️ 这行不能放进 .ow-form-item：核心 OwTip 会把 form-item 里的 <p> 整段
+            //    搬进 ⓘ 气泡并**摘掉原节点**，$('owumDlgWarn') 直接变 null（踩过）。
+            //    放在 form-item 外面它才是常驻可见的红字。
+            + '<p class="owum-warn" id="owumDlgWarn" style="display:none">'
+            + '这是你当前登录使用的地址，不能封禁。</p>'
             + '<div class="ow-form-item"><label>原因（会显示在拦截页）</label>'
             + '<input class="ow-input" id="owumDlgNote" maxlength="60" placeholder="选填"></div>'
             + '<div class="ow-form-item"><label>时长</label>'
@@ -124,11 +174,24 @@
         mask.querySelector('.ow-modal-close').onclick = close;
         mask.onclick = function (e) { if (e.target === mask) close(); };
         $('owumDlgCancel').onclick = close;
-        $('owumDlgOk').onclick = function () {
+
+        var sync = function () {
             var ip = ($('owumDlgIp').value || '').replace(/^\s+|\s+$/g, '');
-            if (!ip) { toast('请输入 IP 地址'); return; }
+            var block = isMyIp(ip);
+            var warn = $('owumDlgWarn'), ok = $('owumDlgOk');
+            if (warn) warn.style.display = block ? '' : 'none';
+            if (ok) ok.disabled = block;
+            return { ip: ip, block: block };
+        };
+        $('owumDlgIp').oninput = sync;
+        sync();
+
+        $('owumDlgOk').onclick = function () {
+            var v = sync();
+            if (!v.ip) { toast('请输入 IP 地址'); return; }
+            if (v.block) return;
             OwApi.secure('plugin_user_manager_ban_add',
-                { pattern: ip, note: $('owumDlgNote').value, days: $('owumDlgDays').value },
+                { pattern: v.ip, note: $('owumDlgNote').value, days: $('owumDlgDays').value },
                 function (r) {
                     toast(r.msg);
                     if (!r.ok) return;
@@ -184,16 +247,26 @@
         for (k in sharedUids) if (sharedUids.hasOwnProperty(k)) sharedN++;
 
         // 1) 最近登录 IP（命中封禁时整卡红边 + 「已封禁」胶囊 + 解封按钮）
+        //    「自己正在用的地址」不给封禁入口 —— 封了等于把自己关在门外（服务端也会拒）
+        var c1act = '';
+        if (first) {
+            if (first.banned) {
+                c1act = '<button class="ow-btn ow-btn-ghost ow-btn-mini" onclick="OwUM.unban(\''
+                    + esc(first.ip) + '\')">解封</button>';
+            } else if (isMyIp(first.ip)) {
+                c1act = '<span class="owum-pill" title="这是你当前登录使用的地址，不能封禁">当前 IP</span>';
+            } else {
+                c1act = '<button class="ow-btn ow-btn-danger ow-btn-mini" onclick="OwUM.banDialog(\''
+                    + esc(first.ip) + '\')">封禁此 IP</button>';
+            }
+        }
         var c1 = '<div class="owum-hcard' + (first && first.banned ? ' is-banned' : '') + '">'
             + '<div class="owum-hk">最近登录 IP</div>'
             + '<div class="owum-hv owum-mono">' + (first ? esc(first.ip) : '—') + '</div>'
             + '<div class="owum-hf">'
             + (first ? chip(geoText(first)) : '')
             + (first && first.banned ? pill('已封禁', 'red') : '')
-            + (first ? (first.banned
-                ? '<button class="ow-btn ow-btn-ghost ow-btn-mini" onclick="OwUM.unban(\'' + esc(first.ip) + '\')">解封</button>'
-                : '<button class="ow-btn ow-btn-danger ow-btn-mini" onclick="OwUM.banDialog(\'' + esc(first.ip) + '\')">封禁此 IP</button>')
-                : '')
+            + c1act
             + '</div></div>';
 
         // 2) 归属地（运营商一并显示，能看出是不是机房的地址）
@@ -272,11 +345,7 @@
                 + '</div>'
                 + (r.ua ? '<div class="owum-net-ua" title="' + esc(r.ua) + '">' + esc(r.ua) + '</div>' : '')
                 + '</div>'
-                + '<div class="owum-net-act">'
-                + (r.banned
-                    ? '<button class="ow-btn ow-btn-ghost ow-btn-mini" onclick="OwUM.unban(\'' + esc(r.ip) + '\',1)">解封</button>'
-                    : '<button class="ow-btn ow-btn-ghost ow-btn-mini" onclick="OwUM.banDialog(\'' + esc(r.ip) + '\')">封禁</button>')
-                + '</div></div>';
+                + '<div class="owum-net-act">' + ipAction(r.ip, r.banned) + '</div></div>';
         }
         return h + '</div>';
     }
@@ -289,6 +358,7 @@
         for (var i = 0; i < list.length; i++) {
             var r = list[i];
             h += '<span class="owum-shared-item" onclick="OwUM.openUser(' + parseInt(r.uid, 10) + ')">'
+                + (r.avatar ? '<img src="' + esc(r.avatar) + '" alt="" loading="lazy" decoding="async">' : '')
                 + esc(r.nickname)
                 + ' <i>' + esc(r.ip) + '</i></span>';
         }
@@ -334,7 +404,6 @@
     function openPanel(u) {
         st.user = u;
         st.net = null;
-        st.geo = {};
         st.uid = u.id;
         var mask = d.createElement('div');
         mask.className = 'ow-modal-mask';
@@ -360,6 +429,8 @@
         /* 初始化：后台页每次注入都是新 DOM，靠 data-owum-inited 幂等 */
         init: function () {
             bindTabs();
+            var el = $('owumBanIp');
+            if (el) el.oninput = syncBanForm;
             OwUM.loadBans();
         },
 
@@ -444,6 +515,7 @@
                 if (st.uid !== id) return;          // 面板已换人或已关闭：丢弃过期响应
                 if (!r.ok) { toast(r.msg); return; }
                 st.net = r.data;
+                if (r.data.my_ip) st.myIp = r.data.my_ip;
                 // 服务端把「还没有归属地」的地址挑出来了：这里打上待解析标记，
                 // 渲染时显示「解析中…」而不是「未解析」，用户才知道有东西正在进行。
                 var pend = {};
@@ -523,6 +595,7 @@
         banAdd: function () {
             var ip = ($('owumBanIp').value || '').replace(/^\s+|\s+$/g, '');
             if (!ip) { toast('请输入 IP 地址'); return; }
+            if (isMyIp(ip)) { syncBanForm(); toast('这是你当前使用的地址，不能封禁'); return; }
             OwApi.secure('plugin_user_manager_ban_add', {
                 pattern: ip, note: $('owumBanNote').value, days: $('owumBanDays').value
             }, function (r) {
@@ -557,6 +630,8 @@
 
         paintBans: function (data) {
             var now = Math.floor(Date.now() / 1000);
+            if (data.my_ip) st.myIp = data.my_ip;
+            syncBanForm();   // myIp 到位后才知道表单里那条会不会命中自己
             var stat = $('owumBanStat');
             if (stat) stat.textContent = '生效 ' + (data.active || 0) + ' 条 / 共 ' + (data.total || 0) + ' 条';
 
@@ -610,9 +685,7 @@
                             + '<div class="owum-ban-meta">失败 <b style="color:var(--ow-orange)">'
                             + (parseInt(r2.f, 10) || 0) + '</b> 次 · 成功 ' + (parseInt(r2.o, 10) || 0)
                             + ' 次 · 最近 ' + esc(fmtTs(r2.t)) + '</div></div>'
-                            + (r2.banned
-                                ? '<button class="ow-btn ow-btn-ghost ow-btn-mini" onclick="OwUM.unban(\'' + esc(r2.ip) + '\')">解封</button>'
-                                : '<button class="ow-btn ow-btn-ghost ow-btn-mini" onclick="OwUM.banDialog(\'' + esc(r2.ip) + '\')">封禁</button>')
+                            + ipAction(r2.ip, r2.banned)
                             + '</div>';
                     }
                     top.innerHTML = t;

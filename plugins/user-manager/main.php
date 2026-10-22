@@ -432,8 +432,9 @@ Plugin::adminPage('user-manager', '用户管理', function () {
         . '<option value="0">永久</option><option value="1">1 天</option>'
         . '<option value="7">7 天</option><option value="30">30 天</option>'
         . '</select>'
-        . '<button class="ow-btn ow-btn-danger" onclick="OwUM.banAdd()">封禁</button>'
+        . '<button class="ow-btn ow-btn-danger" id="owumBanBtn" onclick="OwUM.banAdd()">封禁</button>'
         . '</div>'
+        . '<p class="owum-warn" id="owumBanSelf" style="display:none">这是你当前登录使用的地址（<span class="owum-mono" id="owumBanSelfIp"></span>），不能封禁。</p>'
         . '<p class="ow-form-hint">被封禁的 IP 打开任何页面都会被拦下；支持 <b>1.2.3.*</b> 网段写法。管理员账号不受影响，避免把自己锁在门外。</p>'
         . '<div id="owumBanList" class="owum-banlist"><div class="owum-empty">加载中…</div></div>'
         . '</div>'
@@ -490,14 +491,22 @@ Plugin::route('plugin_user_manager_search', function (array $ctx) use ($umGuard)
 
 /* ---------- 用户概览（v1.2.56）：详情弹窗数据 ----------
    与 search 的区别：带 avatar / status / reg_ip / last_login_ip 等概览字段。
-   只读接口，不做任何修改 → 不进 sensitive，不消耗一次性票据。 */
+   只读接口，不做任何修改 → 不进 sensitive，不消耗一次性票据。
+
+   v1.1.1：头像改由**核心**算地址。原来只取 users.avatar，而生成式头像
+   （avatar_type='generated'，占绝大多数用户）在 users.avatar 里是空串 ——
+   插件就退化成「首字 + 色块」，站长看到的是个紫色的 O。
+   正确做法是 `Auth::avatarUrlFor($row, uid)`：上传图 / dicebear / 内置 identicon
+   三种来源统一分流，还顺带触发 avatar.url 钩子（云存储插件靠它映射到对象存储）。 */
 Plugin::route('plugin_user_manager_detail', function (array $ctx) use ($umGuard) {
     $umGuard($ctx);
     $id = (int)($ctx['post']['id'] ?? 0);
     if ($id <= 0) Api::json(['ok' => false, 'msg' => '非法用户']);
-    $u = DB::one('SELECT id,nickname,email,role,title,status,points,avatar,created_at,reg_ip,last_login,last_login_ip
+    $u = DB::one('SELECT id,nickname,email,role,title,status,points,
+        avatar,avatar_type,avatar_style,avatar_seed,created_at,reg_ip,last_login,last_login_ip
         FROM users WHERE id=?', [$id]);
     if (!$u) Api::json(['ok' => false, 'msg' => '用户不存在'], 404);
+    $u['avatar_url'] = Auth::avatarUrlFor($u, (string)$id);
     // 等级：与 search 同一口径 —— 走钩子问「等级信任」插件，-1 = 无等级体系
     $lv = -1;
     Plugin::fire('user.level.get', [&$lv, $id]);
@@ -520,22 +529,28 @@ Plugin::route('plugin_user_manager_save', function (array $ctx) use ($umGuard) {
     $role = (string)($post['role'] ?? '');
     if (!in_array($role, ['member', 'vip', 'admin'], true)) Api::json(['ok' => false, 'msg' => '非法角色']);
     $title = (string)($post['title'] ?? '');
-    DB::run('UPDATE users SET role=?, title=? WHERE id=?', [$role, $title, $id]);
-    // 历史消息里的角色/称号为发送时快照，一并刷新（v1.0.39 语义随功能迁移）
-    DB::run('UPDATE messages SET role=?, title=? WHERE user_id=?', [$role, $title, $id]);
-    // 积分：允许单独调整（可为负数，但不接受非数字）
-    if (isset($post['points']) && $post['points'] !== '') {
-        $pts = (int)$post['points'];
-        $old = (int)DB::val('SELECT points FROM users WHERE id=?', [$id]);
-        DB::run('UPDATE users SET points=? WHERE id=?', [$pts, $id]);
-        Sec::log('admin_user_points', $actor['nickname'], ['id' => $id, 'points' => $pts]);
-        // 账上多出来的部分要通知本人（v1.0.2）：后台改积分是管理员单方面动作，
-        // 用户端在此之前没有任何感知。只在**增加**时发 —— 扣减不是「获得」，同值更不该刷一条。
-        if ($pts > $old) {
-            Notice::push($id, 'um_points_grant', [
-                'points' => $pts - $old, 'balance' => $pts, 'unit' => ow_points_name(),
-            ]);
+    $hasPts = isset($post['points']) && $post['points'] !== '';
+    $pts = $hasPts ? (int)$post['points'] : 0;
+    $old = 0;
+    if ($hasPts) $old = (int)DB::val('SELECT points FROM users WHERE id=?', [$id]);
+
+    // v1.5.22：用户组/称号 + 历史消息快照 + 积分三处写入用事务包住，避免改了一半。
+    DB::tx(function () use ($role, $title, $id, $hasPts, $pts, $actor) {
+        DB::run('UPDATE users SET role=?, title=? WHERE id=?', [$role, $title, $id]);
+        // 历史消息里的角色/称号为发送时快照，一并刷新（v1.0.39 语义随功能迁移）
+        DB::run('UPDATE messages SET role=?, title=? WHERE user_id=?', [$role, $title, $id]);
+        if ($hasPts) {
+            DB::run('UPDATE users SET points=? WHERE id=?', [$pts, $id]);
+            Sec::log('admin_user_points', $actor['nickname'], ['id' => $id, 'points' => $pts]);
         }
+    });
+    // 账上多出来的部分要通知本人（v1.0.2）：后台改积分是管理员单方面动作，
+    // 用户端在此之前没有任何感知。只在**增加**时发 —— 扣减不是「获得」，同值更不该刷一条。
+    // 通知放在事务提交之后：通知失败不该回滚已保存的用户资料。
+    if ($hasPts && $pts > $old) {
+        Notice::push($id, 'um_points_grant', [
+            'points' => $pts - $old, 'balance' => $pts, 'unit' => ow_points_name(),
+        ]);
     }
     // v1.2.43：等级编辑（依赖「等级信任」插件；未安装时钩子无人响应，$ok 保持 null）。
     // ⚠️ 必须区分「未安装」与「设置失败」：前者提示去装插件，后者才是真失败。
@@ -587,7 +602,8 @@ Plugin::route('plugin_user_manager_net', function (array $ctx) use ($umGuard) {
     $umGuard($ctx);
     $id = (int)($ctx['post']['id'] ?? 0);
     if ($id <= 0) Api::json(['ok' => false, 'msg' => '非法用户']);
-    $u = DB::one('SELECT id,nickname,avatar,role,status,reg_ip,last_login,last_login_ip,created_at
+    $u = DB::one('SELECT id,nickname,avatar,avatar_type,avatar_style,avatar_seed,
+        role,status,reg_ip,last_login,last_login_ip,created_at
         FROM users WHERE id=?', [$id]);
     if (!$u) Api::json(['ok' => false, 'msg' => '用户不存在'], 404);
 
@@ -669,14 +685,21 @@ Plugin::route('plugin_user_manager_net', function (array $ctx) use ($umGuard) {
             $names = [];
             if ($uids) {
                 [$in2, $a2] = DB::in('id', array_values(array_unique($uids)));
-                foreach (DB::all("SELECT id,nickname FROM users WHERE $in2", $a2) as $ur) {
-                    $names[(int)$ur['id']] = (string)$ur['nickname'];
+                foreach (DB::all("SELECT id,nickname,avatar,avatar_type,avatar_style,avatar_seed
+                    FROM users WHERE $in2", $a2) as $ur) {
+                    $names[(int)$ur['id']] = [
+                        'nickname' => (string)$ur['nickname'],
+                        // 头像同样走核心分流（上传图 / dicebear / identicon）
+                        'avatar' => Auth::avatarUrlFor($ur, (string)$ur['id']),
+                    ];
                 }
             }
             foreach ($srows as $sr) {
+                $info = $names[(int)$sr['uid']] ?? ['nickname' => '#' . (int)$sr['uid'], 'avatar' => ''];
                 $shared[] = [
                     'uid' => (int)$sr['uid'],
-                    'nickname' => $names[(int)$sr['uid']] ?? ('#' . (int)$sr['uid']),
+                    'nickname' => $info['nickname'],
+                    'avatar' => $info['avatar'],
                     'ip' => (string)$sr['ip'],
                     'ok_n' => (int)$sr['o'], 'fail_n' => (int)$sr['f'],
                     'last_at' => (int)$sr['t'],
@@ -688,7 +711,8 @@ Plugin::route('plugin_user_manager_net', function (array $ctx) use ($umGuard) {
     Api::json(['ok' => true, 'data' => [
         'user' => [
             'id' => (int)$u['id'], 'nickname' => (string)$u['nickname'],
-            'avatar' => (string)($u['avatar'] ?? ''), 'role' => (string)$u['role'],
+            'avatar_url' => Auth::avatarUrlFor($u, (string)$id),
+            'role' => (string)$u['role'],
             'status' => (int)$u['status'],
         ],
         'summary' => [
@@ -704,6 +728,8 @@ Plugin::route('plugin_user_manager_net', function (array $ctx) use ($umGuard) {
         'shared' => array_slice($shared, 0, 20),
         'pending' => array_values(array_unique($pending)),
         'geo_on' => $hasApi,
+        // 当前请求的出口 IP：前端据此把「封自己」的入口直接关掉（服务端也会拒）
+        'my_ip' => Sec::ip(),
     ]]);
 });
 
@@ -776,6 +802,7 @@ Plugin::route('plugin_user_manager_ban_list', function (array $ctx) use ($umGuar
     Api::json(['ok' => true, 'data' => [
         'bans' => $bans, 'top' => $top, 'total' => count($bans), 'active' => $active,
         'geo' => ['on' => $cfg['on'], 'api' => $cfg['api'], 'pending' => $pend],
+        'my_ip' => Sec::ip(),
     ]]);
 });
 
@@ -794,20 +821,23 @@ Plugin::route('plugin_user_manager_ban_add', function (array $ctx) use ($umGuard
     }
     $myIp = Sec::ip();
     if (owumIpMatch($pattern, $myIp)) {
-        Api::json(['ok' => false, 'msg' => '这条规则会封掉你当前使用的 IP（' . $myIp . '），请改用更精确的地址']);
+        Api::json(['ok' => false, 'msg' => '不能封禁你当前使用的 IP（' . $myIp . '），换一条更精确的地址']);
     }
     if ($days < 0) $days = 0;
     if ($days > 3650) $days = 3650;
     $now = time();
-    DB::upsert('plugin_user_manager_ipban', [
-        'pattern' => $pattern,
-        'note' => mb_substr($note, 0, 180),
-        'by_uid' => (int)($actor['id'] ?? 0),
-        'by_name' => mb_substr((string)($actor['nickname'] ?? ''), 0, 60),
-        'created_at' => $now,
-        'expires_at' => $days > 0 ? $now + $days * 86400 : 0,
-    ], ['pattern']);
-    Sec::log('owum_ipban_add', $actor['nickname'], ['pattern' => $pattern, 'days' => $days]);
+    // v1.5.22：封禁行 + 审计日志同一事务
+    DB::tx(function () use ($pattern, $note, $actor, $now, $days) {
+        DB::upsert('plugin_user_manager_ipban', [
+            'pattern' => $pattern,
+            'note' => mb_substr($note, 0, 180),
+            'by_uid' => (int)($actor['id'] ?? 0),
+            'by_name' => mb_substr((string)($actor['nickname'] ?? ''), 0, 60),
+            'created_at' => $now,
+            'expires_at' => $days > 0 ? $now + $days * 86400 : 0,
+        ], ['pattern']);
+        Sec::log('owum_ipban_add', $actor['nickname'], ['pattern' => $pattern, 'days' => $days]);
+    });
     Api::json(['ok' => true, 'msg' => '已封禁 ' . $pattern . ($days > 0 ? '（' . $days . ' 天）' : '（永久）')]);
 });
 Plugin::sensitive('plugin_user_manager_ban_add');
@@ -817,8 +847,11 @@ Plugin::route('plugin_user_manager_ban_del', function (array $ctx) use ($umGuard
     $umGuard($ctx);
     $pattern = strtolower(trim((string)($ctx['post']['pattern'] ?? '')));
     if ($pattern === '') Api::json(['ok' => false, 'msg' => '参数错误']);
-    DB::run('DELETE FROM plugin_user_manager_ipban WHERE pattern=?', [$pattern]);
-    Sec::log('owum_ipban_del', $ctx['actor']['nickname'], ['pattern' => $pattern]);
+    // v1.5.22：解封 + 审计日志同一事务
+    DB::tx(function () use ($pattern, $ctx) {
+        DB::run('DELETE FROM plugin_user_manager_ipban WHERE pattern=?', [$pattern]);
+        Sec::log('owum_ipban_del', $ctx['actor']['nickname'], ['pattern' => $pattern]);
+    });
     Api::json(['ok' => true, 'msg' => '已解封 ' . $pattern]);
 });
 Plugin::sensitive('plugin_user_manager_ban_del');

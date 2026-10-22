@@ -127,6 +127,12 @@ ck "返回用户昵称" "$(printf '%s' "$N" | jget data.user.id)" "265"
 has "IP 列表含登录地址" "$USER_IP" "$(printf '%s' "$N" | jget data.ips)"
 ck "汇总成功次数 ≥1" "$("$PHP" -r '$j=json_decode(file_get_contents("php://stdin"),true); echo ((int)$j["data"]["summary"]["ok_n"]>=1)?"1":"0";' <<< "$N")" "1"
 ck "记录到了设备 UA" "$("$PHP" -r '$j=json_decode(file_get_contents("php://stdin"),true); echo ((int)$j["data"]["summary"]["ua_n"]>=1)?"1":"0";' <<< "$N")" "1"
+ck "net 下发当前请求 IP" "$(printf '%s' "$N" | jget data.my_ip)" "$ADMIN_IP"
+has "头像走核心分流（非空 avatar_url）" 'avatar_url' "$(printf '%s' "$N" | jget data.user)"
+D=$(api "$T/a.txt" "$AKEY" plugin_user_manager_detail "$ADMIN_IP" "id=265")
+AU=$(printf '%s' "$D" | jget data.avatar_url)
+ck "detail 给出头像地址" "$([ -n "$AU" ] && echo 1 || echo 0)" "1"
+has "生成式头像 = 图片地址（不是首字兜底）" "http" "$AU"
 
 echo
 echo "=== 4) 封禁 → 非管理员被拦，管理员放行 ==="
@@ -148,7 +154,8 @@ L=$(api "$T/a.txt" "$AKEY" plugin_user_manager_ban_list "$ADMIN_IP")
 ck "列表接口成功" "$(printf '%s' "$L" | jget ok)" "1"
 ck "封禁条数 = 1" "$(printf '%s' "$L" | jget data.total)" "1"
 ck "生效条数 = 1" "$(printf '%s' "$L" | jget data.active)" "1"
-has "高风险 IP 首位是撞库地址" "$BAD_IP" "$(printf '%s' "$L" | jget data.top | head -c 120)"
+has "高风险 IP 首位是撞库地址" "\"ip\":\"$BAD_IP\"" "$(printf '%s' "$L" | jget data.top)"
+ck "ban_list 下发当前请求 IP" "$(printf '%s' "$L" | jget data.my_ip)" "$ADMIN_IP"
 
 echo
 echo "=== 6) 解封 ==="
@@ -171,6 +178,11 @@ TK=$(api "$T/a.txt" "$AKEY" ticket "$ADMIN_IP" | jget ticket)
 R=$(api "$T/a.txt" "$AKEY" plugin_user_manager_ban_add "$ADMIN_IP" "pattern=$ADMIN_IP" "days=0" "ticket=$TK")
 ck "不允许封自己的 IP" "$(printf '%s' "$R" | jget ok)" ""
 has "提示包含当前地址" "$ADMIN_IP" "$(printf '%s' "$R" | jget msg)"
+# 网段规则同样不能覆盖自己
+TK=$(api "$T/a.txt" "$AKEY" ticket "$ADMIN_IP" | jget ticket)
+R=$(api "$T/a.txt" "$AKEY" plugin_user_manager_ban_add "$ADMIN_IP" "pattern=198.51.100.*" "days=0" "ticket=$TK")
+ck "覆盖自己的网段也被拒" "$(printf '%s' "$R" | jget ok)" ""
+ck "被拒后没有落库" "$(q "SELECT COUNT(*) FROM plugin_user_manager_ipban WHERE pattern='198.51.100.*'")" "0"
 # 网段写法
 TK=$(api "$T/a.txt" "$AKEY" ticket "$ADMIN_IP" | jget ticket)
 R=$(api "$T/a.txt" "$AKEY" plugin_user_manager_ban_add "$ADMIN_IP" "pattern=203.0.113.*" "note=网段" "days=1" "ticket=$TK")
