@@ -776,7 +776,7 @@ Plugin::on('page.head', function () {
 
 Plugin::on('page.head', function () {
     // 注入合并 CSS（attachment-manager 也是这样做的）
-    echo '<link rel="stylesheet" href="?action=assets&type=css&cb=' . OWLSGO_ASSET_VERSION . '">';
+    echo '<link rel="stylesheet" href="?action=assets&type=css&v=' . OWLSGO_ASSET_VERSION . '">';
 });
 
 Plugin::asset('css', 'chat-background/chat.css');

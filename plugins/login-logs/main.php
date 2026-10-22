@@ -178,7 +178,7 @@ Plugin::on('session.destroyed', function (array $info) use ($llWrite): void {
 // 后台页面已自动引入 ?action=assets&type=js，但 CSS 不会自动加载，
 // 通过 page.head 注入 <link>（与 attachment-manager 同样做法）。
 Plugin::on('page.head', function () {
-    echo '<link rel="stylesheet" href="?action=assets&type=css&ll=' . OWLSGO_ASSET_VERSION . '">';
+    echo '<link rel="stylesheet" href="?action=assets&type=css&v=' . OWLSGO_ASSET_VERSION . '">';
 });
 
 /* ===================== 公共鉴权 ===================== */

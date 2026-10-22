@@ -1001,9 +1001,16 @@ class DB
             // 不公开群只靠邀请链接传播，容易变成灰色宣传阵地，故单独留一道总闸。
             'room_private_create_allow' => '1',
         ];
+        // v1.5.26：一次读出已存在的键，只把**缺失**的默认值批量写回。
+        // 旧实现对每个键各调一次 setting()（≈60 次 SELECT / 请求，实测 ~35ms）——
+        // 每个请求都跑一遍，长轮询下就是纯白烧 CPU；稳态下这里现在只剩 1 次 SELECT。
+        $have = [];
+        foreach (self::all('SELECT k FROM settings') as $row) $have[(string)$row['k']] = true;
+        $missing = [];
         foreach ($defs as $k => $v) {
-            if (self::setting($k) === null) self::setSetting($k, $v);
+            if (!isset($have[$k])) $missing[$k] = $v;
         }
+        if ($missing) self::setSettings($missing);
         if (!self::val('SELECT COUNT(*) FROM rooms')) {
             // 默认房间固定占用 001（v1.0.51 起新房间 ID 为随机 3 位起步），
             // 群主固定指向超级管理员（管理员固定占用用户 001，安装流程在其后创建）

@@ -676,7 +676,7 @@ Plugin::route('plugin_attachment_manager_cfg_save', function (array $ctx) use ($
  * 通过 page.head 钩子注入 <link> 标签，确保后台样式生效。
  */
 Plugin::on('page.head', function () {
-    echo '<link rel="stylesheet" href="?action=assets&type=css&am=' . OWLSGO_ASSET_VERSION . '">';
+    echo '<link rel="stylesheet" href="?action=assets&type=css&v=' . OWLSGO_ASSET_VERSION . '">';
 });
 
 /**

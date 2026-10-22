@@ -390,7 +390,27 @@ if ($action !== '') {
         $only = $ok('plugin');
         $oneFile = $ok('file');
         header($type === 'js' ? 'Content-Type: text/javascript; charset=utf-8' : 'Content-Type: text/css; charset=utf-8');
-        header('Cache-Control: no-store');
+
+        // v1.5.26 资源缓存策略（此前一律 no-store：1.1MB 合并 JS 每次页面加载都重下）。
+        //   · 带 t=（文件 mtime）的切片：URL 本身随文件变化 → 一年 immutable；
+        //   · v 与当前 ASSET_VERSION 一致的整包/切片：5 分钟 public —— 改插件 CSS/JS
+        //     不必 bump ASSET_VERSION 也能在 5 分钟内生效，硬刷新（Ctrl+F5）立即生效；
+        //   · 其余（无 v / 旧 v）：no-store，保持「改完刷新就能看到」的调试直觉。
+        // ⚠️ 不能用一年 immutable 缓存整包：插件资源改动不 bump ASSET_VERSION，
+        //    真按一年缓存会让旧 JS 永远留在浏览器里（见 PLUGIN.md「资源合并」一节）。
+        $qt = (string)($_GET['t'] ?? '');
+        $qv = (string)($_GET['v'] ?? '');
+        if ($qt !== '' && ctype_digit($qt)) {
+            header('Cache-Control: public, max-age=31536000, immutable');
+            header('Expires: ' . gmdate('D, d M Y H:i:s', time() + 31536000) . ' GMT');
+            header_remove('Pragma');
+        } elseif ($qv !== '' && $qv === OWLSGO_ASSET_VERSION) {
+            header('Cache-Control: public, max-age=300');
+            header('Expires: ' . gmdate('D, d M Y H:i:s', time() + 300) . ' GMT');
+            header_remove('Pragma');
+        } else {
+            header('Cache-Control: no-store');
+        }
         echo Plugin::renderAssets($type, $only, $oneFile);
         exit;
     }

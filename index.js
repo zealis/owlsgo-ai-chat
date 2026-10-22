@@ -9612,3 +9612,87 @@
     };
     w.OwGate = OwGate;
 })(window, document);
+
+/* ============================================================================
+ * 内部链接预加载（v1.5.26，instant.page 思路，零依赖）
+ *
+ * 为什么做：本站是服务端渲染 + 少量整页跳转（?page=chat / ?page=level / 登录注册等），
+ * 跳转时浏览器要重新握手并重新请求整页。悬停 65ms 后预取目标页，等于把这段等待
+ * 提前到「手指还没点下去」的空档里（instant.page 的默认阈值）。
+ *
+ * 规则（缺一不可，照抄 instant.page 的安全边界）：
+ *   · 只预取**同源 http(s)** 且 href 不是 #/javascript: 的链接；
+ *   · `?action=` 一律跳过 —— 那是接口/下载/工单端点，预取会白跑一次写操作；
+ *   · target=_blank、带 download、带 data-no-instant 的不碰；<html data-no-instant> 全局关闭；
+ *   · Save-Data / 2g 网络不做预取（省流量优先）；
+ *   · 同一 URL 只预取一次；用 <link rel=prefetch as=document>，交给浏览器调度。
+ *
+ * ⚠️ 动态页响应带 Cache-Control: no-store（页面内嵌会话密钥，不能进缓存），
+ *    所以预取**不一定能被导航复用**，收益主要是提前建连 / 提前让服务端渲染一次；
+ *    哪天页面改成可缓存（ETag + private），这套预取会立刻变成「点开即到」。
+ * ========================================================================== */
+(function (w, d) {
+    'use strict';
+    if (!w || !d || !d.documentElement) return;
+    if (d.documentElement.hasAttribute('data-no-instant')) return;
+
+    var conn = w.navigator && (w.navigator.connection || w.navigator.mozConnection);
+    if (conn && (conn.saveData || /(^|-)2g$/i.test(String(conn.effectiveType || '')))) return;
+
+    var HOVER_MS = 65;
+    var seen = Object.create ? Object.create(null) : {};
+    var timer = 0;
+
+    /** 合格则返回去掉 hash 的绝对 URL，否则返回 '' */
+    function target(a) {
+        if (!a || a.nodeType !== 1) return '';
+        if (a.hasAttribute('data-no-instant') || a.hasAttribute('download')) return '';
+        if ((a.getAttribute('target') || '') === '_blank') return '';
+        var href = a.getAttribute('href') || '';
+        if (!href || href.charAt(0) === '#' || /^javascript:/i.test(href)) return '';
+        var abs = a.href || '';
+        if (!/^https?:/i.test(abs)) return '';
+        if (abs.indexOf(location.protocol + '//' + location.host) !== 0) return '';
+        var bare = abs.split('#')[0];
+        if (bare === (location.href || '').split('#')[0]) return '';
+        if (/[?&]action=/.test(bare)) return '';
+        return bare;
+    }
+
+    function prefetch(a) {
+        var url = target(a);
+        if (!url || seen[url]) return;
+        seen[url] = 1;
+        var l = d.createElement('link');
+        l.rel = 'prefetch';
+        l.as = 'document';
+        l.href = url;
+        (d.head || d.documentElement).appendChild(l);
+    }
+
+    function closestLink(e) {
+        var t = e.target;
+        if (!t || t.nodeType !== 1) return null;
+        return t.closest ? t.closest('a[href]') : null;
+    }
+
+    d.addEventListener('mouseover', function (e) {
+        var a = closestLink(e);
+        if (!a) return;
+        clearTimeout(timer);
+        timer = setTimeout(function () { prefetch(a); }, HOVER_MS);
+    }, { passive: true });
+
+    d.addEventListener('mouseout', function () { clearTimeout(timer); }, { passive: true });
+
+    // 按下/触摸的瞬间不再等 65ms —— 手指已经落在链接上，预取与点击并行赛跑
+    d.addEventListener('mousedown', function (e) {
+        var a = closestLink(e);
+        if (a) prefetch(a);
+    }, { passive: true });
+
+    d.addEventListener('touchstart', function (e) {
+        var a = closestLink(e);
+        if (a) prefetch(a);
+    }, { passive: true });
+})(window, document);
