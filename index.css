@@ -1305,8 +1305,14 @@ input[type=range] {
     align-items: center; -webkit-align-items: center;
     gap: 7px;
     flex-shrink: 0; -webkit-flex-shrink: 0;
-    margin: 0 12px 10px;
-    padding: 7px 10px;
+    /* v1.5.25：左右外边距 12 → **8**，让搜索框与下方会话行**同宽同沿**。
+       原来搜索框 12px 内缩、会话行（.ow-room-list 的 8px + .ow-cl-item 的 10px）只缩 8px，
+       实测搜索框 215px / 行 223px，右边沿也差 4px，看着像两套栅格。
+       现在两边都是 239 - 8×2 = 223px，左沿同为 x=64、右沿同为 287。
+       padding 10 → 9 是补那条 1px 边框：行内头像左沿 64+10=74，
+       搜索框图标左沿 64+1(边框)+9=74，文字与头像同一条竖线。 */
+    margin: 0 8px 10px;
+    padding: 7px 9px;
     border: 1px solid var(--ow-field-border);   /* v1.3.125：与 .ow-input 同一档淡描边 */
     border-radius: 6px;                 /* 与 .ow-input 同圆角，看起来就是同一个控件 */
     background: var(--ow-brand-bg);
