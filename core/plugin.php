@@ -8,12 +8,22 @@
  *           admin.menu / api.route / cron.minute
  *
  * v1.0.90 性能改造（元数据缓存 + 按需加载）：
- *   - init() 不再逐个 require 插件 main.php，只做一次轻量目录扫描 + include 缓存文件；
+ *   - init() 不再逐个 require 插件 main.php，只做一次轻量目录扫描 + 读取缓存文件；
  *   - 元数据（plugin.json）与「注册清单」（插件登记了哪些钩子/路由/后台页/资源）
- *     缓存到 data/cache/plugins.php；仅在首次部署、新增启用、插件文件变更后重建一次；
+ *     缓存到 data/cache/plugins.json；仅在首次部署、新增启用、插件文件变更后重建一次；
  *   - 钩子触发 / 路由分发 / 后台页渲染时按清单精确加载涉及的插件，
  *     与当前请求无关的插件代码不再进入请求周期；
  *   - ?action=assets 的合并输出做文件级缓存（参与文件集合与 mtime 未变则直接复用）。
+ * v1.5.24 收尾（热路径零加载 + 清单权威化）：
+ *   - 后台页 / 前台页的「slug=>标题」进清单：后台壳、插件管理列表、?page= 路由
+ *     只读清单即可渲染菜单与路由表，不再为拿几个标题把全部页面型插件 require 进来；
+ *     真正渲染某一页时才按清单只加载拥有它的那一个插件（adminPageFor/frontPageFor）。
+ *   - loadPlugin / inspect 改「权威覆盖」：main.php 完整执行过，本次注册集即真相，
+ *     整体替换旧清单条目。旧实现 array_merge 只增不减 —— 插件改版删掉某个钩子后，
+ *     旧条目永留清单，每次 fire 都为它白加载一次插件（正是要消灭的 include 开销），
+ *     敏感标记同理残留。执行抛异常的半截注册不覆盖，保留旧清单合并增量。
+ *   - 缓存格式升 v=2（pages/fpages 由 slug 列表改为 slug=>标题映射），
+ *     readCache 拒读旧版，格式升级后的第一个请求自动重建。
  * 契约（与既有约定一致）：main.php 顶层只做 Plugin::* 注册，不做输出 / 其它副作用。
  */
 class Plugin
@@ -197,11 +207,18 @@ class Plugin
         $f = self::cacheFile();
         if (!is_file($f)) return ['plugins' => []];
         $c = json_decode((string)file_get_contents($f), true);
-        return (is_array($c) && isset($c['plugins']) && is_array($c['plugins'])) ? $c : ['plugins' => []];
+        if (!is_array($c) || !isset($c['plugins']) || !is_array($c['plugins'])) return ['plugins' => []];
+        // v1.5.24：清单格式升到 v=2（pages/fpages 由 slug 列表改为 slug=>标题映射）。
+        // 旧版缓存按新格式解读会把字符串当标题数组用 → 直接作废，
+        // 让 init 走「新插件」分支重建（格式升级后的第一个请求全量加载一次）。
+        if ((int)($c['v'] ?? 1) < 2) return ['plugins' => []];
+        return $c;
     }
 
     private static function blankManifestParts(): array
     {
+        // v1.5.24：pages/fpages 是「slug=>标题」映射（旧版是 slug 列表，
+        // 标题只在运行时 $adminPages/$frontPages 里，拿它就得加载插件代码）。
         return ['hooks' => [], 'routes' => [], 'pages' => [], 'fpages' => [], 'sensitive' => [], 'crons' => [],
                 'assets' => ['css' => [], 'js' => []],
                 'stats' => ['hooks' => 0, 'routes' => 0, 'pages' => 0, 'crons' => 0]];
@@ -212,14 +229,20 @@ class Plugin
     {
         if (!self::$dirty || self::$cacheDir === '') return;
         if (!is_dir(self::$cacheDir)) @mkdir(self::$cacheDir, 0775, true);
-        $data = ['v' => 1, 'plugins' => []];
+        $data = ['v' => 2, 'plugins' => []];
         // ⚠️ 白名单漏一个键，那个键就**永远不会被写进缓存**：
         // 落盘丢失 → 下次读缓存缺失 → 判定为「清单不完整」→ 每次请求都重新加载插件，
         // 而按需加载（fire/dispatch 靠清单里的 hooks/crons 决定要不要加载）随之失效。
         // 加新的注册类型时，这里必须同步加，否则症状是「性能下降 + 行为诡异」而非报错。
         $keep = array_flip(['hooks', 'routes', 'pages', 'fpages', 'sensitive', 'crons', 'assets', 'stats', 'sig']);
-        foreach (self::$manifest as $n => $m) {
-            $data['plugins'][$n] = array_intersect_key($m, $keep)
+        // v1.5.24：遍历 **$meta ∪ $manifest**，不是只遍历 $manifest。
+        // 旧实现只持久化「加载过的插件」—— 未启用（或从没被 fire 到）的插件永远进不了
+        // 缓存 → 每个请求都要对它们重新 readMeta（一次文件读 + json 解码）并置脏重写
+        // 缓存文件。35+ 插件的站点上这就是「每次请求的插件扫描开销」本身。
+        // 现在元数据全量落缓存：稳态下 init 对任何插件都不读文件、不写缓存。
+        $names = array_unique(array_merge(array_keys(self::$meta), array_keys(self::$manifest)));
+        foreach ($names as $n) {
+            $data['plugins'][$n] = array_intersect_key(self::$manifest[$n] ?? [], $keep)
                 + ['sig' => self::sigOf($n), 'meta' => self::$meta[$n] ?? []]
                 + self::blankManifestParts();
         }
@@ -232,7 +255,7 @@ class Plugin
 
     // ---------- 按需加载 ----------
 
-    /** 加载单个插件的 main.php：记录注册增量 → 合并进清单 → 落盘缓存 */
+    /** 加载单个插件的 main.php：记录注册增量 → 写入清单 → 落盘缓存 */
     private static function loadPlugin(string $name): void
     {
         if (!empty(self::$loaded[$name])) return;
@@ -249,7 +272,8 @@ class Plugin
         // → Fatal error: Cannot redeclare xxx() → 整个请求 500（空响应，无 JSON）。
         // 踩过：login-logs 的 owLLEnsureTable() 就是这么把 ?action=cron 打成 500 的。
         // require_once 第二次直接返回 true 且不执行，语义正是我们要的。
-        try { require_once $main; } catch (Throwable $e) { Sec::log('plugin_error', $name, ['error' => $e->getMessage()]); }
+        $ok = true;
+        try { require_once $main; } catch (Throwable $e) { $ok = false; Sec::log('plugin_error', $name, ['error' => $e->getMessage()]); }
         self::$loading = '';
         $p = self::$pending;
         self::$pending = null;
@@ -258,17 +282,41 @@ class Plugin
                   'pages' => count($p['pages']) + count($p['fpages']), 'crons' => count($p['crons'])];
         self::$stats[$name] = $stats;
         $old = self::$manifest[$name] ?? null;
-        $m = ($old ?? []) + self::blankManifestParts() + ['sig' => []];
-        foreach (['hooks', 'routes', 'pages', 'fpages', 'sensitive', 'crons'] as $k) {
-            $m[$k] = array_values(array_unique(array_merge($m[$k], $p[$k])));
+        // v1.5.24：main.php 完整执行过 → 本次注册集就是权威真相，**整体覆盖**旧清单。
+        // 旧实现是 array_merge 只增不减：插件改版删掉某个钩子 / 路由 / 敏感标记 /
+        // 后台页后，旧条目永远留在清单里 —— fire/dispatch 每次都为这个已删除的钩子
+        // 白加载一次插件（正是要消灭的 include 开销），敏感标记还会残留。
+        // 执行失败（抛异常）时半截注册不是真相，但不能把清单洗空：保留旧清单 + 合并增量。
+        if ($ok || $old === null) {
+            // ⚠️ 'meta' 必须带上且排在最后：saveCache 落盘的键序就是
+            // hooks…sig,meta（array_intersect_key + '+' 的结果），缺它或换序都会让
+            // $old !== $m 恒成立 → 每个加载了插件的请求都重写一遍缓存文件。
+            $m = [
+                'hooks' => $p['hooks'], 'routes' => $p['routes'],
+                'pages' => $p['pages'], 'fpages' => $p['fpages'],
+                'sensitive' => $p['sensitive'], 'crons' => $p['crons'],
+                'assets' => $p['assets'], 'stats' => $stats,
+                'sig' => self::sigOf($name),
+                'meta' => self::$meta[$name] ?? [],
+            ];
+        } else {
+            $m = ($old ?? []) + self::blankManifestParts() + ['sig' => []];
+            foreach (['hooks', 'routes', 'sensitive', 'crons'] as $k) {
+                $m[$k] = array_values(array_unique(array_merge($m[$k], $p[$k])));
+            }
+            // pages/fpages 是 slug=>标题映射：array_unique 按**值**去重，
+            // 两个页标题相同就会互相顶掉，必须用 array_replace 按键覆盖。
+            foreach (['pages', 'fpages'] as $k) {
+                $m[$k] = array_replace($m[$k], $p[$k]);
+            }
+            foreach (['css', 'js'] as $t) {
+                $m['assets'][$t] = array_values(array_unique(array_merge($m['assets'][$t] ?? [], $p['assets'][$t])));
+            }
+            $m['stats'] = $stats;
+            $m['sig'] = self::sigOf($name);
         }
-        foreach (['css', 'js'] as $t) {
-            $m['assets'][$t] = array_values(array_unique(array_merge($m['assets'][$t] ?? [], $p['assets'][$t])));
-        }
-        $m['stats'] = $stats;
-        $m['sig'] = self::sigOf($name);
         self::$manifest[$name] = $m;
-        // 内容与签名都未变化时不落盘（后台页每次请求都会加载全部页面型插件，避免重复写缓存）
+        // 内容与签名都未变化时不落盘（同一请求内重复加载 / 探测不重复写缓存）
         if ($old === null || $old !== $m) {
             self::$dirty = true;
             self::saveCache();
@@ -317,7 +365,9 @@ class Plugin
     public static function adminPage(string $slug, string $title, callable $fn): void
     {
         self::$adminPages[$slug] = ['title' => $title, 'fn' => $fn];
-        if (self::$pending !== null) self::$pending['pages'][] = $slug;
+        // v1.5.24：清单里存 slug=>标题映射 —— 后台壳 / 插件管理列表只读清单
+        // 就能渲染子菜单，不必为拿标题把插件 require 进来（见 adminPageTitles）。
+        if (self::$pending !== null) self::$pending['pages'][$slug] = $title;
     }
 
     /**
@@ -339,10 +389,16 @@ class Plugin
         // 核心保留页：插件不得覆盖
         if (in_array($slug, ['chat', 'login', 'register', 'forgot', 'admin', 'install'], true)) return;
         self::$frontPages[$slug] = ['title' => $title, 'fn' => $fn];
-        if (self::$pending !== null) self::$pending['fpages'][] = $slug;
+        if (self::$pending !== null) self::$pending['fpages'][$slug] = $title;
     }
 
-    /** 已注册的前台页（按需加载声明了 fpages 的插件后再返回） */
+    /**
+     * 已注册的前台页（会加载所有声明了 fpages 的启用插件）。
+     *
+     * ⚠️ 重：v1.5.24 起热路径（?page= 路由）请用 frontPageTitles() + frontPageFor()——
+     * 只读清单 + 命中后按需加载拥有该页的那一个插件。本方法保留给需要一次性
+     * 拿到全部 fn 的调用方（第三方插件兼容）。
+     */
     public static function frontPages(): array
     {
         foreach (self::$order as $name) {
@@ -633,13 +689,92 @@ class Plugin
         return false;
     }
 
-    /** 后台页集合：先按清单把声明了后台页的启用插件加载进来，再返回（保持既有行为） */
+    /**
+     * 后台页集合：先按清单把声明了后台页的启用插件加载进来，再返回。
+     *
+     * ⚠️ 重：v1.5.24 起核心热路径（后台壳 / 插件管理列表）改用
+     * adminPageTitles() + adminPageFor()。本方法保留给需要一次性拿到全部 fn
+     * 的调用方（第三方插件兼容）。
+     */
     public static function adminPages(): array
     {
         foreach (self::$order as $name) {
             if (empty(self::$loaded[$name]) && !empty(self::$manifest[$name]['pages'])) self::loadPlugin($name);
         }
         return self::$adminPages;
+    }
+
+    /**
+     * 已启用插件注册的后台页标题表（slug => 标题）—— **只读清单，不加载任何插件代码**。
+     *
+     * v1.5.24：后台「插件管理」子菜单、插件管理列表的「直达 slug 清单」都只需要标题，
+     * 旧实现为此 require 了全部页面型插件。现在标题随清单缓存，真正渲染某一页时
+     * 才按需加载拥有它的那一个插件（adminPageFor）。
+     * 同名 slug 以 $order 里最后一个声明者为准，与 adminPages() 全量加载的覆盖顺序一致。
+     */
+    public static function adminPageTitles(): array
+    {
+        $out = [];
+        foreach (self::$order as $name) {
+            foreach (self::$manifest[$name]['pages'] ?? [] as $slug => $title) {
+                if (!is_string($slug) || $slug === '') continue;
+                $out[$slug] = (string)$title;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * 取某个后台页的 ['title'=>..,'fn'=>..]：按清单**只加载拥有该 slug 的插件**。
+     * slug 未注册、或插件加载后并未注册它（清单刚好过期）时返回 null。
+     */
+    public static function adminPageFor(string $slug): ?array
+    {
+        if (!preg_match('/^[a-zA-Z0-9_-]+$/', $slug)) return null;
+        $owner = '';
+        // 反序找最后一个声明者 —— 与 adminPages() 全量加载时的覆盖顺序一致
+        foreach (array_reverse(self::$order) as $name) {
+            if (isset(self::$manifest[$name]['pages'][$slug])) { $owner = $name; break; }
+        }
+        if ($owner === '') return null;
+        self::loadPlugin($owner);
+        // 加载后清单已被权威注册集覆盖：仍声明这个 slug 才认，
+        // 防止清单刚过期时把无关插件的同名页当成本插件的返回。
+        if (!isset(self::$manifest[$owner]['pages'][$slug])) return null;
+        return self::$adminPages[$slug] ?? null;
+    }
+
+    /**
+     * 已启用插件注册的前台页标题表（slug => 标题）—— 只读清单，不加载插件代码。
+     * ?page= 路由先查它，命中后再 frontPageFor() 按需加载。
+     */
+    public static function frontPageTitles(): array
+    {
+        $out = [];
+        foreach (self::$order as $name) {
+            foreach (self::$manifest[$name]['fpages'] ?? [] as $slug => $title) {
+                if (!is_string($slug) || $slug === '') continue;
+                $out[$slug] = (string)$title;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * 取某个前台页的 ['title'=>..,'fn'=>..]：按清单**只加载拥有该 slug 的插件**。
+     * slug 未注册、或插件加载后并未注册它时返回 null。
+     */
+    public static function frontPageFor(string $slug): ?array
+    {
+        if (!preg_match('/^[a-z][a-z0-9-]{1,30}$/', $slug)) return null;
+        $owner = '';
+        foreach (array_reverse(self::$order) as $name) {
+            if (isset(self::$manifest[$name]['fpages'][$slug])) { $owner = $name; break; }
+        }
+        if ($owner === '') return null;
+        self::loadPlugin($owner);
+        if (!isset(self::$manifest[$owner]['fpages'][$slug])) return null;
+        return self::$frontPages[$slug] ?? null;
     }
 
     // ---------- 资源合并（清单驱动，无需加载 main.php） ----------
@@ -753,7 +888,11 @@ class Plugin
             $on = (int)($enabled[$name] ?? 0);
             // 注册计数：清单新鲜直接用（免加载）；清单缺失/文件变更时临时加载探测
             $m = self::$manifest[$name] ?? null;
-            $fresh = $m && ($m['sig'] ?? null) === self::sigOf($name) && !empty($m['stats']);
+            // v1.5.24：stats 全 0 的条目是「从没真实加载过」的元数据占位
+            // （未启用插件现在也有缓存条目了，见 saveCache），不能当新鲜 ——
+            // 否则后台列表会对明明注册了钩子的插件显示 0。探测一次补上真实计数。
+            $fresh = $m && ($m['sig'] ?? null) === self::sigOf($name)
+                && !empty($m['stats']) && array_sum($m['stats']) > 0;
             $stats = $fresh ? $m['stats'] : self::inspect($name);
             $out[] = [
                 'id' => $name,
@@ -808,15 +947,27 @@ class Plugin
         if (!preg_match('/^[a-zA-Z0-9_-]+$/', $name)) return ['hooks' => 0, 'routes' => 0, 'pages' => 0];
         $main = self::$dir . '/' . $name . '/main.php';
         if (!is_file($main)) return ['hooks' => 0, 'routes' => 0, 'pages' => 0, 'crons' => 0];
+        // v1.5.24：本请求已真实加载过该插件时（后台壳 adminPages() 先加载、列表后探测），
+        // require_once 第二次不会执行文件，$pending 会是空的 —— 拿它「刷新」清单等于
+        // 把清单洗空（旧实现靠 array_merge 侥幸没洗掉，但回报的计数会是 0，前台页数错）。
+        // 直接回报加载时记录的注册计数：loadPlugin 已把清单写成权威值。
+        if (!empty(self::$loaded[$name])) {
+            $s = self::$manifest[$name]['stats'] ?? null;
+            return is_array($s) ? $s : ['hooks' => 0, 'routes' => 0, 'pages' => 0, 'crons' => 0];
+        }
         $before = self::snapshot();
         $beforeAssets = self::$assets;
         $beforeCrons = self::$crons;
         self::$pending = ['hooks' => [], 'routes' => [], 'pages' => [], 'fpages' => [], 'sensitive' => [], 'crons' => [], 'assets' => ['css' => [], 'js' => []]];
         self::$loading = $name;
+        $ok = true;
         // require_once：inspect() 可能与 loadPlugin() 在同一请求内先后加载同一插件，
         // 用 require 会因函数重复声明直接 fatal（见 loadPlugin 内的说明）。
         try { require_once $main; $stats = ['hooks' => count(self::$pending['hooks']), 'routes' => count(self::$pending['routes']), 'pages' => count(self::$pending['pages']), 'crons' => count(self::$pending['crons'])]; }
-        catch (Throwable $e) { $stats = ['hooks' => 0, 'routes' => 0, 'pages' => 0, 'crons' => 0]; }
+        catch (Throwable $e) { $ok = false; $stats = ['hooks' => 0, 'routes' => 0, 'pages' => 0, 'crons' => 0]; }
+        // 探测执行过文件 = 已加载：后续 loadPlugin 直接走 $loaded 闸返回，
+        // 不会拿空 $pending 覆盖清单（与上面早返回守卫同一目的的两道保险）。
+        self::$loaded[$name] = true;
         $p = self::$pending;
         self::$pending = null;
         self::$loading = '';
@@ -830,19 +981,41 @@ class Plugin
         // ⚠️ 计划任务必须一并回滚：Plugin::cron() 直接 push 到 self::$crons，
         // 漏掉会让「探测」变成真注册，同一任务在表里出现两次。
         self::$crons = $beforeCrons;
-        // 刷新清单与签名（后续后台列表免探测）
-        $m = (self::$manifest[$name] ?? []) + self::blankManifestParts() + ['sig' => []];
-        foreach (['hooks', 'routes', 'pages', 'fpages', 'sensitive', 'crons'] as $k) {
-            $m[$k] = array_values(array_unique(array_merge($m[$k], $p[$k])));
+        // 刷新清单与签名（后续后台列表免探测）—— 与 loadPlugin 同口径：
+        // 完整执行过就权威覆盖；半截异常保留旧清单合并增量。
+        $oldM = self::$manifest[$name] ?? null;
+        if ($ok) {
+            // 键序与 meta 同 loadPlugin：缺 meta 会让「清单没变」误判成「变了」而重写缓存
+            $m = [
+                'hooks' => $p['hooks'], 'routes' => $p['routes'],
+                'pages' => $p['pages'], 'fpages' => $p['fpages'],
+                'sensitive' => $p['sensitive'], 'crons' => $p['crons'],
+                'assets' => $p['assets'], 'stats' => $stats,
+                'sig' => self::sigOf($name),
+                'meta' => self::$meta[$name] ?? [],
+            ];
+        } else {
+            $m = (self::$manifest[$name] ?? []) + self::blankManifestParts() + ['sig' => []];
+            foreach (['hooks', 'routes', 'sensitive', 'crons'] as $k) {
+                $m[$k] = array_values(array_unique(array_merge($m[$k], $p[$k])));
+            }
+            // pages/fpages 是 slug=>标题映射：array_unique 按值去重会顶掉同名标题的页，改用按键覆盖
+            foreach (['pages', 'fpages'] as $k) {
+                $m[$k] = array_replace($m[$k], $p[$k]);
+            }
+            foreach (['css', 'js'] as $t) {
+                $m['assets'][$t] = array_values(array_unique(array_merge($m['assets'][$t] ?? [], $p['assets'][$t])));
+            }
+            $m['stats'] = $stats;
+            $m['sig'] = self::sigOf($name);
         }
-        foreach (['css', 'js'] as $t) {
-            $m['assets'][$t] = array_values(array_unique(array_merge($m['assets'][$t] ?? [], $p['assets'][$t])));
-        }
-        $m['stats'] = $stats;
-        $m['sig'] = self::sigOf($name);
         self::$manifest[$name] = $m;
-        self::$dirty = true;
-        self::saveCache();
+        // v1.5.24：变了才落盘。后台列表一次会探测几十个「从没加载过」的插件，
+        // 旧实现每探测一次就全量重写缓存文件（N 次原子写）；注册集没变就不写。
+        if ($oldM === null || $oldM !== $m) {
+            self::$dirty = true;
+            self::saveCache();
+        }
         return $stats;
     }
 

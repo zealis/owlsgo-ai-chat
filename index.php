@@ -1238,9 +1238,13 @@ if ($action !== '') {
 // v1.2.44：插件前台页（Plugin::page() 注册）优先命中，之后才是核心页面。
 // ⚠️ 必须先查插件再走 switch —— 放在 default 分支里会被 renderChat 吞掉
 //    （任何未知 page 都会落到聊天页，?page=level 就会变成「进了聊天但啥也没有」）。
-$frontPages = Plugin::frontPages();
-if (isset($frontPages[$page])) {
-    renderPluginPage($page, $frontPages[$page], $actor, $user);
+// v1.5.24：路由表走清单（frontPageTitles 不加载任何插件代码），
+// 命中后才按需加载拥有该页的那一个插件（frontPageFor）—— 旧实现为了查这张表
+// 会把所有声明了前台页的插件全部 require 进来，与本次请求无关。
+$frontPages = Plugin::frontPageTitles();
+$frontPg = isset($frontPages[$page]) ? Plugin::frontPageFor($page) : null;
+if ($frontPg) {
+    renderPluginPage($page, $frontPg, $actor, $user);
 } else {
     switch ($page) {
         case 'login':    renderAuth('login'); break;
@@ -2007,7 +2011,9 @@ function renderAdmin(array $actor): void
     pageHead('管理后台');
     // 插件子菜单：仅显示在 main.php 里调用过 Plugin::adminPage() 声明后台页面的插件
     // （未安装写库、未启用或未声明页面的插件都不会出现在这里）。一个声明 = 一个子页面。
-    $pluginPages = Plugin::adminPages();
+    // v1.5.24：标题表只读清单（不加载插件代码），真正打开某一页时才按需加载
+    // 拥有它的那一个插件 —— 旧实现为了这几个标题把全部页面型插件 require 进来。
+    $pluginPages = Plugin::adminPageTitles();
     // 已安装但未启用的插件：main.php 不加载（无设置页），仍显示为灰色子项，
     // 点进去提供一键启用（v1.0.45）。
     // v1.3.68：子项文字改用 plugin.json 的 name（插件标题），不再露目录名。
@@ -2023,12 +2029,12 @@ function renderAdmin(array $actor): void
         . '<span class="ow-admin-label">插件管理</span>'
         . ($pluginPages ? '<span class="ow-admin-tog">' . ow_icon('chevron', 14) . '</span>' : '')
         . '</li>';
-    foreach ($pluginPages as $slug => $pg) {
+    foreach ($pluginPages as $slug => $pgTitle) {
         // v1.2.57：子菜单不再重复放 puzzle 图标 —— 每个插件都是同一个图标，
         // 一排下来像一串无意义的方块，去掉后名称更清爽（缩进 padding-left:34px 不变，
         // 仍与父级「插件管理」的文字起始位置对齐）。
         $pluginMenu .= '<li class="ow-admin-sub" data-apage="plugin:' . Sec::e($slug) . '">'
-            . '<span class="ow-admin-label">' . Sec::e($pg['title']) . '</span></li>';
+            . '<span class="ow-admin-label">' . Sec::e($pgTitle) . '</span></li>';
     }
     foreach ($offPlugins as $offId => $offTitle) {
         $pluginMenu .= '<li class="ow-admin-sub ow-admin-off" data-apage="plugin:' . Sec::e($offId) . '">'

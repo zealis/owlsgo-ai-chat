@@ -1,0 +1,6 @@
+{
+  "name": "懒加载探针（测试桩）",
+  "version": "1.0.0",
+  "description": "plugin-lazy-test 的专用桩：只做注册，无任何副作用。请勿在生产站点启用。",
+  "author": "e2e"
+}

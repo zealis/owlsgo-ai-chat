@@ -814,10 +814,11 @@ class Admin
                 // v1.2.57：额外下发**已注册后台页的 slug 清单**，供列表点标题直达。
                 // 只给数量（listAll 的 pages）不够：那只是「注册了几个」，
                 // 而 slug 由插件自定（惯例等于目录名，但不强制）——以注册表为准最稳。
+                // v1.5.24：标题表只读清单，不再为此 require 全部页面型插件。
                 Api::json([
                     'ok'          => true,
                     'data'        => Plugin::listAll(),
-                    'admin_pages' => array_keys(Plugin::adminPages()),
+                    'admin_pages' => array_keys(Plugin::adminPageTitles()),
                 ]);
 
             case 'admin_plugin_toggle':
@@ -835,8 +836,9 @@ class Admin
 
             case 'admin_plugin_page':
                 $slug = $p('slug');
-                $pages = Plugin::adminPages();
-                if (!isset($pages[$slug])) {
+                // v1.5.24：先用清单确认这个 slug 有主（不加载插件），
+                // 再按清单只加载拥有它的那一个插件拿 fn —— 旧实现为此 require 了全部页面型插件。
+                if (!isset(Plugin::adminPageTitles()[$slug])) {
                     // 已安装但未启用的插件：显示未启用占位页 + 一键启用按钮（v1.0.45）
                     $installed = array_column(Plugin::listAll(), null, 'id');
                     if (isset($installed[$slug])) {
@@ -847,9 +849,11 @@ class Admin
                     }
                     Api::json(['ok' => false, 'msg' => '页面不存在'], 404);
                 }
+                $pg = Plugin::adminPageFor($slug);
+                if (!$pg) Api::json(['ok' => false, 'msg' => '页面不存在'], 404);
                 // 兼容两种插件页面写法：fn 内 echo 输出，或 fn 返回 HTML 字符串（v1.0.44）
                 ob_start();
-                $ret = call_user_func($pages[$slug]['fn']);
+                $ret = call_user_func($pg['fn']);
                 $html = ob_get_clean();
                 if ($html === '' && is_string($ret) && $ret !== '') $html = $ret;
                 Api::json(['ok' => true, 'html' => $html]);
