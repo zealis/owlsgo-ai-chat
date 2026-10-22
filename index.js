@@ -2105,11 +2105,11 @@
                         self.passRemember(self.room, j.ttl);
                     }
                     if (self.dm) return;   // 等待期间用户已切到私聊
-                    /* 进群即拉「所有成员」—— 与 switchRoom 里 v1.2.27 那句同一调用。
-                       不补这一句，首屏进群 / 刷新页要等首次 poll 返回（Chat::poll 的
-                       while 循环最长阻塞 20 秒，members 只在循环结束后下发）才有成员，
-                       表现为「必须再点一次这个群才显示成员」。此处已过 room_join 的
-                       密码 / 权限闸，密码房调用安全（提前调用会撞 canEnter 403）。 */
+                    /* v1.5.29：闸门直接用 room_join 已经算好的 is_member，不再为它跑一遍
+                       全量名单；名单本身只在右侧栏打开时才拉（loadMembers 内部判可见性）。
+                       此处已过 room_join 的密码 / 权限闸，密码房调用安全
+                       （提前调用会撞 canEnter 403）。 */
+                    if (j.ok) self.applyJoinGate(j.is_member === true, !(first && first.is_public === false));
                     self.loadMembers();
                     OwApi.post('history', { room_id: self.room, before: 0 }, function (r) {
                         if (self.dm) return;
@@ -2273,7 +2273,9 @@
                     if (now - this._wmAt < 500) return;
                     if (parseInt(m.room, 10) === (OwChat.room || 0) && OwChat.room > 0 && !OwChat.dm) {
                         this._wmAt = now;
-                        try { OwChat.loadMembers(); } catch (e) {}
+                        // v1.5.29：面板收起时不刷成员（看不见的数据没人要）——
+                        // 用户打开面板那一下会立刻补拉，不依赖这条推送。
+                        if (OwChat.membersVisible()) { try { OwChat.loadMembers(true); } catch (e) {} }
                     }
                 }
             },
@@ -2413,6 +2415,9 @@
                 var narrow = isNarrow();
                 o.className = c + (open ? (narrow ? ' open' : '') : (narrow ? '' : ' hidden'));
                 syncMask();
+                // v1.5.29：打开才拉「所有成员」。收起期间名单一律不请求（只标过期），
+                // 所以这里必须先撑开类名再拉 —— loadMembers 的可见性判定读的就是它。
+                if (open) self.loadMembers(true);
             };
             var togglePanel = function () {
                 var o = $('owOnline');
@@ -4036,7 +4041,10 @@
             this._fireRoomSwitch();   // 插件钩子：切换群聊（公告等按群拉取）
             this._fireViewChange();   // v1.1.0：回到群聊视图 → 插件按 roomId 复原群级装饰
             // v1.2.27：立即渲染「所有成员」并校准发言闸门，不等首次 poll 返回（最长 20 秒）
-            this.loadMembers();
+            // v1.5.29：拆成两条路 —— 面板开着才拉完整名单（顺带校准闸门）；
+            // 面板收起只要闸门，用 room_members?lite=1，不再为渲染看不见的列表付两份全量查询。
+            if (this.membersVisible()) this.loadMembers(true);
+            else this.syncJoinGate();
             // P1/P2（WS 实时层）：订阅房间（presence 归属 + 消息推送范围）。
             // since 传 0：此刻 history 还没回来；服务端对 since<=0 只对齐水位、不补内容，
             // 期间到达的新消息由推送带来（与 history 返回段靠 addMessage 去重，不重不漏）。
@@ -4057,7 +4065,12 @@
                 if (!alive()) return;
                 var roomId = self.room, since = self.since;
                 var t0 = new Date().getTime();
-                OwApi.post('poll', { room_id: roomId, since: since }, function (r, status) {
+                // v1.5.29：只有右侧栏真的打开时才要成员名单 —— 收起时服务端零查询。
+                // 面板开着也走这条路保证实时（有人加入/离开能跟着刷新）；关掉即停，下一轮就不再带。
+                OwApi.post('poll', {
+                    room_id: roomId, since: since,
+                    want_members: self.membersVisible() ? 1 : 0
+                }, function (r, status) {
                     if (!alive()) return;
                     if (!r || !r.ok) {
                         // 密码房授权过期：停止轮询，重新验证后继续
@@ -5363,6 +5376,7 @@
             var box = $('owOnlineList'), cnt = $('owOnlineCount');
             if (cnt) cnt.innerHTML = list.length;
             if (!box) return;
+            this._memSig = null;   // v1.5.29：这条老口径绕过了 renderMembers 的签名缓存，作废它
             var html = '', i;
             for (i = 0; i < list.length; i++) {
                 var o = list[i];
@@ -5388,6 +5402,17 @@
             var ms = members || [];
             if (cnt) cnt.innerHTML = ms.length;
             if (!box) return;
+            /* v1.5.29：名单没变化就不重排 DOM。
+               面板打开期间每轮 poll 都会把名单带回来（want_members=1），无条件
+               innerHTML 赋值会把列表滚动位置重置回顶部 —— 用户滚到一半找人，
+               二十秒后被拽回去。签名只取影响渲染结果的字段。 */
+            var sig = (canStatus ? '1' : '0') + '|' + ms.length, s;
+            for (s = 0; s < ms.length; s++) {
+                sig += '|' + (ms[s].uid || 0) + ',' + (ms[s].nickname || '') + ',' + (ms[s].role || '')
+                     + ',' + (ms[s].online ? 1 : 0) + ',' + (ms[s].avatar || '');
+            }
+            if (sig === this._memSig) return;
+            this._memSig = sig;
             var html = '', i;
             for (i = 0; i < ms.length; i++) html += this._memberRow(ms[i], canStatus);
             box.innerHTML = html || '<li class="ow-online-empty">还没有成员</li>';
@@ -5406,13 +5431,56 @@
                 + roleTag(o.role, '', o.uid) + '</li>';
         },
 
-        /** 切群后立即拉一次成员，不等 poll（poll 最长 20 秒才返回） */
-        loadMembers: function () {
+        /* ---------- 右侧栏「所有成员」按需加载（v1.5.29） ----------
+           为什么改：右侧栏默认是收起的（initChat 里 setPanel(false)），但成员名单
+           此前一直在白算 —— poll 每轮收尾都跑 allMembers（memberList join +
+           online 集合 + 游客 GROUP BY + usort + 逐个 avatarUrlFor），切群也立刻拉
+           一次完整 room_members（两份全量名单）。多数会话里没人打开过这个面板。
+
+           现在：
+             · 面板收起 → 不请求（收到 wake 推送也不刷）；
+             · 面板打开 → loadMembers(true) 立即拉；打开期间 poll 带 want_members=1
+               （打开着才要实时性，收起后立刻回到零查询）；
+             · 发言闸门（未加入 → 显示「加入群聊」）不再搭车完整名单，改走
+               room_members?lite=1 —— 只要 is_member / is_public 这几个字段。 */
+
+        /** 右侧栏当前是否真的可见：窄屏（≤960）看 open 类，宽屏看有没有 hidden */
+        membersVisible: function () {
+            var o = $('owOnline');
+            if (!o) return false;
+            var cls = ' ' + String(o.className || '').replace(/\s+/g, ' ') + ' ';
+            var narrow = (document.documentElement.clientWidth || w.innerWidth || 1024) <= 960;
+            return narrow ? cls.indexOf(' open ') >= 0 : cls.indexOf(' hidden ') < 0;
+        },
+
+        /**
+         * 拉「所有成员」名单。
+         * @param {boolean} force 用户刚打开面板 —— 绕过可见性判定，并且顺带校准闸门。
+         *   打开面板一律走 force（不做新鲜度判断）：成员可能刚变过，打开就该看到最新的。
+         * 面板收起时直接返回；切群 / 首屏 / WS wake 都走这里。
+         */
+        loadMembers: function (force) {
             var self = this, id = this.room;
             if (!id) return;
+            if (!force && !this.membersVisible()) return;
             OwApi.post('room_members', { room_id: id }, function (r) {
                 if (!r.ok || self.room !== id) return;
                 self.renderMembers(r.members, r.online_status);
+                self.applyJoinGate(r.is_member, r.is_public);
+            });
+        },
+
+        /**
+         * 只校准输入区闸门（v1.5.29）：room_members?lite=1。
+         * 切群时执行 —— 被移出成员 / URL 直达未加入的群，靠它把「加入群聊」按钮显示出来。
+         * 老服务端没有 lite 参数 → 返回完整名单，此时顺手渲染一次，等同旧行为。
+         */
+        syncJoinGate: function () {
+            var self = this, id = this.room;
+            if (!id || this.dm) return;
+            OwApi.post('room_members', { room_id: id, lite: 1 }, function (r) {
+                if (!r.ok || self.room !== id) return;
+                if (r.members) self.renderMembers(r.members, r.online_status);
                 self.applyJoinGate(r.is_member, r.is_public);
             });
         },

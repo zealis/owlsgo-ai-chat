@@ -371,6 +371,12 @@ OwApi.secure('plugin_my_delete', { id: id }, function (r) { … });
 - `send`：发送按设计是非阻塞的（300ms 合并 + 服务端幂等键）；
 - `send_code`：「发验证码」自己管禁用与倒计时，自动锁反而会在响应后把倒计时解开。
 
+> **v1.5.29 起 `poll` 的成员名单改为按需下发。** 不带 `want_members=1` 时响应里**没有**
+> `members` / `guests` 键（右侧栏「所有成员」收起时，服务端不再跑那一段全量查询）。
+> 插件读 `poll` 响应时不要假设这两个键存在 —— 写成 `(r.members || [])`。
+> 需要成员名单请单独调 `room_members`：默认仍返回全量（`data` + `members`，老契约不变），
+> 加 `lite=1` 则只返回 `is_member` / `is_public` / `online_status` 等闸门字段。
+
 插件自己的接口名不会撞上这些键；若确实需要「点一下就锁住」，用下面的手动方式。
 
 ### 手动：异步动作不在点击处理函数里

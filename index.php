@@ -833,7 +833,10 @@ if ($action !== '') {
             // 回传最新成员口径：加入后前端可立即刷新「所有成员」，不用等下一次 poll
             'joined' => $joined,
             'is_member' => $actor['kind'] === 'user' && Chat::isMember($room, $actor),
-        ] + Chat::allMembers($room, $actor));
+        // v1.5.29：成员名单按需（同 poll）。进群/切群时右侧栏多半是收起的，
+        // 那时前端只记「名单已过期」，等用户真的打开面板再拉一次 room_members。
+        ] + (($p('want_members') === '1' || $p('want_members') === 1)
+                ? Chat::allMembers($room, $actor) : []));
 
         /* ---------- 群成员管理（v1.1.11「不公开群聊」） ----------
            身份口径：邀请对象一律用**数字用户 ID**，不用昵称（可重名）也不用邮箱。
@@ -844,19 +847,30 @@ if ($action !== '') {
             $room = Chat::room((int)$p('room_id'));
             if (!$room) Api::json(['ok' => false, 'msg' => '群聊不存在']);
             if (!Chat::canEnter($room, $actor)) Api::json(['ok' => false, 'msg' => '无权访问该群聊']);
-            Api::json([
+            /* v1.5.29：lite=1 只要「能不能发言」那一套字段，跳过两份名单查询。
+               用途：切群时校准输入区闸门（未加入 → 显示「加入群聊」按钮）。
+               此前这件事挂在完整请求上——每次切群都要跑 memberList + allMembers
+               两遍全量名单，只为拿一个 is_member 布尔。
+               ⚠️ 默认（不传 lite）行为完全不变：第三方插件（batch-ops 批处理、
+               成员管理弹窗）都按老契约读 data / members，不能悄悄改它们的返回。 */
+            $lite = $p('lite') === '1' || $p('lite') === 1;
+            $out = [
                 'ok' => true,
                 'is_public' => (int)($room['is_public'] ?? 1) === 1,
                 'can_invite' => Chat::canInvite($room, $actor),
                 'owner_id' => (int)($room['owner_id'] ?? 0),
                 'invite_code' => $actor['kind'] === 'user' && Chat::isMember($room, $actor)
                     ? (string)($room['invite_code'] ?? '') : '',
-                'data' => Chat::memberList($room),          // 成员管理弹窗用（可移出）
                 // v1.2.27：切群时前端用它立即渲染「所有成员」区块，不等下一次 poll
                 // （poll 最长 20 秒才返回，否则切完群成员区会空白二十秒）
                 'online_status' => Chat::canSeeOnlineStatus($actor, (int)$room['id']),
-            ] + Chat::allMembers($room, $actor)
-              + ['is_member' => $actor['kind'] === 'user' && Chat::isMember($room, $actor)]);
+            ];
+            if (!$lite) {
+                $out['data'] = Chat::memberList($room);      // 成员管理弹窗用（可移出）
+                $out += Chat::allMembers($room, $actor);
+            }
+            $out['is_member'] = $actor['kind'] === 'user' && Chat::isMember($room, $actor);
+            Api::json($out);
 
         case 'ws_ticket':
             /* P1（WS 实时层）：签发一次性 WS 连接票据（不建立连接本身）。
@@ -931,7 +945,10 @@ if ($action !== '') {
                 ]);
             }
             if ($actor['kind'] === 'none') Api::json(['ok' => false, 'msg' => '请先登录', 'need_login' => true]);
-            Api::json(['ok' => true] + Chat::poll($actor, $roomId, (int)$p('since', '0')));
+            // v1.5.29：成员名单按需 —— 前端「所有成员」面板打开着才要（收起时省掉整段
+            // allMembers 查询：join + online 集合 + 游客 GROUP BY + 逐个头像解析）。
+            Api::json(['ok' => true] + Chat::poll($actor, $roomId, (int)$p('since', '0'), 20,
+                $p('want_members') === '1' || $p('want_members') === 1));
 
         case 'history':
             $roomId = (int)$p('room_id');

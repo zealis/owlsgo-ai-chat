@@ -1243,7 +1243,18 @@ class Chat
     }
 
     // ---------- 长轮询（主通道，零依赖替代 WebSocket） ----------
-    public static function poll(array $actor, int $roomId, int $sinceId, int $timeout = 20): array
+    /**
+     * @param bool $wantMembers v1.5.29：成员名单改为**按需**。
+     *   右侧栏（「所有成员」）默认是收起的（前端 setPanel(false)），此前每轮 poll
+     *   收尾都要跑一遍 allMembers()：memberList 的 join、online 集合、游客 GROUP BY、
+     *   usort、逐个 avatarUrlFor —— 而结果多半没人看。现在只有客户端显式要
+     *   （面板打开着）才算，收起时零查询。
+     *   ⚠️ 不带这个参数时**不输出 members / guests 键**（不是输出空数组）：
+     *   老前端 `if (r.members)` 判的是 truthy，空数组也会进 renderMembers([])
+     *   → 正在用旧页面的用户看到成员列表被清空。缺键时它退回 renderOnline(r.online)
+     *   的老口径，等刷新页面即进入新逻辑。
+     */
+    public static function poll(array $actor, int $roomId, int $sinceId, int $timeout = 20, bool $wantMembers = false): array
     {
         self::heartbeat($actor, $roomId);
         $deadline = time() + max(5, min(30, $timeout));
@@ -1272,24 +1283,24 @@ class Chat
             usleep(500000); // 0.5s
             if (connection_aborted()) exit;
         }
-        // v1.2.27：「所有成员」改为「加入的成员全量 + 在场游客」，随 poll 一起下发，
-        // 前端不必再单独维护一份名单。roomId=0（私聊）不查，私聊没有成员概念。
-        $mem = ['members' => [], 'guests' => []];
-        if ($roomId > 0) {
-            $r = self::room($roomId);
-            if ($r) $mem = self::allMembers($r, $actor);
-        }
-        return [
+        // v1.2.27：「所有成员」= 加入的成员全量 + 在场游客。
+        // v1.5.29：改为按需 —— 只有前端「所有成员」面板打开时才计算并下发（见方法注释）。
+        $out = [
             'since' => $sinceId,
             'messages' => $new,
             'online' => self::onlineList($roomId),      // 保留：插件/旧逻辑可能用
-            'members' => $mem['members'],
-            'guests' => $mem['guests'],
             // v1.1.1：成员在线状态仅超级管理员与群主可见（前端据此决定是否画在线点）。
             // 名单本身对所有人可见，裁剪只发生在「在线/离线」这一层。
             'online_status' => self::canSeeOnlineStatus($actor, $roomId),
             'server_time' => time(),
         ];
+        if ($wantMembers && $roomId > 0) {
+            $r = self::room($roomId);
+            $mem = $r ? self::allMembers($r, $actor) : ['members' => [], 'guests' => []];
+            $out['members'] = $mem['members'];
+            $out['guests'] = $mem['guests'];
+        }
+        return $out;
     }
 
     /**
