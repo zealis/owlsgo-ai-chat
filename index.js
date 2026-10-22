@@ -9696,3 +9696,27 @@
         if (a) prefetch(a);
     }, { passive: true });
 })(window, document);
+
+/* ============================================================================
+ * Service Worker 注册（v1.5.28）
+ *
+ * 做什么：把「合并包 / 上传图片 / 带版本号的核心静态资源」交给 SW 做请求级缓存，
+ * 重复打开页面时不再走网络（详见根目录 sw.js 顶部的策略表）。
+ *
+ * 边界：
+ *   · 只在安全上下文注册 —— https，或 localhost / 127.0.0.1（浏览器视为安全上下文）；
+ *     纯 http 的内网 IP 部署注册会直接失败，这里提前挡掉，免得控制台刷一条无意义的错。
+ *   · 失败一律静默：SW 是纯加速，注册不上页面照常跑。
+ *   · updateViaCache:'none' 让浏览器每次导航都去服务端取最新的 SW 脚本
+ *     （脚本由 ?action=sw 输出，内容里带版本号；版本一变 activate 就清掉全部旧缓存）。
+ * ========================================================================== */
+(function (w, n) {
+    'use strict';
+    if (!w || !n || !('serviceWorker' in n)) return;
+    var host = location.hostname;
+    if (location.protocol !== 'https:' && !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(host)) return;
+    w.addEventListener('load', function () {
+        n.serviceWorker.register('?action=sw', { scope: './', updateViaCache: 'none' })
+            .catch(function () { /* 注册失败不影响页面 */ });
+    });
+})(window, navigator);

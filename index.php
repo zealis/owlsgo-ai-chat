@@ -415,6 +415,21 @@ if ($action !== '') {
         exit;
     }
 
+    // Service Worker（v1.5.28）：脚本本体在根目录 sw.js，这里只做版本号替换。
+    // 为什么走 PHP 而不是直接 static：缓存名必须随发布变化（activate 时删旧版本），
+    // 静态文件的 URL 不变、浏览器会一直用旧的 SW。no-cache 让浏览器每次导航都校验脚本，
+    // 加上注册时的 updateViaCache:'none'，一次发版 = 一次全量更新。
+    // Service-Worker-Allowed: / ：脚本 URL 是 /?action=sw，默认作用域就是 /，这行是冗余保险。
+    if ($action === 'sw') {
+        $src = (string)@file_get_contents(__DIR__ . '/sw.js');
+        if ($src === '') { http_response_code(404); exit; }
+        header('Content-Type: application/javascript; charset=utf-8');
+        header('Cache-Control: no-cache');
+        header('Service-Worker-Allowed: /');
+        echo str_replace('__OW_SW_VERSION__', OWLSGO_ASSET_VERSION . '-' . OWLSGO_VERSION, $src);
+        exit;
+    }
+
     // 签名密钥：登录用户/游客用其 client_key，匿名用会话 key（并兼容 cookie 备份 key）
     $signKeys = array_values(array_unique(array_filter([
         (string)($actor['key'] ?? ''),
