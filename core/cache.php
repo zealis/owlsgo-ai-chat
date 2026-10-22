@@ -48,6 +48,12 @@ class Cache
                 if (is_file($f) && @unlink($f)) $removed[] = basename($f);
             }
         }
+        // 原子替换留下的临时文件（改名失败或进程被杀）：不是缓存本体，按残留清掉。
+        // 只动 60 秒以前的 —— 正常路径从写入到 rename 只有几毫秒，新落的一定是并发请求正在写的。
+        $cut = time() - 60;
+        foreach (glob($dir . '/*.tmp') ?: [] as $f) {
+            if (is_file($f) && (int)@filemtime($f) < $cut && @unlink($f)) $removed[] = basename($f);
+        }
         clearstatcache(true);
 
         // 插件可监听并清自己的外部缓存（如 redis 的键、其它插件私有文件）。

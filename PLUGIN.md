@@ -265,6 +265,11 @@ DB::tx(function () {
 | `all` | 上面三份文件 + 广播 `cache.clear` | 后台「刷新数据缓存」/ 手动全清 |
 
 - `Cache::clear($area)` 返回实际删除的文件名；文件缓存下次请求自动重建。
+- **v1.5.27 起**：核心落盘统一走「写 `*.tmp` → rename」，**改名失败会立刻删掉那个 tmp**
+  （Windows 上目标被别的进程读着时 rename 必失败，而旧实现不看返回值，`data/cache` 里会积出
+  清理通配 `assets-*.json` 匹配不到的半成品）；重建合并包时顺带扫掉 `data/cache/*.tmp` 里
+  60 秒以前的残留，`Cache::clear()` 也会一并清（返回值里能看到文件名）。
+  插件自己写原子缓存时请照 `Plugin::atomicWrite()` 的写法，或至少 `if (!@rename($tmp, $dst)) @unlink($tmp);`。
 - 插件自己的外部缓存（Redis、私有文件、DB 缓存表）监听钩子处理：
 
 ```php

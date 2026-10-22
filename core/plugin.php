@@ -212,6 +212,33 @@ class Plugin
     private static function cacheFile(): string { return self::$cacheDir . '/plugins.json'; }
 
     /**
+     * 原子落盘：tmp + rename（多进程并发下后写覆盖，内容等价无害）。
+     * ⚠️ rename 失败必须把 tmp 删掉：Windows 上目标文件正被另一个进程读着时 rename 会失败，
+     *    旧实现不看返回值，半成品就永远留在 data/cache 里（实测积了 11 个、1.6 MB）——
+     *    清理逻辑 glob 的是 `assets-*.json`，`assets-*.json.<pid>.tmp` 这种名字永远匹配不到。
+     */
+    private static function atomicWrite(string $dest, string $body): bool
+    {
+        $tmp = $dest . '.' . (string)getmypid() . '.tmp';
+        if (@file_put_contents($tmp, $body, LOCK_EX) === false) return false;
+        if (@rename($tmp, $dest)) return true;
+        @unlink($tmp);
+        return false;
+    }
+
+    /**
+     * 清掉改名失败 / 进程被杀留下的临时文件。
+     * 只动 60 秒以前的：正常路径从写入到 rename 只有几毫秒，新落的 tmp 一定是别的请求正在写的。
+     */
+    private static function sweepTmp(): void
+    {
+        $cut = time() - 60;
+        foreach (glob(self::$cacheDir . '/*.tmp') ?: [] as $f) {
+            if ((int)@filemtime($f) < $cut) @unlink($f);
+        }
+    }
+
+    /**
      * 缓存用 JSON + file_get_contents，不用 include：
      * php-cgi 的 OPcache 会按路径缓存 include 文件的编译结果，本机重校验有数十秒延迟，
      * 重写后的清单可能读到旧版本导致钩子不触发；json 直读完全绕开该问题。
@@ -260,10 +287,7 @@ class Plugin
                 + ['sig' => self::sigOf($n), 'meta' => self::$meta[$n] ?? []]
                 + self::blankManifestParts();
         }
-        $tmp = self::cacheFile() . '.' . (string)getmypid() . '.tmp';
-        if (@file_put_contents($tmp, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), LOCK_EX) !== false) {
-            @rename($tmp, self::cacheFile());
-        }
+        self::atomicWrite(self::cacheFile(), json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
         self::$dirty = false;
     }
 
@@ -840,14 +864,14 @@ class Plugin
         }
         if ($cfile !== '') {
             if (!is_dir(self::$cacheDir)) @mkdir(self::$cacheDir, 0775, true);
-            $tmp = $cfile . '.' . (string)getmypid() . '.tmp';
-            if (@file_put_contents($tmp, json_encode(['sig' => $sig, 'out' => $out], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), LOCK_EX) !== false) {
-                @rename($tmp, $cfile);
+            if (self::atomicWrite($cfile, json_encode(['sig' => $sig, 'out' => $out], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES))) {
                 // 过期缓存清理：保留**最近 6 份**而不是只留刚写的这一份 —— 单插件资源（$only）
                 // 与总包是不同 key，若「只留一份」就会互相踢掉，每次请求都重新合并。
                 $keep = glob(self::$cacheDir . '/assets-*.json') ?: [];
                 usort($keep, fn($a, $b) => (int)@filemtime($b) <=> (int)@filemtime($a));
                 foreach (array_slice($keep, 6) as $old) @unlink($old);
+                // rename 失败或进程被杀留下的 *.tmp 不在上面的通配里，单独扫一遍
+                self::sweepTmp();
             }
         }
         return $out;
