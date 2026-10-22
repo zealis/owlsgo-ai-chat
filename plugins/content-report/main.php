@@ -1687,13 +1687,12 @@ Plugin::asset('js', 'content-report/chat.js');
 Plugin::asset('js', 'content-report/admin.js');
 Plugin::asset('css', 'content-report/style.css');
 
+// ⚠️ v1.5.31 起下面这段已作废：核心 pageHead 统一引整包 CSS，插件不再自己发切片（保留作历史）
 /**
  * 主程序只在页面里引入 `?action=assets&type=js`，**没有**引入 css ——
  * 插件样式必须自己挂 page.head 输出 <link>，否则注册了也不会加载
  * （v1.0.x 的 admin.css 就是这么一直没生效的）。
  * 用 plugin= / file= 只取本插件这一份（不带这两个参数会把全部启用插件的 CSS 一起打包下发）。
  */
-Plugin::on('page.head', function () {
-    echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=content-report&file=style.css&v='
-        . OWLSGO_ASSET_VERSION . '">';
-});
+// v1.5.31：CSS 不再由插件自己发切片 —— 核心 pageHead 统一引整包
+// （整包本就包含本插件的样式；此前每个插件各发一条，首屏变成 16 个串行 CSS 请求）

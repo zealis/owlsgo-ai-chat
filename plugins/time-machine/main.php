@@ -470,10 +470,8 @@ Plugin::asset('css', 'time-machine/style.css');
  * ⚠️ 版本参数用**插件自己的版本**（pv）：核心版本不变时只改插件 CSS，
  *    若只带程序版本、不带资源版本，浏览器会命中旧缓存，站方会以为样式没生效。
  */
-Plugin::on('page.head', function (): void {
-    echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=time-machine&file=style.css&v='
-        . OWLSGO_ASSET_VERSION . '&pv=' . rawurlencode(owTmVersion()) . '">' . "\n";
-});
+// v1.5.31：CSS 不再由插件自己发切片 —— 核心 pageHead 统一引整包
+// （整包本就包含本插件的样式；此前每个插件各发一条，首屏变成 16 个串行 CSS 请求）
 
 /** 插件自身版本（取自 plugin.json；读不到就回落到 0，只影响缓存键） */
 function owTmVersion(): string

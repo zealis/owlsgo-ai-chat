@@ -1028,15 +1028,10 @@ Plugin::cron('ip_geo', 900, function (): string {
 // 注册后台交互脚本（由 ?action=assets&type=js 合并输出，仅后台页面引入）
 Plugin::asset('js', 'user-manager/admin.js');
 
-// 样式表必须自己发 <link>：核心只引合并 JS，CSS 不会自动加载。
-// 地址里带 t=<mtime>：只改插件样式不会动 VERSION，浏览器/nginx 的 7 天缓存
-// 会继续吃旧样式（站方改完看不到效果），用文件时间戳强制换 URL。
+// v1.5.31：样式改由核心 pageHead 统一引整包 —— 整包 URL 带 `t=<合并包内容指纹>`，
+// 改本插件 CSS 会让指纹变化、URL 立刻变，比原来每个插件各发一条切片（首屏 16 个请求）
+// 省得多，缓存效果一样（带 t= → 一年 immutable）。
 Plugin::asset('css', 'user-manager/style.css');
-Plugin::on('page.head', function (): void {
-    $t = @filemtime(__DIR__ . '/style.css') ?: 0;
-    echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=user-manager&file=style.css&v='
-        . OWLSGO_ASSET_VERSION . '&t=' . $t . '">';
-});
 
 /* ---------- 积分发放的通知模板（v1.0.2） ---------- */
 

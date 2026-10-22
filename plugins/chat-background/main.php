@@ -774,10 +774,8 @@ Plugin::on('page.head', function () {
 
 /* ============================ 资源 ============================ */
 
-Plugin::on('page.head', function () {
-    // 注入合并 CSS（attachment-manager 也是这样做的）
-    echo '<link rel="stylesheet" href="?action=assets&type=css&v=' . OWLSGO_ASSET_VERSION . '">';
-});
+// v1.5.31：CSS 不再由插件自己发切片 —— 核心 pageHead 统一引整包
+// （整包本就包含本插件的样式；此前每个插件各发一条，首屏变成 16 个串行 CSS 请求）
 
 Plugin::asset('css', 'chat-background/chat.css');
 Plugin::asset('js', 'chat-background/chat.js');

@@ -392,15 +392,17 @@ if ($action !== '') {
         header($type === 'js' ? 'Content-Type: text/javascript; charset=utf-8' : 'Content-Type: text/css; charset=utf-8');
 
         // v1.5.26 资源缓存策略（此前一律 no-store：1.1MB 合并 JS 每次页面加载都重下）。
-        //   · 带 t=（文件 mtime）的切片：URL 本身随文件变化 → 一年 immutable；
+        //   · 带 t=（内容指纹：单文件是 mtime，整包是 Plugin::assetsStamp() 的短 hash）
+        //     的 URL 本身随内容变化 → 一年 immutable；
         //   · v 与当前 ASSET_VERSION 一致的整包/切片：5 分钟 public —— 改插件 CSS/JS
         //     不必 bump ASSET_VERSION 也能在 5 分钟内生效，硬刷新（Ctrl+F5）立即生效；
         //   · 其余（无 v / 旧 v）：no-store，保持「改完刷新就能看到」的调试直觉。
-        // ⚠️ 不能用一年 immutable 缓存整包：插件资源改动不 bump ASSET_VERSION，
-        //    真按一年缓存会让旧 JS 永远留在浏览器里（见 PLUGIN.md「资源合并」一节）。
+        // ⚠️ t 必须是「内容变了 t 就变」，否则一年缓存会让旧资源赖在用户浏览器里。
+        //    以前只认纯数字（mtime），v1.5.31 起整包用的是 12 位 hex 指纹，故改用
+        //    「1~20 位字母数字」——t 只参与缓存键，不参与任何查询，放宽没有风险。
         $qt = (string)($_GET['t'] ?? '');
         $qv = (string)($_GET['v'] ?? '');
-        if ($qt !== '' && ctype_digit($qt)) {
+        if ($qt !== '' && preg_match('/^[a-zA-Z0-9]{1,20}$/', $qt) === 1) {
             header('Cache-Control: public, max-age=31536000, immutable');
             header('Expires: ' . gmdate('D, d M Y H:i:s', time() + 31536000) . ' GMT');
             header_remove('Pragma');
@@ -1375,7 +1377,7 @@ function renderPluginPage(string $slug, array $pg, array $actor, ?array $user): 
     echo '<script>OwApi.key=' . json_encode((string)($actor['key'] ?? ''))
        . ';OwApi.setServerTime(' . time() . ');</script>';
     define('OWLSGO_ASSETS_JS_EMITTED', true);
-    echo '<script src="?action=assets&type=js&v=' . OWLSGO_ASSET_VERSION . '"></script>'
+    echo '<script src="?action=assets&type=js&v=' . OWLSGO_ASSET_VERSION . '&t=' . Plugin::assetsStamp('js') . '"></script>'
        . '</body></html>';
 }
 
@@ -1605,6 +1607,15 @@ function pageHead(string $title): void
        . '<link rel="icon" href="assets/img/logo.svg" type="image/svg+xml">'
        . owThemeBootstrap()   // v1.3.25：先定主题再加载样式，避免首屏闪一下浅色
        . '<link rel="stylesheet" href="index.css?v=' . OWLSGO_ASSET_VERSION . '">';
+    /* v1.5.31：**整包插件样式在这里统一引一次**。
+       此前核心从不引整包，于是 19 个插件只能各自在 page.head 里发自己的切片 ——
+       首屏变成 16 个独立 CSS 请求（HTTP/1.1 下同域只 6 个并发，要分三批串行等 RTT），
+       而整包内容早已包含它们的全部样式（`Plugin::asset()` 登记的都进合并文件），
+       等于同一批 CSS 被下了两遍。现在插件不再发切片（见各插件 main.php 的改动），
+       统一由这里引一次；`t=` 是合并包的内容指纹，改任何插件样式都会换 URL 立即生效。
+       ⚠️ 放在 index.css 之后：插件样式是「覆盖核心默认」的角色，顺序反了会压不住。 */
+    echo '<link rel="stylesheet" href="?action=assets&type=css&v=' . OWLSGO_ASSET_VERSION
+       . '&t=' . Plugin::assetsStamp('css') . '">';
     // v1.3.51：色系引擎不再是核心文件 —— 改由 color-schemes 插件在 page.head 注入。
     // 该钩子在样式表之后，但注入的是**阻塞脚本**，仍在首帧绘制前执行完，不会闪色。
     Plugin::fire('page.head');
@@ -1768,7 +1779,7 @@ function renderAuth(string $mode): void
     // 打上标记，插件自己的 page.footer 注入会被它自己的 define 判断跳过，不会重复加载。
     if (!defined('OWLSGO_ASSETS_JS_EMITTED')) {
         define('OWLSGO_ASSETS_JS_EMITTED', true);
-        echo '<script src="?action=assets&type=js&v=' . OWLSGO_ASSET_VERSION . '"></script>';
+        echo '<script src="?action=assets&type=js&v=' . OWLSGO_ASSET_VERSION . '&t=' . Plugin::assetsStamp('js') . '"></script>';
     }
     echo '<script>OwAuth.init(' . json_encode(['key' => Sec::anonKey(), 'ts' => time()]) . ');</script>';
     Plugin::fire('page.footer');
@@ -2083,7 +2094,7 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
     echo '<script src="assets/js/i18n.js?v=' . OWLSGO_ASSET_VERSION . '"></script>'
        . '<script src="index.js?v=' . OWLSGO_ASSET_VERSION . '"></script>'
        . '<script>OwChat.init(' . json_encode($boot, JSON_UNESCAPED_UNICODE) . ');</script>'
-       . '<script src="?action=assets&type=js&v=' . OWLSGO_ASSET_VERSION . '"></script>';
+       . '<script src="?action=assets&type=js&v=' . OWLSGO_ASSET_VERSION . '&t=' . Plugin::assetsStamp('js') . '"></script>';
     Plugin::fire('page.footer');
     echo '</body></html>';
 }
@@ -2164,7 +2175,7 @@ function renderAdmin(array $actor): void
        . '<script src="assets/js/i18n.js?v=' . OWLSGO_ASSET_VERSION . '"></script>'
        . '<script src="index.js?v=' . OWLSGO_ASSET_VERSION . '"></script>'
        // 插件注册的 JS 资源合并输出（用户管理等插件的后台交互脚本）
-       . '<script src="?action=assets&type=js&v=' . OWLSGO_ASSET_VERSION . '"></script>'
+       . '<script src="?action=assets&type=js&v=' . OWLSGO_ASSET_VERSION . '&t=' . Plugin::assetsStamp('js') . '"></script>'
        . '<script>OwAdmin.init(' . json_encode([
              'key' => $actor['key'], 'ts' => time(), 'version' => OWLSGO_VERSION,
              // v1.5.4：后台各页（含插件后台）统一从这里取「积分」的自定义名称

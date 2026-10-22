@@ -72,6 +72,10 @@ R=$(cu -H "X-Forwarded-Proto: https" -c "$T/c.txt" -b "$T/c.txt" -X POST "$B/?ac
 ck "管理员登录" "$(printf '%s' "$R" | jget ok)" "1"
 H=$(cu -H "X-Forwarded-Proto: https" -b "$T/c.txt" "$B/?page=admin")
 has "后台壳含插件管理菜单" 'data-apage="plugins"' "$H"
+# v1.5.31：插件 CSS 改由 pageHead 统一引整包 —— 后台壳必须有整包、且不再出现插件切片
+has "后台壳引整包 CSS（带内容指纹）" 'action=assets&type=css&v=' "$H"
+has "后台壳整包 CSS 带 t= 指纹" '&t=' "$H"
+no  "后台壳无插件 CSS 切片" 'action=assets&type=css&plugin=' "$H"
 has "子菜单：用户管理（清单标题）" '用户管理' "$H"
 has "子菜单：附件上传（清单标题）" '附件上传' "$H"
 has "子菜单：通行密钥（清单标题）" '通行密钥' "$H"

@@ -177,9 +177,8 @@ Plugin::on('session.destroyed', function (array $info) use ($llWrite): void {
 
 // 后台页面已自动引入 ?action=assets&type=js，但 CSS 不会自动加载，
 // 通过 page.head 注入 <link>（与 attachment-manager 同样做法）。
-Plugin::on('page.head', function () {
-    echo '<link rel="stylesheet" href="?action=assets&type=css&v=' . OWLSGO_ASSET_VERSION . '">';
-});
+// v1.5.31：CSS 不再由插件自己发切片 —— 核心 pageHead 统一引整包
+// （整包本就包含本插件的样式；此前每个插件各发一条，首屏变成 16 个串行 CSS 请求）
 
 /* ===================== 公共鉴权 ===================== */
 

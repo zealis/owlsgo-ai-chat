@@ -675,9 +675,8 @@ Plugin::route('plugin_attachment_manager_cfg_save', function (array $ctx) use ($
  * 主程序未在页面中引入 ?action=assets&type=css，插件 CSS 不会自动加载。
  * 通过 page.head 钩子注入 <link> 标签，确保后台样式生效。
  */
-Plugin::on('page.head', function () {
-    echo '<link rel="stylesheet" href="?action=assets&type=css&v=' . OWLSGO_ASSET_VERSION . '">';
-});
+// v1.5.31：CSS 不再由插件自己发切片 —— 核心 pageHead 统一引整包
+// （整包本就包含本插件的样式；此前每个插件各发一条，首屏变成 16 个串行 CSS 请求）
 
 /**
  * 图片/文件按钮（v1.4.5 起走 chat.toolbar 钩子）：HTML 由服务端产出，

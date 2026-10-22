@@ -28,7 +28,7 @@
  *   · 按钮 HTML 由 chat.toolbar 钩子服务端产出，核心 Plugin::collect 拼进 #owToolFirst。
  *     默认 style="display:none"：只有 chat.js 探测到 SpeechRecognition 才显形，
  *     Firefox 等不支持的环境按钮始终不出现（不报错、不破坏界面）。
- *   · 样式必须自己发 <link>（PLUGIN.md「插件 CSS 两件套」）：
+ *   · 样式：由核心 pageHead 统一引整包（v1.5.31 起不再自己发切片）。原来这里写的是「必须自己发 <link>」：
  *     Plugin::asset('css', …) 只是登记（合并包成员 + ?action=assets 白名单），
  *     核心没有「合并 CSS 再引入」的地方，只登记会拿到 0 字节。
  *   · 写入输入框复用核心 `OwChat.autoGrow()`，并在插入后派发一次 input 事件，
@@ -39,14 +39,13 @@
  */
 if (!defined('OWLSGO_VERSION')) exit;   // 禁止直接 HTTP 访问本文件
 
+// ⚠️ v1.5.31 起下面这段已作废：核心 pageHead 统一引整包 CSS，插件不再自己发切片（保留作历史）
 /**
  * 样式：自己发一份 <link>，不搭别人的顺风车。
  * 只登记不发 link 的话，?action=assets&type=css 虽然能取到字节，但没有任何页面会引用它。
  */
-Plugin::on('page.head', function (): void {
-    echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=voice-input&file=style.css&v='
-        . OWLSGO_ASSET_VERSION . '">';
-});
+// v1.5.31：CSS 不再由插件自己发切片 —— 核心 pageHead 统一引整包
+// （整包本就包含本插件的样式；此前每个插件各发一条，首屏变成 16 个串行 CSS 请求）
 
 /**
  * 语音输入按钮：HTML 由服务端产出，点击行为绑在 chat.js。

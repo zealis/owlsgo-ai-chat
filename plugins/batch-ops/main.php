@@ -267,13 +267,12 @@ Plugin::cron('record_purge', 86400, function () {
 Plugin::asset('js', 'batch-ops/chat.js');
 Plugin::asset('css', 'batch-ops/style.css');
 
+// ⚠️ v1.5.31 起下面这段已作废：核心 pageHead 统一引整包 CSS，插件不再自己发切片（保留作历史）
 /**
  * 核心不会自动在页面里引入插件合并 CSS（只自动引合并 JS），
  * 需在 page.head 自行输出 —— 与 link-card / captcha-verify 等现行插件同一做法。
  * 本插件的样式只服务聊天页交互，但注入条件保持无条件：多几 KB 静态文件，
  * 换取「任何页面动态弹出的选择器都不会裸奔」。
  */
-Plugin::on('page.head', function (): void {
-    echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=batch-ops&file=style.css&v='
-        . OWLSGO_ASSET_VERSION . '">' . "\n";
-});
+// v1.5.31：CSS 不再由插件自己发切片 —— 核心 pageHead 统一引整包
+// （整包本就包含本插件的样式；此前每个插件各发一条，首屏变成 16 个串行 CSS 请求）

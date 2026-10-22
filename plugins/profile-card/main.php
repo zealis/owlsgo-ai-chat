@@ -126,6 +126,7 @@ Plugin::on('user.card', function (array &$u, array $actor): void {
 Plugin::asset('js', 'profile-card/chat.js');
 Plugin::asset('css', 'profile-card/style.css');
 
+// ⚠️ v1.5.31 起下面这段已作废：核心 pageHead 统一引整包 CSS，插件不再自己发切片（保留作历史）
 /**
  * 资料卡横幅样式必须无条件注入（onCardRendered 渲染即用，不依赖面板被打开过），
  * 做法与时光机 / 群聊自动化同一口径：page.head 自己发 <link>。
@@ -133,10 +134,8 @@ Plugin::asset('css', 'profile-card/style.css');
  *    不发 <link> 的话 ?action=assets 只会返回 0 字节。
  * ⚠️ 版本参数带插件自己的版本（pv）：核心版本不变时只改插件 CSS 也能刷新缓存。
  */
-Plugin::on('page.head', function (): void {
-    echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=profile-card&file=style.css&v='
-        . OWLSGO_ASSET_VERSION . '&pv=' . rawurlencode(owpcVersion()) . '">' . "\n";
-});
+// v1.5.31：CSS 不再由插件自己发切片 —— 核心 pageHead 统一引整包
+// （整包本就包含本插件的样式；此前每个插件各发一条，首屏变成 16 个串行 CSS 请求）
 
 /** 插件自身版本（取自 plugin.json；读不到回落 0，只影响缓存键） */
 function owpcVersion(): string

@@ -296,6 +296,19 @@ Plugin::asset('js', 'user-manager/admin.js');   // 相对插件目录；css 同�
 - 脚本可复用主程序暴露的全局：`OwApi`（AJAX + 自动签名）、`OwBusy`（按钮防重入）、`OwLazy`（图片懒加载）、`esc`、`toast`、`fmtUid`、`opts`、`ROLE_CN`、`OwAdmin`、`OwChat`。不要重复实现这些能力。
 - 前端可从 `OwChat.cfg.site_url` 取当前站点根地址（后端 `ow_site_url()`，未配置时为自动识别值）。
 
+### CSS 由内核统一引入（v1.5.31 起，旧写法已作废）
+
+`Plugin::asset('css', 'xxx/style.css')` 登记之后**什么都不用做**：核心在 `pageHead()` 里统一引一次
+整包 `?action=assets&type=css&v=<ASSET_VERSION>&t=<内容指纹>`，整包含**全部启用插件**的样式。
+
+- ❌ **不要**再在 `page.head` 里 echo `<link ... ?action=assets&type=css&plugin=...>`。
+  整包已经包含它，切片等于把同一批 CSS 再下一遍 —— 历史上 19 个插件这么写，首屏因此有
+  16 个独立 CSS 请求（HTTP/1.1 同域 6 并发 → 分三批串行等 RTT），而内容与整包完全重复。
+- 旧插件保留切片仍然能用（只是多一次请求）；新写或修改插件请删掉那一段。
+- 唯一例外：**必须在 `<head>` 同步执行的 JS**（如主题引擎 `color-schemes/boot.js`）继续用
+  单文件切片 `?action=assets&type=js&plugin=<id>&file=boot.js` —— 整包 JS 在 `<body>` 末尾，
+  放到那里会先闪一帧默认色。
+
 ### 加载异常隔离（v1.5.27 起）
 
 所有插件 JS 合并进同一个 `<script>`，**任一文件在加载阶段抛未捕获错误会终止整块后续代码**
@@ -321,14 +334,21 @@ v1.5.27 起内核给每个插件 JS 统一套一层包装，互相隔离：
 ### 静态资源版本（v1.5.23 起）
 
 - 核心固定路径：`index.css?v=<ASSET_VERSION>`、`index.js?v=<ASSET_VERSION>`、
-  `assets/js/i18n.js?v=<ASSET_VERSION>`；合并包为 `?action=assets&type=js&v=<ASSET_VERSION>`。
-- 插件自己输出的 `<link>` / `<script>` 也用 `OWLSGO_ASSET_VERSION`（PHP 常量），
-  不要再拿 `OWLSGO_VERSION` 当静态资源版本 —— 两者解耦。
-- **每次修改 `index.css`、`index.js`、`assets/js/i18n.js` 或任意插件静态资源后，
-  递增根目录 `ASSET_VERSION`**（`v2.0` → `v2.1` → …）；浏览器/代理只认 URL，
-  版本不变就会继续吃旧文件。
+  `assets/js/i18n.js?v=<ASSET_VERSION>`；合并包为
+  `?action=assets&type=js&v=<ASSET_VERSION>&t=<内容指纹>`。
+- **整包带 `t=`（v1.5.31 起）**：`t` 是 `Plugin::assetsStamp()` 算出的内容指纹
+  （所有参与文件的 mtime+字节数摘要）。带 `t=` 的 URL 随内容变化，所以能按
+  「一年 immutable」下发 —— 改任何插件样式/脚本 → `t` 变 → URL 变 → 浏览器立刻取新的，
+  既不用等 5 分钟，也不会吃到旧的一年版缓存。单文件切片的 `t` 是它自己的文件 mtime。
+- 插件**不再需要自己输出** `<link>` / `<script>` 引用（CSS 见上一节；JS 由核心引整包）。
+  若确有必要自己拼地址（同步执行的单文件切片），用 `OWLSGO_ASSET_VERSION`（PHP 常量），
+  不要拿 `OWLSGO_VERSION` 当静态资源版本 —— 两者解耦。
+- **改 `index.css` / `index.js` / `assets/js/i18n.js` 后必须递增根目录 `ASSET_VERSION`**
+  （`v2.0` → `v2.1` → …）：这三个是核心文件，URL 里的版本参数是它们唯一的缓存键。
+- **改插件静态资源（CSS/JS）不必动 `ASSET_VERSION`**：整包 URL 带 `t=` 内容指纹，
+  改文件即换 URL（v1.5.31 起）。以前需要「bump 版本或等 5 分钟」，现在不必。
 - 程序版本 `VERSION` 与静态资源版本 `ASSET_VERSION` 各管各的：只改 PHP 不必动资源版本，
-  只改 CSS/JS 也只需动资源版本。
+  只改核心 CSS/JS 才需要动资源版本。
 
 ### 站点地址（ow_site_url / ow_abs_url）
 

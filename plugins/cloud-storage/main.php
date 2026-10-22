@@ -1217,9 +1217,8 @@ Plugin::asset('css', 'cloud-storage/admin.css');
 Plugin::asset('js', 'cloud-storage/admin.js');
 
 /** 后台 CSS 不会自动引入，经 page.head 发 <link> */
-Plugin::on('page.head', function () {
-    echo '<link rel="stylesheet" href="?action=assets&type=css&v=' . OWLSGO_ASSET_VERSION . '">';
-});
+// v1.5.31：CSS 不再由插件自己发切片 —— 核心 pageHead 统一引整包
+// （整包本就包含本插件的样式；此前每个插件各发一条，首屏变成 16 个串行 CSS 请求）
 
 Plugin::adminPage('cloud-storage', '云存储', function () {
     $html = '<h2>云存储</h2>'

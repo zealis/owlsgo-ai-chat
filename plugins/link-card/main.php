@@ -650,8 +650,7 @@ function owLCGetPreview(string $url): array
  * 站点分享卡片 meta 只在非后台页输出（管理后台是内部工具，不参与链接分享）。
  */
 Plugin::on('page.head', function (): void {
-    echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=link-card&file=style.css&v='
-        . OWLSGO_ASSET_VERSION . '">' . "\n";
+    // v1.5.31：样式改由核心 pageHead 统一引整包（后台管理界面与聊天页卡片都覆盖）
     if (($_GET['page'] ?? '') === 'admin') return;
     owLCBoot();
     owLCMeta();

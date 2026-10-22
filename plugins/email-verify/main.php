@@ -856,9 +856,8 @@ Plugin::cron('email_verify_purge_log', 86400, function () {
 }, '清理 30 天前的邮件发送记录（每天一次）');
 
 /** 后台样式：核心不引合并 CSS 包，插件自己注入 <link>（只取本插件这一个文件）。 */
-Plugin::on('page.head', function (): void {
-    echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=email-verify&file=style.css&v=' . OWLSGO_ASSET_VERSION . '">';
-});
+// v1.5.31：CSS 不再由插件自己发切片 —— 核心 pageHead 统一引整包
+// （整包本就包含本插件的样式；此前每个插件各发一条，首屏变成 16 个串行 CSS 请求）
 
 Plugin::asset('js', 'email-verify/admin.js');
 Plugin::asset('js', 'email-verify/chat.js');

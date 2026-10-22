@@ -826,6 +826,34 @@ class Plugin
     // ---------- 资源合并（清单驱动，无需加载 main.php） ----------
 
     /**
+     * 合并包的「内容指纹」（v1.5.31）。
+     *
+     * 用途：给整包 URL 加 `&t=` —— 与单文件切片同一个道理，只是把粒度从「一个文件」
+     * 提到「整包」：
+     *   · 带了 t= 才会被判定为「URL 随内容变」→ 一年 immutable（见 index.php 的三档策略）；
+     *   · 插件改了 CSS/JS 但没 bump ASSET_VERSION 时，t 自然变化 → 浏览器立刻取新的，
+     *     既不用等 5 分钟，也不会吃到旧的一年版缓存。
+     *
+     * 只做 stat（不读文件、不合并）。清单 v1.5.24 起缓存了全部启用插件的资源，
+     * 所以这里不需要加载任何插件代码。
+     */
+    public static function assetsStamp(string $type): string
+    {
+        if (!in_array($type, ['css', 'js'], true)) return '';
+        $sig = [];
+        foreach (self::$order as $name) {
+            foreach (self::$manifest[$name]['assets'][$type] ?? [] as $p) {
+                $sig[$p] = self::stamp(self::$dir . '/' . ltrim($p, '/'));
+            }
+        }
+        // 同一请求里先 asset() 再 pageHead 的极端情况：运行时注册还没进清单，一并算上
+        foreach (self::$assets[$type] ?? [] as $p) {
+            $sig[$p] = self::stamp(self::$dir . '/' . ltrim($p, '/'));
+        }
+        return substr(md5(json_encode($sig) . '|' . self::ASSET_FMT), 0, 12);
+    }
+
+    /**
      * @param string $only 非空时只取**该插件**注册的资源。
      * @param string $file 非空时再按文件名（如 boot.js）挑出其中一个。
      *                     两个参数是为了切出「同一插件、不同时机」的脚本：引擎必须在 <head>

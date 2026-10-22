@@ -495,9 +495,8 @@ Plugin::route('plugin_captcha_verify_test', function (array $ctx) {
  * 核心不合并插件样式表，于是 style.css 里的规则（容器最小高度、Cap 组件宽度）
  * **一条都没生效**，表现成"改了 CSS 页面毫无变化"。与 email-verify 同一做法。
  */
-Plugin::on('page.head', function (): void {
-    echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=captcha-verify&file=style.css&v=' . OWLSGO_ASSET_VERSION . '">';
-});
+// v1.5.31：CSS 不再由插件自己发切片 —— 核心 pageHead 统一引整包
+// （整包本就包含本插件的样式；此前每个插件各发一条，首屏变成 16 个串行 CSS 请求）
 
 Plugin::asset('js', 'captcha-verify/admin.js');
 Plugin::asset('js', 'captcha-verify/widget.js');

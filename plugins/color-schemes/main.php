@@ -20,11 +20,12 @@ Plugin::asset('js', 'color-schemes/schemes.js');
 Plugin::asset('css', 'color-schemes/style.css');
 
 /**
- * 引擎与样式必须在首帧绘制前就位，否则每次刷新都会先按经典蓝画一帧再跳色。
- * page.head 排在样式表之后，但注入的是**阻塞**资源，仍在首次渲染前完成；
- * 这里用 plugin= + file= 只取本插件那两个文件，不重复拉别人的合并结果。
+ * 引擎必须在首帧绘制前就位，否则每次刷新都会先按经典蓝画一帧再跳色。
+ * page.head 排在样式表之后，但注入的是**阻塞**脚本，仍在首次渲染前完成。
+ *
+ * v1.5.31：CSS 不再在这里发切片 —— 核心 pageHead 已统一引整包（含本插件样式），
+ * 这里只留 boot.js 这一份「必须同步、必须在 head」的引擎。
  */
 Plugin::on('page.head', function () {
-    echo '<script src="?action=assets&type=js&plugin=color-schemes&file=boot.js&v=' . OWLSGO_ASSET_VERSION . '"></script>'
-       . '<link rel="stylesheet" href="?action=assets&type=css&plugin=color-schemes&file=style.css&v=' . OWLSGO_ASSET_VERSION . '">';
+    echo '<script src="?action=assets&type=js&plugin=color-schemes&file=boot.js&v=' . OWLSGO_ASSET_VERSION . '"></script>';
 });

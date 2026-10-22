@@ -658,8 +658,7 @@ Plugin::sensitive('plugin_e2ee_dm_dev_batch');
  * 服务端只负责把图标 SVG 交给前端，避免前端再抄一份图标路径。
  */
 Plugin::on('page.head', function () {
-    $v = rawurlencode(OWLSGO_ASSET_VERSION);
-    echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=e2ee-dm&file=style.css&v=' . $v . '">' . "\n";
+    // v1.5.31：CSS 改由核心 pageHead 统一引整包，这里只留图标（前端不要抄一份 SVG 路径）
     echo '<script>window.OWED_ICON=' . json_encode(ow_icon('shield', 13), JSON_UNESCAPED_UNICODE) . ';</script>' . "\n";
 });
 

@@ -13,7 +13,7 @@
  *     index.php 在非敏感 action 上会 session_write_close() 释放会话锁，
  *     所以每个要读写会话的路由都得先 owPkSession() 重新打开。
  *   - 签名：登录页的 OwApi.key 由 OwAuth.init 用匿名密钥下发，插件用 OwApi.post 即可过签名门禁。
- *   - CSS：主程序只自动引入合并 JS，样式必须自己挂 page.head 输出 <link>。
+ *   - CSS：由核心 pageHead 统一引整包（v1.5.31 起插件不再自己发切片）。
  *
  * 零依赖：CBOR 解码、COSE → PEM、签名校验全部手写（openssl 为 PHP 内置扩展）。
  * 只支持 ES256 / ES384 / ES512 与 RS256 / RS384 / RS512 —— 覆盖 Windows Hello、
@@ -990,12 +990,11 @@ Plugin::adminPage('passkey', '通行密钥', function (): string {
    七、资源
    ========================================================================== */
 
+// ⚠️ v1.5.31 起下面这段已作废：核心 pageHead 统一引整包 CSS，插件不再自己发切片（保留作历史）
 // 主程序只自动引入合并 JS（聊天页 / 登录页 / 后台都会带），样式必须自己挂 page.head。
 // ⚠️ 用 plugin= / file= 单文件形式：登录页也会加载，几 KB 的静态文件不影响。
-Plugin::on('page.head', function (): void {
-    echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=passkey&file=style.css&v='
-        . OWLSGO_ASSET_VERSION . '">' . "\n";
-});
+// v1.5.31：CSS 不再由插件自己发切片 —— 核心 pageHead 统一引整包
+// （整包本就包含本插件的样式；此前每个插件各发一条，首屏变成 16 个串行 CSS 请求）
 
 Plugin::asset('js', 'passkey/chat.js');
 Plugin::asset('css', 'passkey/style.css');

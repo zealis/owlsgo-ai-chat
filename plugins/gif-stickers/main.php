@@ -484,6 +484,7 @@ Plugin::on('sticker.allow', function (string &$allow, string $url, array $actor)
     if (owGSImageAllowed(trim($url))) $allow = '1';
 });
 
+// ⚠️ v1.5.31 起下面这段已作废：核心 pageHead 统一引整包 CSS，插件不再自己发切片（保留作历史）
 /* ---------- 前端资源 ---------- */
 /**
  * 样式表必须自己发 <link>。核心只在页面里引 index.css 与合并 **JS**，
@@ -496,9 +497,8 @@ Plugin::on('sticker.allow', function (string &$allow, string $url, array $actor)
  * （面板塌成普通块、搜索框撑满整行、广告 iframe 失去约束）。
  * 现在只发自己那一份，不依赖任何别的插件是否启用。
  */
-Plugin::on('page.head', function (): void {
-    echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=gif-stickers&file=style.css&v=' . OWLSGO_ASSET_VERSION . '">';
-});
+// v1.5.31：CSS 不再由插件自己发切片 —— 核心 pageHead 统一引整包
+// （整包本就包含本插件的样式；此前每个插件各发一条，首屏变成 16 个串行 CSS 请求）
 
 /**
  * 表情包按钮（v1.0.3 起走 chat.toolbar 钩子）：HTML 由服务端产出，

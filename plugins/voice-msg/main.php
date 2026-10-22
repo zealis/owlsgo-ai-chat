@@ -188,14 +188,14 @@ Plugin::on('chat.toolbar', function (): string {
          . $svg . '</button>';
 });
 
+// ⚠️ v1.5.31 起下面这段已作废：核心 pageHead 统一引整包 CSS，插件不再自己发切片（保留作历史）
 /**
  * 样式表必须自己发 <link>：核心只引合并 JS，?action=assets&type=css
  * 没有任何页面引用它（与 red-packet / attachment-manager 同款注释）。
  * 只取本插件那一份，避免依赖别的插件是否恰好整包输出。
  */
-Plugin::on('page.head', function (): void {
-    echo '<link rel="stylesheet" href="?action=assets&type=css&plugin=voice-msg&file=style.css&v=' . OWLSGO_ASSET_VERSION . '">';
-});
+// v1.5.31：CSS 不再由插件自己发切片 —— 核心 pageHead 统一引整包
+// （整包本就包含本插件的样式；此前每个插件各发一条，首屏变成 16 个串行 CSS 请求）
 
 Plugin::asset('css', 'voice-msg/style.css');   // 录音面板 + 语音气泡
 Plugin::asset('js', 'voice-msg/chat.js');      // 前台：录音 + 扫消息 + 播放（后台页自动退出）
