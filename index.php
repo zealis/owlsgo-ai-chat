@@ -1356,7 +1356,8 @@ if ($frontPg) {
  */
 function renderPluginPage(string $slug, array $pg, array $actor, ?array $user): void
 {
-    pageHead((string)$pg['title']);
+    // v1.5.35：插件前台页也会显示头像（等级页等），一并预热第三方头像域名
+    pageHead((string)$pg['title'], ow_preconnect_origin((string)($actor['avatar'] ?? '')));
     $site = Sec::e(DB::setting('site_name', 'Owlsgo-Chat'));
     echo '<body class="ow-page-body">'
        . '<div class="ow-page-top">'
@@ -1610,7 +1611,30 @@ function assetsJsTag(string $scope): string
          . '&scope=' . rawurlencode($scope) . '"></script>';
 }
 
-function pageHead(string $title): void
+/**
+ * 第三方资源域名预热（v1.5.35，借鉴 BEAR Simple 的 head 资源编排）。
+ *
+ * 为什么要：头像可能来自第三方域名（生成式头像走 dicebear，启用云存储后是自家桶域名），
+ * 而聊天页首屏一口气要建十几条头像 <img> —— 每个新域名都要先 DNS 再 TLS，白等 100~300ms。
+ * `<link rel="preconnect">` 让浏览器提前把连接建好；同源不预热（本来就复用现有连接）。
+ *
+ * 与参考实现的差别：bearsimple 把它做成后台可配的域名列表（要人填），这里只预热
+ * **当前真正用到的那一个** —— 少一个配置项，用户改了头像源也不会预热到旧域名。
+ */
+function ow_preconnect_origin(string $url): string
+{
+    $p = @parse_url($url);
+    if (!$p || empty($p['host'])) return '';
+    $scheme = strtolower((string)($p['scheme'] ?? ''));
+    if ($scheme !== 'http' && $scheme !== 'https') return '';
+    $host = strtolower((string)$p['host']);
+    $self = strtolower((string)($_SERVER['HTTP_HOST'] ?? ''));
+    $selfHost = $self !== '' ? (string)preg_replace('/:\d+$/', '', $self) : '';
+    if ($selfHost !== '' && $host === $selfHost) return '';
+    return $scheme . '://' . $host . (isset($p['port']) ? ':' . (int)$p['port'] : '');
+}
+
+function pageHead(string $title, string $preconnect = ''): void
 {
     // 动态页禁止缓存：页面内含会话密钥，缓存旧页会导致提交时签名对不上
     header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
@@ -1624,6 +1648,9 @@ function pageHead(string $title): void
        . '<meta name="robots" content="noindex, nofollow, noarchive, nosnippet">'
        . '<title>' . Sec::e($title) . ' - ' . $site . '</title>'
        . '<link rel="icon" href="assets/img/logo.svg" type="image/svg+xml">'
+       // v1.5.35：第三方头像域名预热。放在样式表之前 —— 越早开始握手越好；
+       // 它不影响渲染（preconnect 不阻塞），失效时也只是多一条无用连接。
+       . ($preconnect !== '' ? '<link rel="preconnect" href="' . Sec::e($preconnect) . '">' : '')
        . owThemeBootstrap()   // v1.3.25：先定主题再加载样式，避免首屏闪一下浅色
        . '<link rel="stylesheet" href="index.css?v=' . OWLSGO_ASSET_VERSION . '">';
     /* v1.5.31：**整包插件样式在这里统一引一次**。
@@ -1836,7 +1863,8 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
             || DB::setting('room_private_create_allow', '1') === '1'
         ) ? '1' : '0',
     ];
-    pageHead('群聊');
+    // v1.5.35：首屏要建十几条头像 <img>，先把这个域名连上（第三方时才有输出）
+    pageHead('群聊', ow_preconnect_origin((string)($actor['avatar'] ?? '')));
     echo '<body class="ow-chat-body" data-lang="' . ow_lang() . '">';
     echo '<div class="ow-layout">';
 
@@ -2120,7 +2148,7 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
 
 function renderAdmin(array $actor): void
 {
-    pageHead('管理后台');
+    pageHead('管理后台', ow_preconnect_origin((string)($actor['avatar'] ?? '')));
     // 插件子菜单：仅显示在 main.php 里调用过 Plugin::adminPage() 声明后台页面的插件
     // （未安装写库、未启用或未声明页面的插件都不会出现在这里）。一个声明 = 一个子页面。
     // v1.5.24：标题表只读清单（不加载插件代码），真正打开某一页时才按需加载

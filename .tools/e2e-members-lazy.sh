@@ -204,7 +204,22 @@ MS=$(( (T1 - T0) / 1000000 ))
 ck "timeout=0 立即返回（< 4000ms，实得 ${MS}ms）" "$( [ "$MS" -lt 4000 ] && echo 1 || echo 0 )" "1"
 ck "未阻塞（若按默认 20 秒长轮询，此断言必挂）" "$( [ "$MS" -lt 5000 ] && echo 1 || echo 0 )" "1"
 
-# ---------- 13) 服务端日志无致命错误 ----------
+# ---------- 14) 头像域名预热 preconnect（v1.5.35） ----------
+echo
+echo "=== 12) 头像域名预热（借鉴 BEAR Simple 的 head 资源编排） ==="
+# 空 avatar → 服务端生成式（dicebear）→ 首屏十几条头像 <img> 要连这个域名
+H=$(curl -s --noproxy '*' -H "X-Forwarded-Proto: https" -b "$T/owner.jar" "$B/")
+has "第三方头像域名被预热" 'rel="preconnect" href="https://api.dicebear.com"' "$H"
+# 上传图 → 同源（本副本就是 127.0.0.1:$PORT）→ 不该预热，预热同域是纯浪费
+"$PHP" -r '$db=new PDO("sqlite:".$argv[1]); $db->exec("UPDATE users SET avatar=\"uploads/pc-test.png\" WHERE id=1");' "$T/data/owlsgo.db"
+H=$(curl -s --noproxy '*' -H "X-Forwarded-Proto: https" -b "$T/owner.jar" "$B/")
+nhas "同源头像不预热（预热同域是浪费）" 'rel="preconnect"' "$H"
+# 恢复空头像，别把种子数据留在改过的状态
+"$PHP" -r '$db=new PDO("sqlite:".$argv[1]); $db->exec("UPDATE users SET avatar=\"\" WHERE id=1");' "$T/data/owlsgo.db"
+H=$(curl -s --noproxy '*' -H "X-Forwarded-Proto: https" -b "$T/owner.jar" "$B/")
+has "恢复后仍预热（没有缓存住上一轮结论）" 'rel="preconnect" href="https://api.dicebear.com"' "$H"
+
+# ---------- 15) 服务端日志无致命错误 ----------
 echo
 echo "=== 10) 服务端日志 ==="
 case "$(cat "$T/srv.log" 2>/dev/null)" in
