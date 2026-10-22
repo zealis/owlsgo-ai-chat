@@ -4111,10 +4111,28 @@
                             return;
                         }
                         self.failCount++;
-                        // 降级：短轮询 + 指数退避（2s → 10s 封顶）
-                        var wait = Math.min(10000, 2000 * self.failCount);
-                        $('owLatency').innerHTML = '重连中…';
-                        $('owLatency').style.color = 'var(--ow-red)';
+                        /* 降级：短轮询 + 指数退避（2s → 30s 封顶）。
+                           v1.5.34：失败要能看懂。此前无论失败多少次都只写「重连中…」，
+                           而 WAF / CDN 把接口拦掉（返回 503 的 HTML 拦截页，不是我们的 JSON）
+                           时这个循环会**永远**重连下去 —— 用户看到的就是「打开一直转圈/无限加载」，
+                           既不知道原因也没有出口。现在：
+                             · 连续 2 次起说「连接中断」，3 次起把 HTTP 状态挂到 title；
+                             · 4 次起给一个可直接点的「刷新」；
+                             · 退避上限 10s → 30s：持续撞墙只会让封禁更难解除。 */
+                        var wait = Math.min(30000, 2000 * self.failCount);
+                        var elLat = $('owLatency');
+                        if (elLat) {
+                            if (self.failCount >= 4) {
+                                elLat.innerHTML = '连接中断，<a href="#" onclick="location.reload();return false"'
+                                    + ' style="color:inherit;text-decoration:underline">刷新</a>';
+                                elLat.title = '已连续 ' + self.failCount + ' 次请求失败'
+                                    + (status ? '（HTTP ' + status + '）' : '')
+                                    + '，可能是网络中断或被安全策略拦截';
+                            } else {
+                                elLat.innerHTML = '重连中…';
+                            }
+                            elLat.style.color = 'var(--ow-red)';
+                        }
                         setTimeout(loop, wait);
                         return;
                     }
