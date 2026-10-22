@@ -296,6 +296,28 @@ Plugin::asset('js', 'user-manager/admin.js');   // 相对插件目录；css 同�
 - 脚本可复用主程序暴露的全局：`OwApi`（AJAX + 自动签名）、`OwBusy`（按钮防重入）、`OwLazy`（图片懒加载）、`esc`、`toast`、`fmtUid`、`opts`、`ROLE_CN`、`OwAdmin`、`OwChat`。不要重复实现这些能力。
 - 前端可从 `OwChat.cfg.site_url` 取当前站点根地址（后端 `ow_site_url()`，未配置时为自动识别值）。
 
+### 加载异常隔离（v1.5.27 起）
+
+所有插件 JS 合并进同一个 `<script>`，**任一文件在加载阶段抛未捕获错误会终止整块后续代码**
+（症状：排在后面的插件整段不执行、按钮 `onclick` 全落空，但接口手动调完全正常）。
+v1.5.27 起内核给每个插件 JS 统一套一层包装，互相隔离：
+
+```js
+;(function () { try { /* 你的文件原样放这里 */ } catch (e) { console.error('[plugin js] 文件', e); } })();
+```
+
+对插件的要求与边界：
+
+- **公开接口一律挂 `window.X`**（如 `window.OwUM = {...}`）。不要依赖「顶层 `var` 就是全局」——
+  包装后顶层声明只是函数内的局部变量，跨文件、`onclick` 属性都取不到。现有插件已全部符合。
+- 包装只兜住**加载阶段的同步异常**：文件里的**语法错误**在解析期就会炸掉整个 `<script>`，
+  `try/catch` 兜不住（`node --check` 自检不能省）；事件回调 / 定时器 / Promise 里抛的错
+  发生在包装函数返回之后，也不在此列。
+- 出问题时控制台会留一条 `[plugin js] <插件/文件>` 的 error —— 排查「谁把后面带崩了」直接搜它。
+- 同一插件切出的单文件子集（`?action=assets&plugin=<id>&file=boot.js`）同样会被包装。
+- 包装不改变任何可见行为：插件 JS 一直是非严格模式、自带 IIFE、接口挂 `window.*`，外层再加
+  一层函数作用域只是多一层隔离，不改变 `this`、全局对象与执行顺序。
+
 ### 静态资源版本（v1.5.23 起）
 
 - 核心固定路径：`index.css?v=<ASSET_VERSION>`、`index.js?v=<ASSET_VERSION>`、

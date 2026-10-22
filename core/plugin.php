@@ -28,6 +28,14 @@
  */
 class Plugin
 {
+    /**
+     * 资源合并输出格式版本（v1.5.27）。
+     *
+     * 参与合并缓存 key 的计算：改了「怎么拼」而插件源文件没变时，必须让旧缓存自然失效。
+     * v2 = 每个插件的 JS 都用 IIFE + try/catch 包裹（见 wrapJs）；改包装逻辑就 +1。
+     */
+    private const ASSET_FMT = 'js-iife-1';
+
     private static array $hooks = [];
     /* v1.3.160：与 $hooks **平行**的「回调归属」表 —— 记下每个处理器是哪个插件注册的，
        回调执行期间 Plugin::current() 返回它。用途：给插件注册出来的行补默认值
@@ -851,7 +859,9 @@ class Plugin
             $f = self::$dir . '/' . ltrim($p, '/');
             $sig[$p] = self::stamp($f);
         }
-        $key = md5(json_encode([$type, $only, $file, $sig]));
+        // v1.5.27：把「输出格式版本」并进 key —— 改了包装逻辑（如本次 IIFE 包裹）而源文件
+        // 没变时，旧缓存必须自然失效，否则升级后仍会吐旧格式，只有手删 data/cache 才生效。
+        $key = md5(json_encode([$type, $only, $file, $sig, self::ASSET_FMT]));
         $cfile = self::$cacheDir !== '' ? self::$cacheDir . '/assets-' . $key . '.json' : '';
         if ($cfile !== '' && is_file($cfile)) {
             $c = json_decode((string)file_get_contents($cfile), true);
@@ -860,7 +870,9 @@ class Plugin
         $out = '';
         foreach ($files as $p) {
             $f = self::$dir . '/' . ltrim($p, '/');
-            if (is_file($f)) $out .= file_get_contents($f) . "\n";
+            if (!is_file($f)) continue;
+            $src = (string)file_get_contents($f);
+            $out .= $type === 'js' ? self::wrapJs($src, $p) : $src . "\n";
         }
         if ($cfile !== '') {
             if (!is_dir(self::$cacheDir)) @mkdir(self::$cacheDir, 0775, true);
@@ -875,6 +887,35 @@ class Plugin
             }
         }
         return $out;
+    }
+
+    /**
+     * 单个插件脚本的异常隔离包装（v1.5.27）。
+     *
+     * 为什么要有：所有插件 JS 合并进**同一个 <script>**，任一文件在加载阶段抛未捕获错误，
+     * 浏览器会终止整块后续代码 —— 排在后面的插件整段不执行（症状：某块永久「加载中…」、
+     * 按钮 onclick 全落空，但接口手动调完全正常；cloud-storage 就因 `})(w, d)` 写错崩过一次）。
+     *
+     * 包装形态：`;(function () { try { <原文件> } catch (e) { console.error('[plugin js] 文件', e); } })();`
+     *   · 前置分号：上一份文件若没以分号结尾，紧跟 `(` 会被解析成函数调用（ASI 陷阱）；
+     *   · 原文件后先补换行再闭合：文件最后一行常是 `//` 注释，直接接 `}` 会把闭合注释掉；
+     *   · 不加 'use strict'：插件一直按非严格模式运行（顶层 this = window），加严格模式会
+     *     改变既有语义；
+     *   · IIFE 不改变任何可见行为：插件 JS 全部自带 IIFE、公开接口一律挂 window.X（已全量审计）。
+     *
+     * 边界（PLUGIN.md 有同样的说明）：只能兜住**加载阶段的同步异常**。
+     *   · 文件里的**语法错误**在解析期就炸掉整个 <script>，try/catch 兜不住 —— 语法自检不能省；
+     *   · 事件回调、定时器、Promise 里抛的错发生在包装函数返回之后，不在此列。
+     */
+    private static function wrapJs(string $src, string $name): string
+    {
+        $label = addcslashes($name, "'\\");
+        return "\n/* ---- plugin: {$name} ---- */\n"
+            . ";(function () {\ntry {\n"
+            . $src . "\n"
+            . "} catch (e) {\n"
+            . "  try { if (window.console && console.error) console.error('[plugin js] {$label}', e); } catch (_) {}\n"
+            . "}\n})();\n";
     }
 
     /**
