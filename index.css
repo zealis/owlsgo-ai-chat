@@ -3085,3 +3085,42 @@ span.ow-panel-entry-ico.ow-avatar { width: 24px; height: 24px; line-height: 24px
 .ow-msg-failed .ow-msg-content, .ow-msg-failed .ow-msg-plain { opacity: .55; }
 .ow-msg-retry { font-size: 10px; margin-top: 3px; color: var(--ow-red); }
 .ow-msg-retry a { color: var(--ow-red); text-decoration: underline; cursor: pointer; }
+
+/* ============================================================================
+   微动效（v1.5.33）—— 只给「状态变化」加，不给装饰加
+   ----------------------------------------------------------------------------
+   参考 animate.css 的取舍，但**不引库**（本项目零依赖）：
+     · 一律 ease-out、时长 140~180ms（animate.css 默认 1s，长会话里太慢）；
+     · 位移不超过 4~6px、缩放不低于 .985 —— 只表达「这个出现了」，不表演；
+     · 不做 bounce / shake / 无限循环（会抢注意力，聊到一半被晃一下最烦）；
+     · 只在**新元素出现**时播一次，不动布局、不改可点击区域。
+   末尾统一走 prefers-reduced-motion 关掉：系统里关掉动画的用户不该被动效打扰。
+   ========================================================================== */
+@keyframes owFadeUp {
+    from { opacity: 0; -webkit-transform: translateY(4px); transform: translateY(4px); }
+    to   { opacity: 1; -webkit-transform: translateY(0);   transform: translateY(0); }
+}
+@keyframes owPopIn {
+    from { opacity: 0; -webkit-transform: scale(.985); transform: scale(.985); }
+    to   { opacity: 1; -webkit-transform: scale(1);    transform: scale(1); }
+}
+@keyframes owFadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* 新消息气泡：追加 / 回显时轻微上浮淡入。
+   ⚠️ 历史批量渲染**不带**这个类（见 addMessage 的 batch 参数）——
+   否则首屏 30 条会一起动，那不叫动效，叫抽搐。 */
+.ow-msg.is-in { animation: owFadeUp .16s ease-out; }
+/* 弹窗：淡入 + 极小缩放。父容器从 display:none 变可见时动画会自动从头播放，
+   不必手动 reflow；confirm() 新建的弹窗是首次插入 DOM，同样自动播一次。 */
+.ow-modal.is-in { animation: owPopIn .18s ease-out; }
+/* Toast：**只淡入**。.ow-toast 用 translateX(-50%) 居中，动 transform 会把它挪歪。 */
+.ow-toast.is-in { animation: owFadeIn .14s ease-out; }
+
+/* 系统级降级：动画全关。既有的一次性高亮（搜索命中 / 快捷跳转 / 追加批次）也一并降级 ——
+   闪一下对光敏感用户同样不友好。 */
+@media (prefers-reduced-motion: reduce) {
+    .ow-msg.is-in, .ow-modal.is-in, .ow-toast.is-in,
+    .ow-msg-hit, .ow-set-hit, .ow-sr-batch-in > .ow-sr-item {
+        animation: none !important;
+    }
+}

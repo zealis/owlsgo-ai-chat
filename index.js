@@ -428,7 +428,17 @@
         var t = $('owToast'); if (!t) return;
         // v1.3.44：提示文案过 i18n 词典（精确命中才替换）——API 返回的中文 msg
         // 也能被语言包覆盖，不用改任何接口的服务端文案。
-        t.innerHTML = esc(w.OwI18n ? OwI18n.t(msg) : msg); t.style.display = 'block';
+        // v1.5.33：只淡入，不动 transform —— .ow-toast 靠 translateX(-50%) 居中，
+        // 动它会把提示条挪到左边去。
+        // ⚠️ 重设同名 class **不会**重启动画：上一条还没消失（2.2 秒内再提示一次）时
+        //    display 一直是 block、className 值也没变，浏览器认为动画照旧 ——
+        //    文案换了却没有淡入。所以先摘掉 is-in、强制一次样式重算（读 offsetWidth），
+        //    再挂回去；成本是每次 toast 一次 reflow，而 toast 只在用户操作后触发。
+        t.innerHTML = esc(w.OwI18n ? OwI18n.t(msg) : msg);
+        t.className = 'ow-toast';
+        void t.offsetWidth;
+        t.className = 'ow-toast is-in';
+        t.style.display = 'block';
         clearTimeout(t._tm);
         t._tm = setTimeout(function () { t.style.display = 'none'; }, ms || 2200);
     }
@@ -4512,7 +4522,10 @@
             this.msgCache[m.id] = m;
             var b = this.buildMessage(m);
             var div = document.createElement('div');
-            div.className = b.cls;
+            // v1.5.33：只有「新到达 / 回显」才播入场动画。batch=true 是历史批量渲染
+            // （首屏 30 条、向上翻页），那批一起动就成了抽搐，所以不带这个类。
+            // ⚠️ addMessageBefore（往上翻历史）与 refreshBotTags（原地替换）都不加。
+            div.className = b.cls + (batch ? '' : ' is-in');
             div.id = 'owMsg' + m.id;
             div.innerHTML = b.html;
 
@@ -7769,7 +7782,9 @@
             var m = $('owModal');
             // class 每次重设：上一个弹窗可能是固定尺寸（.ow-modal-fixed 带 height + overflow:hidden），
             // 不清掉就会把高度和裁剪带到下一个普通弹窗上。
-            m.className = 'ow-modal' + (cls ? ' ' + cls : '');
+            // v1.5.33：带 is-in 让弹窗淡入 + 微缩放。mask 从 display:none 变 flex 时，
+            // 子元素的动画会自动从头播放，不需要手动 reflow。
+            m.className = 'ow-modal' + (cls ? ' ' + cls : '') + ' is-in';
             m.style.maxWidth = width ? (parseInt(width, 10) + 'px') : '';
             m.innerHTML = '<button class="ow-modal-close" onclick="OwChat.closeModal()">✕</button>' + html;
             $('owModalMask').style.display = '-webkit-flex';
@@ -7783,7 +7798,7 @@
             mask.className = 'ow-modal-mask';
             mask.style.display = 'flex';
             mask.style.zIndex = 200;   // 叠在普通弹窗（z-index 100）之上
-            mask.innerHTML = '<div class="ow-modal" style="width:340px;max-width:92%">'
+            mask.innerHTML = '<div class="ow-modal is-in" style="width:340px;max-width:92%">'
                 + '<button class="ow-modal-close">✕</button>'
                 + '<h3>确认操作</h3>'
                 + '<p class="ow-modal-desc">' + esc(text).replace(/\n/g, '<br>') + '</p>'
@@ -8359,7 +8374,7 @@
             var mask = document.createElement('div');
             mask.className = 'ow-modal-mask';
             mask.style.display = 'flex';
-            mask.innerHTML = '<div class="ow-modal" style="width:340px;max-width:92%">'
+            mask.innerHTML = '<div class="ow-modal is-in" style="width:340px;max-width:92%">'
                 + '<button class="ow-modal-close">✕</button>'
                 + '<h3>确认操作</h3>'
                 + '<p class="ow-modal-desc">' + esc(text).replace(/\n/g, '<br>') + '</p>'
