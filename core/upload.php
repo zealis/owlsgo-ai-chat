@@ -297,7 +297,11 @@ class Upload
     {
         $u = trim($url);
         if ($u === '' || strlen($u) > 500) return null;
-        $base = rtrim(ow_site_url(true), '/');
+        // v1.5.36：去掉 manualOnly —— 自动识别的站点地址也要能剥掉前缀。
+        // 此前只认后台手配的「固定网站地址」，于是没配那一项的部署（含纯 IP/端口访问的
+        // 内网站点）里，绝对 URL 的图片消息全都解析不出本地路径：图片宽高记 0、
+        // 前端拿不到 width/height，CLS 依旧。相对路径的输入不受影响（本来就不以 base 开头）。
+        $base = rtrim(ow_site_url(), '/');
         if ($base !== '' && stripos($u, $base . '/') === 0) $u = substr($u, strlen($base) + 1);
         $u = str_replace('\\', '/', ltrim($u, '/'));
         // 再剥一层「上传目录的 URL 前缀」（配置里是 uploads；站点挂在子目录时 base 已经吃掉那段）：
@@ -329,6 +333,26 @@ class Upload
         if ($abs === false || $base === false || strpos($abs, $base) !== 0) return null;
         return is_file($abs) ? $abs : null;
     }
+    /**
+     * 图片消息 URL → 本地绝对路径（v1.5.36）。
+     *
+     * 与 fileAbs() 的分工：fileAbs 只认 `file/` 前缀（文件下载那条路），而消息里出现的
+     * 媒体形态是 `uploads/image|sticker|avatar|file/...` —— 直接调 fileAbs 会全部返回 null
+     * （v1.5.36 第一版就踩了这个坑：图片宽高全记成 0）。
+     *
+     * 读不到就返回 null：云端文件（cloud-storage 的 `file/cloud-<空间>/<key>`）、外链、
+     * 文件已被清理 —— 调用方据此记 0，不要抛错。
+     */
+    public static function mediaAbs(string $url): ?string
+    {
+        $rel = self::mediaRel($url);
+        if ($rel === null) return null;
+        $abs = realpath(self::$cfg['dir'] . '/' . $rel);
+        $base = realpath(self::$cfg['dir']);
+        if ($abs === false || $base === false || strpos($abs, $base) !== 0) return null;
+        return is_file($abs) ? $abs : null;
+    }
+
     public static function addSticker(array $actor, string $url): array
     {
         if ($actor['kind'] === 'none') return [false, '请先登录'];

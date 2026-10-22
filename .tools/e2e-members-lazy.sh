@@ -219,6 +219,37 @@ nhas "同源头像不预热（预热同域是浪费）" 'rel="preconnect"' "$H"
 H=$(curl -s --noproxy '*' -H "X-Forwarded-Proto: https" -b "$T/owner.jar" "$B/")
 has "恢复后仍预热（没有缓存住上一轮结论）" 'rel="preconnect" href="https://api.dicebear.com"' "$H"
 
+# ---------- 16) 图片消息自然宽高（v1.5.36，消除 CLS） ----------
+echo
+echo "=== 13) 图片消息自然宽高（iw/ih，加载前预留位置） ==="
+mkdir -p "$T/uploads/image"
+IMG="$T/uploads/image/cls-test.jpg"
+"$PHP" -r '$im=imagecreatetruecolor(400,300); $c=imagecolorallocate($im,0,160,233); imagefill($im,0,0,$c); imagejpeg($im,$argv[1],90);' "$IMG" 2>/dev/null
+if [ ! -s "$IMG" ]; then
+    echo "  [SKIP] GD 不可用，跳过造图（本段其余断言无意义）"
+else
+    R=$(api "$T/owner.jar" send --data-urlencode "room_id=1" --data-urlencode "type=image" \
+        --data-urlencode "content=https://127.0.0.1:$PORT/uploads/image/cls-test.jpg")
+    ck "发送图片消息成功" "$(jqk "$R" '$d["ok"] ? 1 : 0')" "1"
+    ck "msg_row 带 iw=400（自然宽）" "$(jqk "$R" 'isset($d["msg_row"]["iw"]) ? $d["msg_row"]["iw"] : -1')" "400"
+    ck "msg_row 带 ih=300（自然高）" "$(jqk "$R" 'isset($d["msg_row"]["ih"]) ? $d["msg_row"]["ih"] : -1')" "300"
+    # 库里也要有（pack 之外，真正落盘的列）
+    DBW=$("$PHP" -r '$st=(new PDO("sqlite:".$argv[1]))->prepare("SELECT img_w FROM messages WHERE type=? ORDER BY id DESC LIMIT 1"); $st->execute(["image"]); echo (int)$st->fetchColumn();' "$T/data/owlsgo.db")
+    DBH=$("$PHP" -r '$st=(new PDO("sqlite:".$argv[1]))->prepare("SELECT img_h FROM messages WHERE type=? ORDER BY id DESC LIMIT 1"); $st->execute(["image"]); echo (int)$st->fetchColumn();' "$T/data/owlsgo.db")
+    ck "DB img_w = 400" "$DBW" "400"
+    ck "DB img_h = 300" "$DBH" "300"
+    # history 也要带上（否则只有刚发的那条有预留，滚历史又会抖）。
+    # ⚠️ 必须赶在下面「文件不存在」用例之前断言 —— 那条 iw=0，会把 data 的最后一位抢走。
+    R=$(api "$T/owner.jar" history --data-urlencode "room_id=1" --data-urlencode "before=0")
+    # history 是**正序**（最早→最新），刚发的那条在最后
+    ck "history 里的图片消息带 iw=400" "$(jqk "$R" 'isset($d["data"][count($d["data"])-1]["iw"]) ? $d["data"][count($d["data"])-1]["iw"] : -1')" "400"
+    ck "history 里的图片消息带 ih=300" "$(jqk "$R" 'isset($d["data"][count($d["data"])-1]["ih"]) ? $d["data"][count($d["data"])-1]["ih"] : -1')" "300"
+    # 读不到尺寸（文件不存在）→ 0，前端据此不加属性，不能把图挤变形
+    R=$(api "$T/owner.jar" send --data-urlencode "room_id=1" --data-urlencode "type=image" \
+        --data-urlencode "content=https://127.0.0.1:$PORT/uploads/image/nope-404.jpg")
+    ck "文件不存在时 iw/ih = 0（优雅降级）" "$(jqk "$R" '((int)($d["msg_row"]["iw"] ?? -1)) + ((int)($d["msg_row"]["ih"] ?? -1))')" "0"
+fi
+
 # ---------- 15) 服务端日志无致命错误 ----------
 echo
 echo "=== 10) 服务端日志 ==="

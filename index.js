@@ -4233,7 +4233,13 @@
             // markRecalled 的 outerHTML 替换与引用跳转的 querySelector('.ow-msg-content')，
             // 去掉节点最干净。留空 span 反而会破坏 flex 基线对齐。
             else if (m.type === 'file') content = '<span class="ow-msg-plain">' + fileCardHtml(m) + '</span>';
-            else if (m.type === 'image') content = '<span class="ow-msg-plain"><img class="ow-msg-img" src="' + esc(m.content) + '" loading="lazy" decoding="async" onclick="OwChat.viewImg(this.src)" alt="图片"></span>';
+            else if (m.type === 'image') content = '<span class="ow-msg-plain"><img class="ow-msg-img" src="' + esc(m.content) + '"'
+                // v1.5.36：带上自然宽高（服务端发送时用 getimagesize 读的），浏览器在图片
+                // 下载前就能按比例预留位置 —— 加载完成时下方消息不再被推着走（CLS）。
+                // ⚠️ 只有 iw/ih 都 >0 才输出：老消息、云端文件读不到尺寸，硬写会挤变形。
+                // 与 .ow-msg-img 的 max-width/max-height 配合：属性定比例，max-* 定上限。
+                + (m.iw && m.ih ? ' width="' + m.iw + '" height="' + m.ih + '"' : '')
+                + ' loading="lazy" decoding="async" onclick="OwChat.viewImg(this.src)" alt="图片"></span>';
             // 混排消息**带文字**，所以走气泡（.ow-msg-content）而不是 .ow-msg-plain：
             // 纯图/纯文件才需要「无底座」，有文字却没气泡会显得半句话悬在空中。
             else if (m.type === 'rich') content = '<span class="ow-msg-content ow-msg-rich">' + richHtml(m) + '</span>';

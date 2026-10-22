@@ -2016,7 +2016,11 @@ input[type=range] {
     overflow: hidden;             /* 让 .ow-msg-img 的圆角对容器裁切生效 */
     background: transparent;     /* 无白色底座 */
 }
-.ow-msg-img { max-width: 240px; max-height: 240px; border-radius: 6px; cursor: zoom-in; display: block; }
+/* v1.5.36：补 height:auto。有了 width/height 属性之后，max-width 与 max-height 同时作用
+   会把图夹成 240×240 的**正方形**（属性值各自被 clamp，不按比例）—— 加一句 height:auto
+   让高度改由 aspect-ratio 推导，横图 240×180、竖图 180×240，预留尺寸与最终一致。
+   对没有属性的老消息无影响（它们本来就是 auto）。 */
+.ow-msg-img { max-width: 240px; max-height: 240px; height: auto; border-radius: 6px; cursor: zoom-in; display: block; }
 .ow-msg-sticker { max-width: 120px; max-height: 120px; border-radius: 6px; cursor: zoom-in; }
 .ow-birth-row { display: flex; display: -webkit-flex; gap: 8px; }
 .ow-birth-row .ow-input { flex: 1; -webkit-flex: 1; min-width: 0; }

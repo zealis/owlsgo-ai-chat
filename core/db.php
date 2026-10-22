@@ -686,6 +686,11 @@ class DB
 
         // ---------- 增量迁移（幂等） ----------
         self::addColumn('messages', 'quote', 'text', "''");   // 引用快照 JSON：{nick,text}（v1.0.69 引用功能）
+        // v1.5.36：图片消息的自然宽高（像素）。用途是**消除 CLS** —— 前端 <img> 带上
+        // width/height 属性后，浏览器在图片下载前就能按比例预留位置，加载完成时下方
+        // 消息不再被推着走。0 = 未知（老消息 / 云端文件读不到尺寸），前端据此不加属性。
+        self::addColumn('messages', 'img_w', 'int', '0');
+        self::addColumn('messages', 'img_h', 'int', '0');
         self::addColumn('rooms', 'avatar', 'text', "''");     // 群聊头像（v1.0.76，uploads/avatar/ 下的相对路径）
         self::addColumn('users', 'points', 'int', '0');   // 用户积分
         self::addColumn('users', 'birthdate', 'varchar(10)', "''");   // 出生日期（年龄限制注册用）

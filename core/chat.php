@@ -973,6 +973,25 @@ class Chat
         // 加密私信插件要靠它判断「这条私信属于哪个会话」，只给 roomId=0 分不出收件人。
         Plugin::fire('message.before_send', [&$content, $actor, $roomId, $toUserId]);
 
+        // v1.5.36：图片消息的自然宽高（读文件头，不解码整图）。
+        // 为什么在**发送时**算而不是渲染时算：发送是低频且已有频控的路径，多读一次文件头
+        // 无感；渲染是每条消息都要走的路，更不能在这里读盘。
+        // 读不到（云端文件 / 文件被删 / 非图片）一律记 0 —— 前端见 0 就不输出 width/height，
+        // 退回原来的行为，不会因为缺元数据就把图挤变形。
+        $imgW = 0; $imgH = 0;
+        if ($type === 'image') {
+            // v1.5.36：用 mediaAbs 而不是 fileAbs —— fileAbs 只认 file/ 前缀，
+            // 图片 URL 是 uploads/image/...，拿它解全部返回 null（第一版就这么错的）。
+            $abs = Upload::mediaAbs($content);
+            if ($abs !== null) {
+                $info = @getimagesize($abs);
+                if ($info && $info[0] > 0 && $info[1] > 0) {
+                    $imgW = (int)$info[0];
+                    $imgH = (int)$info[1];
+                }
+            }
+        }
+
         try {
             $id = DB::insert('messages', [
                 'room_id' => $roomId,
@@ -983,6 +1002,8 @@ class Chat
                 'type' => $type, 'content' => $content,
                 'to_user_id' => $toUserId, 'to_guest_id' => $toGuestId, 'to_nickname' => $toNickname,
                 'quote' => $quote,
+                // v1.5.36：图片自然宽高（0 = 未知，见上面的取值说明）
+                'img_w' => $imgW, 'img_h' => $imgH,
                 // v1.1.0 新增：deleted 默认 0（新增列的 DEFAULT 已兜底，这里显式写清语义）
                 'recalled' => 0, 'deleted' => 0, 'deleted_at' => 0, 'deleted_by' => '',
                 // P3 幂等键（新写入必填；见函数开头的查重块）
@@ -1088,6 +1109,11 @@ class Chat
             // v1.2.1：私聊标识与消息形态解耦后，前端不能再靠 m.type==='private' 判断
             // （私聊里的图片/文件消息 type 是 image/file），故单独下发 dm 布尔位。
             'dm' => self::isDmRow($m) ? 1 : 0,
+            // v1.5.36：图片自然宽高（iw/ih 短键，省每消息两个字节）。前端只在两者都 >0 时
+            // 给 <img> 加 width/height 属性 —— 有属性浏览器才能预留位置，消除 CLS。
+            // 老消息两列为 0，前端自动退回「加载后撑开」的旧行为。
+            'iw' => (int)($m['img_w'] ?? 0),
+            'ih' => (int)($m['img_h'] ?? 0),
             'time' => date('H:i', (int)$m['created_at']),
             'date' => date('m-d', (int)$m['created_at']),
             'ts' => (int)$m['created_at'],
