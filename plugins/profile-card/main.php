@@ -123,7 +123,7 @@ Plugin::on('user.card', function (array &$u, array $actor): void {
 
 /* ===================== 静态资源 ===================== */
 
-Plugin::asset('js', 'profile-card/chat.js');
+Plugin::asset('js', 'profile-card/chat.js', 'front');
 Plugin::asset('css', 'profile-card/style.css');
 
 // ⚠️ v1.5.31 起下面这段已作废：核心 pageHead 统一引整包 CSS，插件不再自己发切片（保留作历史）

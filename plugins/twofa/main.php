@@ -337,5 +337,5 @@ Plugin::on('page.footer', function () {
     echo '<script src="?action=assets&type=js&v=' . OWLSGO_ASSET_VERSION . '"></script>';
 });
 
-Plugin::asset('js', 'twofa/chat.js');
+Plugin::asset('js', 'twofa/chat.js', 'auth,front');
 Plugin::asset('css', 'twofa/admin.css');

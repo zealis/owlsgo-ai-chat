@@ -1887,6 +1887,6 @@ Plugin::route('plugin_spam_lexapi_test', function (array $ctx) {
 
 /* ============================ 资源 ============================ */
 
-Plugin::asset('js', 'sensitive-words/admin.js');
-Plugin::asset('js', 'sensitive-words/chat.js');
+Plugin::asset('js', 'sensitive-words/admin.js', 'admin');
+Plugin::asset('js', 'sensitive-words/chat.js', 'front');
 Plugin::asset('css', 'sensitive-words/style.css');

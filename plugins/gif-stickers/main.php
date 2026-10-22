@@ -514,6 +514,6 @@ Plugin::on('chat.toolbar', function (): string {
 });
 
 /** 登记资源：既是合并包的成员，也是 ?action=assets 的**可服务白名单**（不登记则取不到） */
-Plugin::asset('js', 'gif-stickers/admin.js');
-Plugin::asset('js', 'gif-stickers/chat.js');
+Plugin::asset('js', 'gif-stickers/admin.js', 'admin');
+Plugin::asset('js', 'gif-stickers/chat.js', 'front');
 Plugin::asset('css', 'gif-stickers/style.css');

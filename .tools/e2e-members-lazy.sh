@@ -198,7 +198,10 @@ T0=$(date +%s%N)
 R=$(api "$T/owner.jar" poll --data-urlencode "room_id=1" --data-urlencode "since=$MAXID" --data-urlencode "timeout=0")
 T1=$(date +%s%N)
 MS=$(( (T1 - T0) / 1000000 ))
-ck "timeout=0 立即返回（< 2000ms，实得 ${MS}ms）" "$( [ "$MS" -lt 2000 ] && echo 1 || echo 0 )" "1"
+# 阈值给到 4000ms：副本是新建的（首请求要重建插件 scope 清单），且 php -S + Git Bash
+# 的单请求基线本来就有 1.7~1.8 秒（用同一 helper 打 room_members lite 对照过）。
+# 真正要钉的是「没有按默认 20 秒长轮询阻塞」，见下一条。
+ck "timeout=0 立即返回（< 4000ms，实得 ${MS}ms）" "$( [ "$MS" -lt 4000 ] && echo 1 || echo 0 )" "1"
 ck "未阻塞（若按默认 20 秒长轮询，此断言必挂）" "$( [ "$MS" -lt 5000 ] && echo 1 || echo 0 )" "1"
 
 # ---------- 13) 服务端日志无致命错误 ----------

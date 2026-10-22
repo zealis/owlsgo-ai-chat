@@ -288,13 +288,40 @@ Plugin::on('cache.clear', function (string $area = 'all', array $removed = []): 
 ## 静态资源（Plugin::asset）
 
 ```php
-Plugin::asset('js', 'user-manager/admin.js');   // 相对插件目录；css 同理
+Plugin::asset('js', 'user-manager/admin.js', 'admin');   // 相对插件目录；css 同理
+Plugin::asset('js', 'voice-msg/chat.js', 'front');       // 第三参 = 页面范围，可省（默认 all）
 ```
 
-- 合并输出地址：`?action=assets&type=js` / `?action=assets&type=css`（免签名 GET，纯静态无写操作）。
-- **后台页面**已自动引入 `<script src="?action=assets&type=js">`：需要后台交互的插件在此声明 JS，交互对象挂为全局（如 `window.OwUM`），页面 HTML 里用 `onclick="OwUM.search()"` 调用。
+- 合并输出地址：`?action=assets&type=js&scope=<front|auth|admin>` / `?action=assets&type=css`（免签名 GET，纯静态无写操作）。
+- **后台页面**已自动引入整包：需要后台交互的插件在此声明 JS，交互对象挂为全局（如 `window.OwUM`），页面 HTML 里用 `onclick="OwUM.search()"` 调用。
 - 脚本可复用主程序暴露的全局：`OwApi`（AJAX + 自动签名）、`OwBusy`（按钮防重入）、`OwLazy`（图片懒加载）、`esc`、`toast`、`fmtUid`、`opts`、`ROLE_CN`、`OwAdmin`、`OwChat`。不要重复实现这些能力。
 - 前端可从 `OwChat.cfg.site_url` 取当前站点根地址（后端 `ow_site_url()`，未配置时为自动识别值）。
+
+### 按页面分包（v1.5.32，只对 JS 生效）
+
+第三参 `scope` 声明「这个脚本在哪些页面才需要」，页面各取所需：
+
+| scope | 在哪些页面加载 |
+|---|---|
+| `all`（默认） | 所有页面。**不填就是它**，老插件行为完全不变 |
+| `front` | 聊天页 + 插件前台页（`?page=xxx`） |
+| `auth` | 登录 / 注册 / 找回密码 |
+| `admin` | 管理后台 |
+
+可逗号组合，如 `'auth,front'`（登录页与聊天页都要）。
+
+实测（35 个启用插件）：全量 1133KB → 聊天页 822KB、登录页 **198KB**、后台 379KB。
+
+**规则与坑**：
+
+- **只在确认过用途时收窄**。标错的表现是「某个页面没有这个脚本」，而它通常是**静默**的
+  （功能不出现，控制台不报错）。拿不准就留 `all`。
+- `*.js` 里的 `admin.js` 一律 `admin`、`chat.js` 多为一律 `front` —— 但**例外必须逐个看**：
+  登录页要用的脚本常在 `chat.js` 里（`passkey/chat.js` 就是），这类要写 `'auth,front'`。
+- 主题引擎（`color-schemes/boot.js`）、语言包（`lang-en/lang.js`）这类全站资源不要收窄。
+- 新增插件时不需要做任何事（默认 `all`）；只有在**确实只服务某一类页面**时才加 scope。
+- 改了 scope 之后第一次请求会**全量加载一次**所有启用插件来重建清单（scope 只能靠
+  执行 `main.php` 得到，`plugin.json` 里读不出来）。用 `ASSET_SCOPE_VER` 控制，之后恢复按需加载。
 
 ### CSS 由内核统一引入（v1.5.31 起，旧写法已作废）
 

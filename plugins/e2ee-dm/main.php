@@ -662,7 +662,7 @@ Plugin::on('page.head', function () {
     echo '<script>window.OWED_ICON=' . json_encode(ow_icon('shield', 13), JSON_UNESCAPED_UNICODE) . ';</script>' . "\n";
 });
 
-Plugin::asset('js', 'e2ee-dm/js/owce.js');
-Plugin::asset('js', 'e2ee-dm/chat.js');
-Plugin::asset('js', 'e2ee-dm/admin.js');
+Plugin::asset('js', 'e2ee-dm/js/owce.js', 'front');
+Plugin::asset('js', 'e2ee-dm/chat.js', 'front');
+Plugin::asset('js', 'e2ee-dm/admin.js', 'admin');
 Plugin::asset('css', 'e2ee-dm/style.css');

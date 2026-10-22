@@ -152,4 +152,4 @@ Plugin::route('plugin_nickname_guard_save', function (array $ctx) use ($ngGuard)
 });
 
 // 注册后台交互脚本（由 ?action=assets&type=js 合并输出，仅后台页面引入）
-Plugin::asset('js', 'nickname-guard/admin.js');
+Plugin::asset('js', 'nickname-guard/admin.js', 'admin');

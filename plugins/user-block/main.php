@@ -195,4 +195,4 @@ Plugin::on('message.after_send', function ($msgId, $actor, $roomId, $content, $t
 
 /* ===================== 资源注册 ===================== */
 
-Plugin::asset('js', 'user-block/chat.js');
+Plugin::asset('js', 'user-block/chat.js', 'front');

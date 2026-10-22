@@ -930,6 +930,6 @@ Plugin::route('plugin_link_card_preview', function (array $ctx): void {
 
 /* ============================ 静态资源 ============================ */
 
-Plugin::asset('js', 'link-card/chat.js');
-Plugin::asset('js', 'link-card/admin.js');
+Plugin::asset('js', 'link-card/chat.js', 'front');
+Plugin::asset('js', 'link-card/admin.js', 'admin');
 Plugin::asset('css', 'link-card/style.css');

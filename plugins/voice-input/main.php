@@ -73,5 +73,5 @@ Plugin::on('chat.toolbar', function (): string {
 
 /* ============================ 静态资源 ============================ */
 /* 登记 = 合并包成员 + ?action=assets 的可服务白名单；不登记则取不到。 */
-Plugin::asset('js', 'voice-input/chat.js');
+Plugin::asset('js', 'voice-input/chat.js', 'front');
 Plugin::asset('css', 'voice-input/style.css');

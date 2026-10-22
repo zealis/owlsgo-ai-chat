@@ -1683,8 +1683,8 @@ Plugin::route('plugin_content_report_result', function (array $ctx) {
 
 /* ============================ 资源注册 ============================ */
 
-Plugin::asset('js', 'content-report/chat.js');
-Plugin::asset('js', 'content-report/admin.js');
+Plugin::asset('js', 'content-report/chat.js', 'front');
+Plugin::asset('js', 'content-report/admin.js', 'admin');
 Plugin::asset('css', 'content-report/style.css');
 
 // ⚠️ v1.5.31 起下面这段已作废：核心 pageHead 统一引整包 CSS，插件不再自己发切片（保留作历史）

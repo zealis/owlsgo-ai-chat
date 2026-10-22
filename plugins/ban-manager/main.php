@@ -126,5 +126,5 @@ Plugin::sensitive('plugin_ban_manager_quick');   // 右键快速禁言：敏感�
 
 // 注册脚本：admin.js（后台页面交互）+ chat.js（群聊右键菜单）
 // 聊天页自 v1.0.55 起由主程序统一引入合并资源（在 OwChat.init 之后），插件无需自行注入
-Plugin::asset('js', 'ban-manager/admin.js');
-Plugin::asset('js', 'ban-manager/chat.js');
+Plugin::asset('js', 'ban-manager/admin.js', 'admin');
+Plugin::asset('js', 'ban-manager/chat.js', 'front');

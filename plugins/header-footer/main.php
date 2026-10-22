@@ -72,4 +72,4 @@ Plugin::route('plugin_header_footer_save', function (array $ctx): void {
 });
 
 /* ---------- 后台交互脚本 ---------- */
-Plugin::asset('js', 'header-footer/admin.js');
+Plugin::asset('js', 'header-footer/admin.js', 'admin');

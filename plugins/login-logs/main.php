@@ -423,7 +423,7 @@ Plugin::sensitive('plugin_login_logs_clear');   // 删除日志：敏感（v1.0.
 /* ===================== 资源注册 ===================== */
 
 Plugin::asset('css', 'login-logs/admin.css');
-Plugin::asset('js', 'login-logs/admin.js');
+Plugin::asset('js', 'login-logs/admin.js', 'admin');
 
 /* ===================== 计划任务（v1.1.13） ===================== */
 

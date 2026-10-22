@@ -778,5 +778,5 @@ Plugin::on('page.head', function () {
 // （整包本就包含本插件的样式；此前每个插件各发一条，首屏变成 16 个串行 CSS 请求）
 
 Plugin::asset('css', 'chat-background/chat.css');
-Plugin::asset('js', 'chat-background/chat.js');
-Plugin::asset('js', 'chat-background/admin.js');
+Plugin::asset('js', 'chat-background/chat.js', 'front');
+Plugin::asset('js', 'chat-background/admin.js', 'admin');

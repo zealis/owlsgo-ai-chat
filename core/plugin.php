@@ -35,6 +35,8 @@ class Plugin
      * v2 = 每个插件的 JS 都用 IIFE + try/catch 包裹（见 wrapJs）；改包装逻辑就 +1。
      */
     private const ASSET_FMT = 'js-iife-1';
+    /** 资源 scope 清单格式版本（v1.5.32）。改了 scope 模型就 +1，让旧清单整体重建。 */
+    private const ASSET_SCOPE_VER = 1;
 
     private static array $hooks = [];
     /* v1.3.160：与 $hooks **平行**的「回调归属」表 —— 记下每个处理器是哪个插件注册的，
@@ -48,6 +50,12 @@ class Plugin
     private static array $adminPages = [];
     private static array $frontPages = [];   // v1.2.44：插件注册的前台页 slug => ['title'=>..,'fn'=>..]
     private static array $assets = ['css' => [], 'js' => []];
+    /**
+     * 资源 → 页面范围（v1.5.32）。path => 'all' | 'front' | 'auth' | 'admin'（可逗号组合）。
+     * 只对 JS 生效（CSS 仍全量：类名带前缀、不用的规则不生效，60KB gzip 一年缓存，
+     * 分包收益低而判错就掉样式；JS 判错会掉功能，所以反过来只给 JS 分包）。
+     */
+    private static array $assetScope = ['css' => [], 'js' => []];
     private static array $crons = [];   // 插件注册的计划任务（v1.1.13）
     private static array $stats = [];   // 兼容保留：每个插件本次加载的注册计数
     private static string $dir = '';
@@ -82,6 +90,7 @@ class Plugin
         self::$adminPages = [];
         self::$frontPages = [];
         self::$assets = ['css' => [], 'js' => []];
+        self::$assetScope = ['css' => [], 'js' => []];
         self::$meta = [];
         self::$manifest = [];
         self::$pending = null;
@@ -180,6 +189,16 @@ class Plugin
         foreach (self::$order as $n) {
             if (isset($stale[$n]) || empty(self::$manifest[$n]['stats'])) self::loadPlugin($n);
         }
+        /* 4b) v1.5.32：资源 scope 是「执行过 main.php 才知道」的元数据（`Plugin::asset` 第三参），
+           靠 readMeta 读不出来。升级到带 scope 的版本后，缓存里所有条目都缺它 ⇒ 若不处理，
+           未加载过的插件永远按 all 处理，分包等于没做（登录页仍会拿到全部聊天脚本）。
+           这里做**一次**全量加载把 scope 写进清单，之后 scv 匹配即恢复按需加载。
+           成本只在版本升级后的第一个请求（与首次部署同量级）。 */
+        foreach (self::$order as $n) {
+            if ((int)(self::$manifest[$n]['scv'] ?? 0) !== self::ASSET_SCOPE_VER && empty(self::$loaded[$n])) {
+                self::loadPlugin($n);
+            }
+        }
         // 计划任务入库（v1.1.13）：插件清单此时已就绪，syncCronTasks 幂等，
         // 只在「新任务」或「间隔变化」时才动 next_run_at。
         self::syncCronTasks();
@@ -270,6 +289,9 @@ class Plugin
         // 标题只在运行时 $adminPages/$frontPages 里，拿它就得加载插件代码）。
         return ['hooks' => [], 'routes' => [], 'pages' => [], 'fpages' => [], 'sensitive' => [], 'crons' => [],
                 'assets' => ['css' => [], 'js' => []],
+                // v1.5.32：assetScope 紧跟 assets —— 落盘键序必须与这里一致，
+                // 否则 $old !== $m 恒成立，每个加载了插件的请求都会重写一遍缓存文件。
+                'assetScope' => ['css' => [], 'js' => []],
                 'stats' => ['hooks' => 0, 'routes' => 0, 'pages' => 0, 'crons' => 0]];
     }
 
@@ -283,7 +305,7 @@ class Plugin
         // 落盘丢失 → 下次读缓存缺失 → 判定为「清单不完整」→ 每次请求都重新加载插件，
         // 而按需加载（fire/dispatch 靠清单里的 hooks/crons 决定要不要加载）随之失效。
         // 加新的注册类型时，这里必须同步加，否则症状是「性能下降 + 行为诡异」而非报错。
-        $keep = array_flip(['hooks', 'routes', 'pages', 'fpages', 'sensitive', 'crons', 'assets', 'stats', 'sig']);
+        $keep = array_flip(['hooks', 'routes', 'pages', 'fpages', 'sensitive', 'crons', 'assets', 'assetScope', 'scv', 'stats', 'sig']);
         // v1.5.24：遍历 **$meta ∪ $manifest**，不是只遍历 $manifest。
         // 旧实现只持久化「加载过的插件」—— 未启用（或从没被 fire 到）的插件永远进不了
         // 缓存 → 每个请求都要对它们重新 readMeta（一次文件读 + json 解码）并置脏重写
@@ -309,7 +331,8 @@ class Plugin
         $main = self::$dir . '/' . $name . '/main.php';
         if (!is_file($main)) return;
 
-        self::$pending = ['hooks' => [], 'routes' => [], 'pages' => [], 'fpages' => [], 'sensitive' => [], 'crons' => [], 'assets' => ['css' => [], 'js' => []]];
+        self::$pending = ['hooks' => [], 'routes' => [], 'pages' => [], 'fpages' => [], 'sensitive' => [], 'crons' => [],
+            'assets' => ['css' => [], 'js' => []], 'assetScope' => ['css' => [], 'js' => []]];
         self::$loading = $name;
         // ⚠️ 必须 require_once，不能用 require。
         // 同一请求内一个插件可能被加载两次：init() 的「重建清单」与 inspect() 的「探测计数」，
@@ -341,7 +364,8 @@ class Plugin
                 'hooks' => $p['hooks'], 'routes' => $p['routes'],
                 'pages' => $p['pages'], 'fpages' => $p['fpages'],
                 'sensitive' => $p['sensitive'], 'crons' => $p['crons'],
-                'assets' => $p['assets'], 'stats' => $stats,
+                'assets' => $p['assets'], 'assetScope' => $p['assetScope'],
+                'scv' => self::ASSET_SCOPE_VER, 'stats' => $stats,
                 'sig' => self::sigOf($name),
                 'meta' => self::$meta[$name] ?? [],
             ];
@@ -357,7 +381,11 @@ class Plugin
             }
             foreach (['css', 'js'] as $t) {
                 $m['assets'][$t] = array_values(array_unique(array_merge($m['assets'][$t] ?? [], $p['assets'][$t])));
+                foreach ($p['assets'][$t] as $ap) {
+                    $m['assetScope'][$t][$ap] = $p['assetScope'][$t][$ap] ?? 'all';
+                }
             }
+            $m['scv'] = self::ASSET_SCOPE_VER;   // 半截注册也算「已知 scope」，否则每次请求都触发全量重建
             $m['stats'] = $stats;
             $m['sig'] = self::sigOf($name);
         }
@@ -453,13 +481,36 @@ class Plugin
         return self::$frontPages;
     }
 
-    public static function asset(string $type, string $path): void
+    /**
+     * 登记插件静态资源。
+     *
+     * @param string $scope 该资源需要哪些页面（v1.5.32，**只对 js 生效**）：
+     *   `all`（默认，所有页面）/ `front`（聊天页 + 插件前台页）/ `auth`（登录·注册·找回）/
+     *   `admin`（后台）。可逗号组合（如 `front,admin`）。
+     *   不传 = all，所以老插件行为完全不变；标窄了只会少加载，不会多加载。
+     *   ⚠️ 标错会「该页面没有这个 JS」，而它多半是静默的 —— 只在确认过用途时收窄。
+     */
+    public static function asset(string $type, string $path, string $scope = 'all'): void
     {
         if (!in_array($type, ['css', 'js'], true)) return;
         self::$assets[$type][] = $path;
+        self::$assetScope[$type][$path] = self::normScope($scope);
         if (self::$pending !== null && !in_array($path, self::$pending['assets'][$type], true)) {
             self::$pending['assets'][$type][] = $path;
+            self::$pending['assetScope'][$type][$path] = self::normScope($scope);
         }
+    }
+
+    /**
+     * scope 归一化：只保留已知档位，非法/空 → all（宁可多加载，不可少加载）。
+     * 含 all 时直接返回 all（「所有页面」与其它档位混写没有意义）。
+     */
+    private static function normScope(string $scope): string
+    {
+        $known = ['all', 'front', 'auth', 'admin'];
+        $parts = array_values(array_intersect($known, array_map('trim', explode(',', strtolower($scope)))));
+        if (!$parts || in_array('all', $parts, true)) return 'all';
+        return implode(',', $parts);
     }
 
     // ---------- 计划任务（v1.1.13） ----------
@@ -837,20 +888,31 @@ class Plugin
      * 只做 stat（不读文件、不合并）。清单 v1.5.24 起缓存了全部启用插件的资源，
      * 所以这里不需要加载任何插件代码。
      */
-    public static function assetsStamp(string $type): string
+    public static function assetsStamp(string $type, string $scope = ''): string
     {
         if (!in_array($type, ['css', 'js'], true)) return '';
         $sig = [];
         foreach (self::$order as $name) {
+            $sc = self::$manifest[$name]['assetScope'][$type] ?? [];
             foreach (self::$manifest[$name]['assets'][$type] ?? [] as $p) {
+                if ($scope !== '' && !self::scopeHit($sc[$p] ?? 'all', $scope)) continue;
                 $sig[$p] = self::stamp(self::$dir . '/' . ltrim($p, '/'));
             }
         }
         // 同一请求里先 asset() 再 pageHead 的极端情况：运行时注册还没进清单，一并算上
         foreach (self::$assets[$type] ?? [] as $p) {
+            if ($scope !== '' && !self::scopeHit(self::$assetScope[$type][$p] ?? 'all', $scope)) continue;
             $sig[$p] = self::stamp(self::$dir . '/' . ltrim($p, '/'));
         }
-        return substr(md5(json_encode($sig) . '|' . self::ASSET_FMT), 0, 12);
+        // scope 并进指纹：不同 scope 是不同的包，t 必须跟着区分开
+        return substr(md5(json_encode($sig) . '|' . self::ASSET_FMT . '|' . $scope), 0, 12);
+    }
+
+    /** 某资源的声明范围是否覆盖当前页面类型（v1.5.32） */
+    private static function scopeHit(string $decl, string $page): bool
+    {
+        if ($decl === 'all') return true;
+        return in_array($page, explode(',', $decl), true);
     }
 
     /**
@@ -862,19 +924,28 @@ class Plugin
      * 插件名只与「已启用清单」比对、文件名只用于**过滤已注册的路径**，两者都不参与拼路径，
      * 所以不存在任意文件读取；未启用的插件返回空串 = 停用即回到核心默认。
      */
-    public static function renderAssets(string $type, string $only = '', string $file = ''): string
+    public static function renderAssets(string $type, string $only = '', string $file = '', string $scope = ''): string
     {
         if (!in_array($type, ['css', 'js'], true)) return '';
         if ($only !== '' && !in_array($only, self::$order, true)) return '';
         if ($file !== '' && !preg_match('/^[a-zA-Z0-9._-]+$/', $file)) return '';
         // 启用插件清单中的资源（未加载的插件也算上）+ 本请求运行时注册的资源
+        // v1.5.32：$scope 非空时按页面类型过滤（all 类资源永远包含在内）。
+        //   $only（单插件切片）不过滤 —— 调用方明确点名要这个插件的这个文件。
         $files = [];
         foreach (self::$order as $name) {
             if ($only !== '' && $name !== $only) continue;
-            foreach (self::$manifest[$name]['assets'][$type] ?? [] as $p) $files[] = $p;
+            $sc = self::$manifest[$name]['assetScope'][$type] ?? [];
+            foreach (self::$manifest[$name]['assets'][$type] ?? [] as $p) {
+                if ($scope !== '' && !self::scopeHit($sc[$p] ?? 'all', $scope)) continue;
+                $files[] = $p;
+            }
         }
         if ($only === '' && $file === '') {
-            foreach (self::$assets[$type] ?? [] as $p) $files[] = $p;
+            foreach (self::$assets[$type] ?? [] as $p) {
+                if ($scope !== '' && !self::scopeHit(self::$assetScope[$type][$p] ?? 'all', $scope)) continue;
+                $files[] = $p;
+            }
         }
         if ($file !== '') {
             $files = array_values(array_filter($files, fn($p) => basename(str_replace('\\', '/', $p)) === $file));
@@ -889,7 +960,8 @@ class Plugin
         }
         // v1.5.27：把「输出格式版本」并进 key —— 改了包装逻辑（如本次 IIFE 包裹）而源文件
         // 没变时，旧缓存必须自然失效，否则升级后仍会吐旧格式，只有手删 data/cache 才生效。
-        $key = md5(json_encode([$type, $only, $file, $sig, self::ASSET_FMT]));
+        // v1.5.32：scope 也要进 key —— 同一批文件的不同子集不能共用一份缓存。
+        $key = md5(json_encode([$type, $only, $file, $sig, self::ASSET_FMT, $scope]));
         $cfile = self::$cacheDir !== '' ? self::$cacheDir . '/assets-' . $key . '.json' : '';
         if ($cfile !== '' && is_file($cfile)) {
             $c = json_decode((string)file_get_contents($cfile), true);
@@ -1065,7 +1137,8 @@ class Plugin
         $before = self::snapshot();
         $beforeAssets = self::$assets;
         $beforeCrons = self::$crons;
-        self::$pending = ['hooks' => [], 'routes' => [], 'pages' => [], 'fpages' => [], 'sensitive' => [], 'crons' => [], 'assets' => ['css' => [], 'js' => []]];
+        self::$pending = ['hooks' => [], 'routes' => [], 'pages' => [], 'fpages' => [], 'sensitive' => [], 'crons' => [],
+            'assets' => ['css' => [], 'js' => []], 'assetScope' => ['css' => [], 'js' => []]];
         self::$loading = $name;
         $ok = true;
         // require_once：inspect() 可能与 loadPlugin() 在同一请求内先后加载同一插件，
@@ -1097,7 +1170,8 @@ class Plugin
                 'hooks' => $p['hooks'], 'routes' => $p['routes'],
                 'pages' => $p['pages'], 'fpages' => $p['fpages'],
                 'sensitive' => $p['sensitive'], 'crons' => $p['crons'],
-                'assets' => $p['assets'], 'stats' => $stats,
+                'assets' => $p['assets'], 'assetScope' => $p['assetScope'],
+                'scv' => self::ASSET_SCOPE_VER, 'stats' => $stats,
                 'sig' => self::sigOf($name),
                 'meta' => self::$meta[$name] ?? [],
             ];
@@ -1112,7 +1186,11 @@ class Plugin
             }
             foreach (['css', 'js'] as $t) {
                 $m['assets'][$t] = array_values(array_unique(array_merge($m['assets'][$t] ?? [], $p['assets'][$t])));
+                foreach ($p['assets'][$t] as $ap) {
+                    $m['assetScope'][$t][$ap] = $p['assetScope'][$t][$ap] ?? 'all';
+                }
             }
+            $m['scv'] = self::ASSET_SCOPE_VER;   // 半截注册也算「已知 scope」，否则每次请求都触发全量重建
             $m['stats'] = $stats;
             $m['sig'] = self::sigOf($name);
         }

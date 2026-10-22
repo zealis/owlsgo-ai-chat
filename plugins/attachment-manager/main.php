@@ -692,7 +692,7 @@ Plugin::on('chat.toolbar', function (): string {
          . ow_icon('paperclip', 16) . '</button>';
 });
 
-Plugin::asset('js', 'attachment-manager/chat.js');
+Plugin::asset('js', 'attachment-manager/chat.js', 'front');
 // 前台样式（待发区 / 拖拽高亮 / 二选一弹窗）：跟 chat.js 一起登记，
 // 由上面那条 page.head 的 <link> 合并输出 —— 样式写死在 index.css 里
 // 会让插件停用时留下一堆没人用的规则（gif-stickers 在 v1.3.78 踩过同样的坑）。
@@ -992,4 +992,4 @@ Plugin::route('plugin_attachment_manager_download', function (array $ctx) use ($
 
 // 注册后台交互脚本与样式（由 ?action=assets 合并输出，仅后台页面引入）
 Plugin::asset('css', 'attachment-manager/admin.css');
-Plugin::asset('js', 'attachment-manager/admin.js');
+Plugin::asset('js', 'attachment-manager/admin.js', 'admin');

@@ -1214,7 +1214,7 @@ function owCSMigFile(): string
 /* ============================ 后台页面 ============================ */
 
 Plugin::asset('css', 'cloud-storage/admin.css');
-Plugin::asset('js', 'cloud-storage/admin.js');
+Plugin::asset('js', 'cloud-storage/admin.js', 'admin');
 
 /** 后台 CSS 不会自动引入，经 page.head 发 <link> */
 // v1.5.31：CSS 不再由插件自己发切片 —— 核心 pageHead 统一引整包

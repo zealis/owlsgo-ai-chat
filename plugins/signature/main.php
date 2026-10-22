@@ -90,4 +90,4 @@ Plugin::route('plugin_signature_bulk', function (array $ctx): void {
 
 /* ===================== 资源 ===================== */
 
-Plugin::asset('js', 'signature/chat.js');
+Plugin::asset('js', 'signature/chat.js', 'front');

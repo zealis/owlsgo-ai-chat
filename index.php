@@ -389,6 +389,10 @@ if ($action !== '') {
         $ok = static fn(string $k): string => preg_match('/^[a-zA-Z0-9._-]+$/', (string)($_GET[$k] ?? '')) ? (string)$_GET[$k] : '';
         $only = $ok('plugin');
         $oneFile = $ok('file');
+        // v1.5.32：scope 决定这个包要哪些插件脚本（front / auth / admin，可逗号组合）。
+        // 白名单校验，非法值当作「不区分」（全量）—— 宁可多给，不能少给。
+        $sc = strtolower((string)($_GET['scope'] ?? ''));
+        $scope = ($sc !== '' && preg_match('/^[a-z]{1,10}(,[a-z]{1,10})*$/', $sc) === 1) ? $sc : '';
         header($type === 'js' ? 'Content-Type: text/javascript; charset=utf-8' : 'Content-Type: text/css; charset=utf-8');
 
         // v1.5.26 资源缓存策略（此前一律 no-store：1.1MB 合并 JS 每次页面加载都重下）。
@@ -413,7 +417,7 @@ if ($action !== '') {
         } else {
             header('Cache-Control: no-store');
         }
-        echo Plugin::renderAssets($type, $only, $oneFile);
+        echo Plugin::renderAssets($type, $only, $oneFile, $scope);
         exit;
     }
 
@@ -1377,7 +1381,7 @@ function renderPluginPage(string $slug, array $pg, array $actor, ?array $user): 
     echo '<script>OwApi.key=' . json_encode((string)($actor['key'] ?? ''))
        . ';OwApi.setServerTime(' . time() . ');</script>';
     define('OWLSGO_ASSETS_JS_EMITTED', true);
-    echo '<script src="?action=assets&type=js&v=' . OWLSGO_ASSET_VERSION . '&t=' . Plugin::assetsStamp('js') . '"></script>'
+    echo assetsJsTag('front')
        . '</body></html>';
 }
 
@@ -1591,6 +1595,21 @@ function ow_lang(): string
     return preg_match('/^[a-z]{2,3}(-[A-Za-z]{2,4})?$/', $c) ? $c : 'zh';
 }
 
+/**
+ * 插件合并 JS 的 <script> 标签（v1.5.32）。
+ *
+ * $scope 决定这个页面要哪些插件脚本（见 Plugin::asset() 第三参）：
+ *   'front' 聊天页 / 插件前台页、'auth' 登录·注册·找回、'admin' 后台。
+ * 没标 scope 的资源（默认 all）在任何页面都包含 —— 所以老插件行为完全不变。
+ * t= 是**该子集**的内容指纹：不同页面各自可长缓存，改插件脚本时各自失效。
+ */
+function assetsJsTag(string $scope): string
+{
+    return '<script src="?action=assets&type=js&v=' . OWLSGO_ASSET_VERSION
+         . '&t=' . Plugin::assetsStamp('js', $scope)
+         . '&scope=' . rawurlencode($scope) . '"></script>';
+}
+
 function pageHead(string $title): void
 {
     // 动态页禁止缓存：页面内含会话密钥，缓存旧页会导致提交时签名对不上
@@ -1779,7 +1798,7 @@ function renderAuth(string $mode): void
     // 打上标记，插件自己的 page.footer 注入会被它自己的 define 判断跳过，不会重复加载。
     if (!defined('OWLSGO_ASSETS_JS_EMITTED')) {
         define('OWLSGO_ASSETS_JS_EMITTED', true);
-        echo '<script src="?action=assets&type=js&v=' . OWLSGO_ASSET_VERSION . '&t=' . Plugin::assetsStamp('js') . '"></script>';
+        echo assetsJsTag('auth');
     }
     echo '<script>OwAuth.init(' . json_encode(['key' => Sec::anonKey(), 'ts' => time()]) . ');</script>';
     Plugin::fire('page.footer');
@@ -2094,7 +2113,7 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
     echo '<script src="assets/js/i18n.js?v=' . OWLSGO_ASSET_VERSION . '"></script>'
        . '<script src="index.js?v=' . OWLSGO_ASSET_VERSION . '"></script>'
        . '<script>OwChat.init(' . json_encode($boot, JSON_UNESCAPED_UNICODE) . ');</script>'
-       . '<script src="?action=assets&type=js&v=' . OWLSGO_ASSET_VERSION . '&t=' . Plugin::assetsStamp('js') . '"></script>';
+       . assetsJsTag('front');
     Plugin::fire('page.footer');
     echo '</body></html>';
 }
@@ -2175,7 +2194,7 @@ function renderAdmin(array $actor): void
        . '<script src="assets/js/i18n.js?v=' . OWLSGO_ASSET_VERSION . '"></script>'
        . '<script src="index.js?v=' . OWLSGO_ASSET_VERSION . '"></script>'
        // 插件注册的 JS 资源合并输出（用户管理等插件的后台交互脚本）
-       . '<script src="?action=assets&type=js&v=' . OWLSGO_ASSET_VERSION . '&t=' . Plugin::assetsStamp('js') . '"></script>'
+       . assetsJsTag('admin')
        . '<script>OwAdmin.init(' . json_encode([
              'key' => $actor['key'], 'ts' => time(), 'version' => OWLSGO_VERSION,
              // v1.5.4：后台各页（含插件后台）统一从这里取「积分」的自定义名称

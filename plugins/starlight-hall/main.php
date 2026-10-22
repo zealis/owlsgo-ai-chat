@@ -2632,5 +2632,5 @@ Plugin::adminPage('starlight-hall', '星光殿堂', function () {
 /* ============================ 资源 ============================ */
 
 Plugin::asset('css', 'starlight-hall/style.css');
-Plugin::asset('js', 'starlight-hall/chat.js');
-Plugin::asset('js', 'starlight-hall/admin.js');
+Plugin::asset('js', 'starlight-hall/chat.js', 'front');
+Plugin::asset('js', 'starlight-hall/admin.js', 'admin');

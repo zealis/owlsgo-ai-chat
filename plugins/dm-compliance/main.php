@@ -88,4 +88,4 @@ Plugin::route('plugin_dm_compliance_read', function (array $ctx) {
 Plugin::sensitive('plugin_dm_compliance_read');
 
 // ---------- 4. 资源 ----------
-Plugin::asset('js', 'dm-compliance/admin.js');
+Plugin::asset('js', 'dm-compliance/admin.js', 'admin');

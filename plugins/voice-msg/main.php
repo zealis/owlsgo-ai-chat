@@ -198,8 +198,8 @@ Plugin::on('chat.toolbar', function (): string {
 // （整包本就包含本插件的样式；此前每个插件各发一条，首屏变成 16 个串行 CSS 请求）
 
 Plugin::asset('css', 'voice-msg/style.css');   // 录音面板 + 语音气泡
-Plugin::asset('js', 'voice-msg/chat.js');      // 前台：录音 + 扫消息 + 播放（后台页自动退出）
-Plugin::asset('js', 'voice-msg/admin.js');     // 后台：规则表单
+Plugin::asset('js', 'voice-msg/chat.js', 'front');      // 前台：录音 + 扫消息 + 播放（后台页自动退出）
+Plugin::asset('js', 'voice-msg/admin.js', 'admin');     // 后台：规则表单
 
 /* ============================ API 路由 ============================ */
 

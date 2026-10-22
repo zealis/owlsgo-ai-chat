@@ -996,5 +996,5 @@ Plugin::adminPage('passkey', '通行密钥', function (): string {
 // v1.5.31：CSS 不再由插件自己发切片 —— 核心 pageHead 统一引整包
 // （整包本就包含本插件的样式；此前每个插件各发一条，首屏变成 16 个串行 CSS 请求）
 
-Plugin::asset('js', 'passkey/chat.js');
+Plugin::asset('js', 'passkey/chat.js', 'auth,front');
 Plugin::asset('css', 'passkey/style.css');

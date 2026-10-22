@@ -267,5 +267,5 @@ Plugin::route('plugin_oauth_core_revoke', function (array $ctx) use ($oaGuard) {
     Api::json(['ok' => $ok, 'msg' => $msg]);
 });
 
-Plugin::asset('js', 'oauth-core/chat.js');
+Plugin::asset('js', 'oauth-core/chat.js', 'auth,front');
 Plugin::asset('css', 'oauth-core/style.css');

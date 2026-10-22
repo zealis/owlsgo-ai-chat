@@ -1523,6 +1523,6 @@ Plugin::on('chat.toolbar', function (): string {
 /* ============================ 静态资源 ============================ */
 
 Plugin::asset('css', 'chat-scripts/style.css');
-Plugin::asset('js', 'chat-scripts/chat.js');      // 前台：话术面板（后台页自动退出）
-Plugin::asset('js', 'chat-scripts/auto.js');      // 前台：群聊设置里的「自动化」入口（后台页自动退出）
-Plugin::asset('js', 'chat-scripts/admin.js');     // 后台：管理页交互（前台页自动退出）
+Plugin::asset('js', 'chat-scripts/chat.js', 'front');      // 前台：话术面板（后台页自动退出）
+Plugin::asset('js', 'chat-scripts/auto.js', 'front');      // 前台：群聊设置里的「自动化」入口（后台页自动退出）
+Plugin::asset('js', 'chat-scripts/admin.js', 'admin');     // 后台：管理页交互（前台页自动退出）

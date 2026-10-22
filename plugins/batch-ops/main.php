@@ -264,7 +264,7 @@ Plugin::cron('record_purge', 86400, function () {
 
 /* ============================ 静态资源 ============================ */
 
-Plugin::asset('js', 'batch-ops/chat.js');
+Plugin::asset('js', 'batch-ops/chat.js', 'front');
 Plugin::asset('css', 'batch-ops/style.css');
 
 // ⚠️ v1.5.31 起下面这段已作废：核心 pageHead 统一引整包 CSS，插件不再自己发切片（保留作历史）

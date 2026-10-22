@@ -1210,8 +1210,8 @@ JS;
 });
 
 /* ===================== 前端交互脚本 ===================== */
-Plugin::asset('js', 'room-embed/chat.js');
-Plugin::asset('js', 'room-embed/admin.js');
+Plugin::asset('js', 'room-embed/chat.js', 'front');
+Plugin::asset('js', 'room-embed/admin.js', 'admin');
 
 /* ===================== 后台说明页的文档列表样式 ===================== */
 // 核心全局 reset（* { margin:0; padding:0 }）把 ol 默认左内边距清零，而序号 marker 是

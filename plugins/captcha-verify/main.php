@@ -498,8 +498,8 @@ Plugin::route('plugin_captcha_verify_test', function (array $ctx) {
 // v1.5.31：CSS 不再由插件自己发切片 —— 核心 pageHead 统一引整包
 // （整包本就包含本插件的样式；此前每个插件各发一条，首屏变成 16 个串行 CSS 请求）
 
-Plugin::asset('js', 'captcha-verify/admin.js');
-Plugin::asset('js', 'captcha-verify/widget.js');
+Plugin::asset('js', 'captcha-verify/admin.js', 'admin');
+Plugin::asset('js', 'captcha-verify/widget.js', 'auth,front');
 // verify.js 必须排在 widget.js 之后：它依赖 OwCv.getScene / OwCv.onToken
-Plugin::asset('js', 'captcha-verify/verify.js');
+Plugin::asset('js', 'captcha-verify/verify.js', 'auth,front');
 Plugin::asset('css', 'captcha-verify/style.css');

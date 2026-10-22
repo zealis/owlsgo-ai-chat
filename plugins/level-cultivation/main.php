@@ -15,5 +15,5 @@
 if (!defined('OWLSGO_VERSION')) exit;
 
 /* 注册前台资源（聊天页与后台页统一由 ?action=assets 合并引入） */
-Plugin::asset('js', 'level-cultivation/chat.js');
+Plugin::asset('js', 'level-cultivation/chat.js', 'front');
 Plugin::asset('css', 'level-cultivation/style.css');

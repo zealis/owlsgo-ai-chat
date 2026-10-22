@@ -188,6 +188,6 @@ Plugin::route('plugin_announcements_del', function (array $ctx) use ($oaCanManag
     Api::json(['ok' => true, 'msg' => '公告已删除']);
 }, ['sensitive' => true]);
 
-Plugin::asset('js', 'announcements/chat.js');
-Plugin::asset('js', 'announcements/admin.js');
+Plugin::asset('js', 'announcements/chat.js', 'front');
+Plugin::asset('js', 'announcements/admin.js', 'admin');
 Plugin::asset('css', 'announcements/style.css');

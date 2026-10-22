@@ -1026,7 +1026,7 @@ Plugin::cron('ip_geo', 900, function (): string {
 }, '用户管理：解析登录 IP 归属地（每 15 分钟最多 3 个）');
 
 // 注册后台交互脚本（由 ?action=assets&type=js 合并输出，仅后台页面引入）
-Plugin::asset('js', 'user-manager/admin.js');
+Plugin::asset('js', 'user-manager/admin.js', 'admin');
 
 // v1.5.31：样式改由核心 pageHead 统一引整包 —— 整包 URL 带 `t=<合并包内容指纹>`，
 // 改本插件 CSS 会让指纹变化、URL 立刻变，比原来每个插件各发一条切片（首屏 16 个请求）

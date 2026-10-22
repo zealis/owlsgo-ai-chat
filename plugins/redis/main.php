@@ -1356,4 +1356,4 @@ Plugin::adminPage('redis', 'Redis 缓存', function () {
 /* ============================ 资源 ============================ */
 
 Plugin::asset('css', 'redis/style.css');
-Plugin::asset('js', 'redis/admin.js');
+Plugin::asset('js', 'redis/admin.js', 'admin');

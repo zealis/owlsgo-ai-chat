@@ -474,8 +474,8 @@ Plugin::on('chat.toolbar', function (): string {
 // （整包本就包含本插件的样式；此前每个插件各发一条，首屏变成 16 个串行 CSS 请求）
 
 Plugin::asset('css', 'red-packet/style.css');   // 进合并包（核心 pageHead 统一引，v1.5.31 起插件不再自己发切片）
-Plugin::asset('js', 'red-packet/chat.js');    // 前台：按钮 + 面板 + 消息卡（后台页自动退出）
-Plugin::asset('js', 'red-packet/admin.js');   // 后台：规则表单 + 最近发放列表
+Plugin::asset('js', 'red-packet/chat.js', 'front');    // 前台：按钮 + 面板 + 消息卡（后台页自动退出）
+Plugin::asset('js', 'red-packet/admin.js', 'admin');   // 后台：规则表单 + 最近发放列表
 
 /* ============================ API 路由 ============================ */
 

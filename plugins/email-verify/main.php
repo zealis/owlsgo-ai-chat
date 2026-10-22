@@ -859,8 +859,8 @@ Plugin::cron('email_verify_purge_log', 86400, function () {
 // v1.5.31：CSS 不再由插件自己发切片 —— 核心 pageHead 统一引整包
 // （整包本就包含本插件的样式；此前每个插件各发一条，首屏变成 16 个串行 CSS 请求）
 
-Plugin::asset('js', 'email-verify/admin.js');
-Plugin::asset('js', 'email-verify/chat.js');
+Plugin::asset('js', 'email-verify/admin.js', 'admin');
+Plugin::asset('js', 'email-verify/chat.js', 'auth,front');
 Plugin::asset('css', 'email-verify/style.css');
 
 /* ======================================================================

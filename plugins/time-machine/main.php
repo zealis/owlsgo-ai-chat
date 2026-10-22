@@ -461,7 +461,7 @@ Plugin::on('sidebar.rail', function () {
 
 /* ============================ 静态资源 ============================ */
 
-Plugin::asset('js', 'time-machine/chat.js');
+Plugin::asset('js', 'time-machine/chat.js', 'front');
 Plugin::asset('css', 'time-machine/style.css');
 
 /**

@@ -220,6 +220,20 @@ switch ($phase) {
         $check('frontPageFor 拿到标题', $fp['title'] ?? null, '懒加载探针前台页');
         $check('frontPageFor 拿到 fn', is_callable($fp['fn'] ?? null), true);
 
+        /* v1.5.32：资源 scope 分包 —— 用真实插件（attachment-manager 有 chat.js + admin.js
+           两个文件、scope 分别是 front / admin）验证过滤，不依赖桩插件的资源声明。 */
+        $frontJs = Plugin::renderAssets('js', '', '', 'front');
+        $adminJs = Plugin::renderAssets('js', '', '', 'admin');
+        $allJs   = Plugin::renderAssets('js');
+        $check('front 包含 chat.js', strpos($frontJs, 'plugin: attachment-manager/chat.js') !== false, true);
+        $check('front 不含 admin.js', strpos($frontJs, 'plugin: attachment-manager/admin.js'), false);
+        $check('admin 包含 admin.js', strpos($adminJs, 'plugin: attachment-manager/admin.js') !== false, true);
+        $check('admin 不含 chat.js', strpos($adminJs, 'plugin: attachment-manager/chat.js'), false);
+        $check('不传 scope 仍是全量（老调用方兼容）',
+            strpos($allJs, 'plugin: attachment-manager/admin.js') !== false, true);
+        $cf = json_decode((string)file_get_contents($CF), true);
+        $check('清单记录了 scope 版本 scv=1', (int)($cf['plugins']['_lazy_probe']['scv'] ?? 0), 1);
+
         $check('collect 懒钩子只按需加载', Plugin::collect('lazy.probe'), 'stub-hook');
         $check('dispatch 懒路由', Plugin::dispatch('lazy_probe', ['actor' => [], 'post' => [], 'files' => []]),
             ['ok' => true, 'data' => 'stub-route']);
