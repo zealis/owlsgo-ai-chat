@@ -142,7 +142,7 @@
 }
 .ow-cr-alert-ops a {
     font-size: 13px;
-    color: var(--ow-primary-dark);
+    color: var(--ow-link);
     text-decoration: none;
 }
 .ow-cr-alert-ops a:hover { text-decoration: underline; }

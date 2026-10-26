@@ -481,7 +481,7 @@
 }
 .owrp-actions .owrp-rec:hover {
     background: transparent !important;
-    color: var(--ow-primary-dark) !important;
+    color: var(--ow-link) !important;
 }
 .owrp-actions .ow-btn { white-space: nowrap; }
 

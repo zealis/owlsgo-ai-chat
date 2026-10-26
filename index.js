@@ -1434,6 +1434,16 @@
         return h;
     }
 
+    /** 消息/成员列表只留必要身份：群主、管理员、机器人；普通会员/VIP 不在列表里刷标签。 */
+    function essentialRoleTag(role, title, uid) {
+        var h = '';
+        if (uid && BOT_UIDS[uid]) h = '<span class="ow-tag ow-tag-bot">机器人</span>';
+        else if (uid && uid === CUR_OWNER) h = '<span class="ow-tag ow-tag-owner">群主</span>';
+        else if (role === 'admin') h = '<span class="ow-tag ow-tag-admin">超级管理员</span>';
+        if (title) h += (h ? ' ' : '') + '<span class="ow-tag ow-tag-title">' + esc(title) + '</span>';
+        return h;
+    }
+
     /* 头像：服务端 avatarUrlFor() 给什么就显示什么（上传图 / DiceBear / 内置 identicon）。
        v1.3.11 起不再有「首字色块」与「游客固定米金底」这类前端兜底 —— 那些都挪到服务端统一算了。 */
     function avatarHtml(url, name, sm, role) {
@@ -1650,6 +1660,7 @@
         var h = '', i, ic, it;
         for (i = 0; i < items.length; i++) {
             it = items[i] || {};
+            if (it.label) { h += '<div class="ow-ctx-label">' + esc(it.t) + '</div>'; continue; }
             if (it.sep) { h += '<div class="ow-ctx-sep"></div>'; continue; }
             if (it.head) {
                 h += '<a class="ow-ctx-item ow-ctx-head" href="javascript:;" data-i="' + i + '"'
@@ -2078,8 +2089,26 @@
 
             // 地址路由：私聊 ?dm=user:12 优先（v1.1.0），否则规范化为 ?room=当前群聊（replace）
             var dmFromUrl = this.dmFromUrl();
+            // 移动端深链：先把历史项置成列表态，再 push 聊天态 —— 浏览器返回才能落回列表。
+            if (this._isMobile()) {
+                var rid0 = this.roomFromUrl(), dpeer0 = this.dmFromUrl();
+                if (rid0 || dpeer0) {
+                    try {
+                        var deepUrl = w.location.pathname + w.location.search;
+                        w.history.replaceState({ owView: 'home' }, '', w.location.pathname + '?page=chat');
+                        w.history.pushState({ owView: 'chat' }, '', deepUrl);
+                    } catch (e) {}
+                    this._returnTo = 'chat';
+                    this._openChat();
+                }
+            }
             // 前进/后退（或手动改 URL 回车）→ 切换到对应群聊 / 私聊
             w.onpopstate = function () {
+                if (self._isMobile()) {
+                    var mrid = self.roomFromUrl(), mdpeer = self.dmFromUrl();
+                    if (!mrid && !mdpeer) { self.closeChat(); return; }
+                    self._openChat();
+                }
                 // ★ v1.1.0：dm 与 room 在 URL 上互斥（见 chat-url-mutex 约束）。
                 //   正常情况下只会命中其中一个；这里以 URL 实际内容为准，
                 //   若两个都在（历史遗留 / 外部链接），优先认群聊 room，避免莫名跳进私聊。
@@ -2116,7 +2145,8 @@
                 this.renderMembers([], null);   // 右侧栏同步回到空态
                 return;
             }
-            this.setRoomUrl(this.room, true);
+            // 移动端无显式 room= 时停在列表，不把首个群写进 URL（否则刷新就变成深链进群）。
+            if (!(this._isMobile() && !this.roomFromUrl())) this.setRoomUrl(this.room, true);
 
             // 初始加载历史：是否需密码由服务端判定（管理员/已授权会直接放行，不会弹窗）
             var first = null, i;
@@ -2418,6 +2448,80 @@
                 try { w.localStorage.setItem('owl_sound', self.sound ? '1' : '0'); } catch (e) {}
                 toast(self.sound ? '提示音已开启' : '提示音已关闭');
             };
+            // 「+」菜单：插件工具栏按钮仍在 DOM 里，只是收进菜单；事件绑定不变。
+            var plusBtn = $('owPlusBtn'), toolsSheet = $('owToolsSheet'), toolsMask = $('owToolsMask');
+            var decorateTools = function () {
+                if (!toolsSheet) return;
+                var bs = toolsSheet.getElementsByTagName('button'), i, b, sp, label, hasText, n;
+                for (i = 0; i < bs.length; i++) {
+                    b = bs[i];
+                    b.className += ((' ' + b.className + ' ').indexOf(' ow-tool-cell ') >= 0 ? '' : ' ow-tool-cell');
+                    if (b.getElementsByClassName('ow-tool-label').length) continue;
+                    hasText = false;
+                    for (n = b.firstChild; n; n = n.nextSibling) {
+                        if (n.nodeType === 3 && trimCls(n.nodeValue)) { hasText = true; break; }
+                    }
+                    if (hasText) continue;
+                    label = b.getAttribute('aria-label') || b.getAttribute('title') || '';
+                    if (!label) continue;
+                    sp = d.createElement('span');
+                    sp.className = 'ow-tool-label';
+                    sp.textContent = label;
+                    b.appendChild(sp);
+                }
+            };
+            var setTools = function (open) {
+                if (!toolsSheet) return;
+                if (open) decorateTools();
+                toolsSheet.className = 'ow-tools-sheet' + (open ? ' show' : '');
+                if (toolsMask) toolsMask.className = 'ow-tools-mask' + (open ? ' show' : '');
+                if (plusBtn) plusBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+            };
+            self.toggleTools = setTools;
+            if (plusBtn) plusBtn.onclick = function (e) {
+                if (e && e.stopPropagation) e.stopPropagation();
+                setTools((' ' + toolsSheet.className + ' ').indexOf(' show ') < 0);
+            };
+            if (toolsMask) toolsMask.onclick = function () { setTools(false); };
+            if (toolsSheet) toolsSheet.addEventListener('click', function (e) {
+                var t = e.target || e.srcElement;
+                while (t && t !== toolsSheet && t.tagName !== 'BUTTON') t = t.parentNode;
+                if (t && t !== toolsSheet) setTimeout(function () { setTools(false); }, 0);
+            }, true);
+            d.addEventListener('click', function (e) {
+                if (!toolsSheet || (' ' + toolsSheet.className + ' ').indexOf(' show ') < 0) return;
+                var t = e.target || e.srcElement;
+                if (t === plusBtn || toolsSheet.contains(t)) return;
+                setTools(false);
+            });
+            d.addEventListener('keydown', function (e) {
+                if ((e.key === 'Escape' || e.keyCode === 27) && toolsSheet) setTools(false);
+            });
+            // 弹窗：ESC 关闭 + Tab 焦点陷阱（含搜索/设置/资料卡）
+            d.addEventListener('keydown', function (e) {
+                var mask = $('owModalMask');
+                if (!mask || mask.style.display === 'none' || mask.style.display === '') return;
+                var m = $('owModal');
+                if (!m) return;
+                if (e.key === 'Escape' || e.keyCode === 27) { self.closeModal(); return; }
+                if (e.key !== 'Tab' && e.keyCode !== 9) return;
+                var f = m.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+                if (!f.length) return;
+                var first = f[0], last = f[f.length - 1];
+                if (e.shiftKey && d.activeElement === first) { e.preventDefault(); last.focus(); }
+                else if (!e.shiftKey && d.activeElement === last) { e.preventDefault(); first.focus(); }
+            });
+            // 空内容时发送按钮禁用；输入框被闸门禁用时也保持禁用。
+            var sendBtn = $('owBtnSend'), inputEl = $('owInput');
+            var syncSend = function () {
+                if (!sendBtn || !inputEl) return;
+                sendBtn.disabled = !!inputEl.disabled || !trimCls(inputEl.value);
+            };
+            self.syncSend = syncSend;
+            if (inputEl) {
+                inputEl.addEventListener('input', syncSend);
+                syncSend();
+            }
             // 窄屏浮层遮罩：侧栏或成员面板打开时显示
             var syncMask = function () {
                 var m = $('owMask');
@@ -2433,6 +2537,12 @@
                 syncMask();
             };
             $('owToggleSide').onclick = function () {
+                if (self._isMobile() && self.isChatOpen()) {
+                    // 走浏览器历史返回：列表→聊天是 pushState，直接 closeChat 会留下一条重复的列表记录。
+                    // popstate 里统一走 closeChat，来源屏（列表/通知/联系人）仍由 _returnTo 决定。
+                    if (w.history && w.history.back) { w.history.back(); return; }
+                    self.closeChat(); return;
+                }
                 setSide($('owSidebar').className.indexOf('open') < 0);
             };
             // 群聊信息面板：宽屏用 hidden 收起（常驻侧栏），窄屏用 open 浮层（默认收起）
@@ -2473,7 +2583,7 @@
                 var t = e.target || e.srcElement, inside = false, n = t;
                 while (n) {
                     if (n === o || n === $('owTogglePanel') || n === s || n === $('owToggleSide')
-                        || n === em || n === $('owBtnEmoji')) { inside = true; break; }
+                        || n === em || n === $('owBtnEmoji') || n === $('owBtnEmojiInline')) { inside = true; break; }
                     n = n.parentNode;
                 }
                 if (inside) return;
@@ -2552,6 +2662,7 @@
             // 右键消息气泡 → 操作菜单（@/私信/收藏/撤回，插件可追加）
             $('owMessages').oncontextmenu = function (e) {
                 e = e || w.event;
+                if (self._isMobile()) { if (e.preventDefault) e.preventDefault(); return false; }
                 var t = e.target || e.srcElement, node = t;
                 while (node && node !== this) {
                     if (node.id && /^owMsg\d+$/.test(node.id)) break;
@@ -2572,8 +2683,50 @@
                 else self.showContentMenu(e.clientX || 0, e.clientY || 0, m);
                 return false;
             };
+            // 移动端：长按消息 400ms 打开操作抽屉（iOS 没有右键）
+            var lpTimer = null, lpStart = null, lpClear = function () {
+                if (lpTimer) clearTimeout(lpTimer);
+                lpTimer = null; lpStart = null;
+            };
+            var msgNodeOf = function (t, root) {
+                while (t && t !== root) {
+                    if (t.id && /^owMsg\d+$/.test(t.id)) return t;
+                    t = t.parentNode;
+                }
+                return null;
+            };
+            $('owMessages').addEventListener('pointerdown', function (e) {
+                if (!self._isMobile()) return;
+                if (e.button && e.button !== 0) return;
+                var node = msgNodeOf(e.target || e.srcElement, this);
+                if (!node) return;
+                var m = self.msgCache[parseInt(node.id.replace('owMsg', ''), 10)];
+                if (!m || m.type === 'system' || m.recalled || m.deleted) return;
+                var onAv = false, n = e.target || e.srcElement;
+                while (n && n !== node) {
+                    if (n.className && String(n.className).indexOf('ow-avatar') >= 0) { onAv = true; break; }
+                    n = n.parentNode;
+                }
+                lpStart = { x: e.clientX || 0, y: e.clientY || 0, m: m, onAv: onAv };
+                if (lpTimer) clearTimeout(lpTimer);
+                lpTimer = setTimeout(function () {
+                    lpTimer = null;
+                    var s = lpStart;
+                    if (!s) return;
+                    self._lpAt = Date.now();
+                    if (s.onAv) self.showUserMenu(s.x, s.y, s.m);
+                    else self.showContentMenu(s.x, s.y, s.m);
+                }, 400);
+            }, false);
+            $('owMessages').addEventListener('pointermove', function (e) {
+                if (!lpStart) return;
+                if (Math.abs((e.clientX || 0) - lpStart.x) > 8 || Math.abs((e.clientY || 0) - lpStart.y) > 8) lpClear();
+            }, false);
+            $('owMessages').addEventListener('pointerup', lpClear, false);
+            $('owMessages').addEventListener('pointercancel', lpClear, false);
             // 点击菜单外 / Esc 关闭
             document.onclick = function (e) {
+                if (self._lpAt && Date.now() - self._lpAt < 700) return;
                 var menu = $('owCtxMenu');
                 if (!menu || menu.style.display === 'none') return;
                 var t = e.target || e.srcElement;
@@ -2857,7 +3010,7 @@
             this._unreadCount = count || 0;
             if (!btn || !txt) return;
             if (!(count > 0)) { btn.style.display = 'none'; return; }
-            txt.innerHTML = (count > 99 ? 99 : count) + ' 条未读';
+            txt.innerHTML = owTr('{count} 条未读', { count: count > 99 ? 99 : count });
             btn.style.display = '';
         },
 
@@ -2935,6 +3088,7 @@
            （v1.3.4：入口控件由侧栏顶部横向标签条改为最左侧图标条 rail；
              onSideTabs / bindSideTabs / Plugin::collect('sidebar.tabs') 为旧名兼容保留） */
         view: 'chat',              // 当前面板：'chat' | 'friends' | 插件自定义名
+        _returnTo: 'chat',         // 移动端：从聊天返回时落回哪个屏
         friends: [],               // 好友列表（含签名，签名可能为空串）
         _sigProbe: null,           // signature 批量接口是否可用（探测一次，缓存结果）
         _tabsExt: [],              // 插件扩展：{ id, label, onShow } 数组
@@ -3113,9 +3267,52 @@
         /** @deprecated v1.3.4：控件已改为 rail，保留旧名仅为兼容外部/插件调用 */
         bindSideTabs: function () { this.bindRail(); },
 
+        _isMobile: function () {
+            try { return !!(w.matchMedia && w.matchMedia('(max-width: 720px)').matches); }
+            catch (e) { return (d.documentElement.clientWidth || w.innerWidth || 1024) <= 720; }
+        },
+        isChatOpen: function () {
+            var l = d.querySelector('.ow-layout');
+            return !!(l && (' ' + l.className + ' ').indexOf(' is-chat-open ') >= 0);
+        },
+        _openChat: function () {
+            var l = d.querySelector('.ow-layout');
+            if (!l) return;
+            l.classList.remove('is-notice-open');
+            l.classList.add('is-chat-open');
+        },
+        _clearChatUrl: function () {
+            try {
+                if (!w.history || !w.history.replaceState) return;
+                var s = (w.location.search || '').replace(/^\?/, '')
+                    .replace(/(^|&)(room|dm)=[^&]*/g, '').replace(/^&+|&+$/g, '');
+                w.history.replaceState({ owView: 'home' }, '', w.location.pathname + (s ? '?' + s : ''));
+            } catch (e) {}
+        },
+        /** 移动端返回：关聊天并回到来源屏（列表 / 联系人 / 通知） */
+        closeChat: function () {
+            var l = d.querySelector('.ow-layout');
+            if (l) l.classList.remove('is-chat-open');
+            this._clearChatUrl();
+            var back = this._returnTo || 'chat';
+            this._returnTo = 'chat';
+            if (back === 'notice') {
+                if (this.view === 'notice') this.openNotices();
+                else this.switchTab('notice');
+            } else if (back === 'friends') this.switchTab('friends');
+            else this.switchTab('chat');
+        },
+
         /** 切到指定标签（核心与插件标签统一入口） */
         switchTab: function (tab) {
             if (!tab) return;
+            if (this._isMobile()) {
+                var lay = d.querySelector('.ow-layout');
+                if (lay) {
+                    if (tab === 'notice') { lay.classList.remove('is-chat-open'); lay.classList.add('is-notice-open'); }
+                    else { lay.classList.remove('is-notice-open'); lay.classList.remove('is-chat-open'); }
+                }
+            }
             // v1.3.126：任何「切到某入口」的调用都先把侧栏放出来 —— 收起状态下从顶栏点通知
             // 红点、或插件直接调 switchTab，面板还藏在 display:none 里，等于点了没反应。
             this.setSidebarCollapsed(false);
@@ -3680,8 +3877,8 @@
                     // 服务端对游客不写成员表，只当「确认进入」处理。
                     if (isPub && meta && !meta.is_member) {
                         self.confirm(
-                            '是否加入「' + name + '」？'
-                            + (isPub ? '\n即将加入公开群聊，请注意个人隐私安全。' : ''),
+                            owTr('加入「{room}」？', { room: name })
+                            + (isPub ? '\n' + owTr('公开群聊，加入后可发言。') : ''),
                             function () { tryJoin('', 1); }
                         );
                         return;
@@ -3710,6 +3907,8 @@
          */
         openDm: function (peer, name) {
             var self = this;
+            var wasOpen = this.isChatOpen();
+            if (this.noticeMode) this.exitNotices();
             var m = /^(\w+):(\d+)$/.exec(peer || '');
             if (!m) return;
             if (m[1] !== 'user') { toast('游客暂不支持私聊'); return; }
@@ -3747,7 +3946,11 @@
             $('owMessages').innerHTML = '';   // v1.2.6：改懒加载，不再放「加载更早消息…」入口节点
             ChatList.activate('owRoomList', 'dm:' + peer);
             $('owSidebar').className = $('owSidebar').className.replace(' open', '');
-            this.setDmUrl(peer);
+            this.setDmUrl(peer, this._isMobile() && wasOpen);
+            if (this._isMobile()) {
+                this._returnTo = this.view === 'notice' ? 'notice' : (this.view === 'friends' ? 'friends' : 'chat');
+                this._openChat();
+            }
             this.scrollBottom();
             // 历史：迟到响应需校验仍停留在同一私聊，否则丢弃（避免串到别的会话）
             var myPeer = peer;
@@ -3999,6 +4202,9 @@
         },
 
         switchRoom: function (id, name, el, fromPop) {
+            var wasOpen = this.isChatOpen();
+            // 从通知/联系人屏进入会话时先还原被 paintNoticeChrome 收起的顶栏控件。
+            if (this.noticeMode) this.exitNotices();
             // v1.1.0：离开私聊态 —— 作废私聊轮询世代号，随后 startPoll 会接管长轮询
             if (this.dm) { this.dmGen = (this.dmGen || 0) + 1; this.dm = null; }
             // v1.1.1：群聊↔群聊切换同样要作废在途轮询。
@@ -4038,7 +4244,11 @@
             }
             if (el) el.className += ' active';
             $('owSidebar').className = $('owSidebar').className.replace(' open', '');
-            if (!fromPop) this.setRoomUrl(id, false);
+            if (!fromPop) this.setRoomUrl(id, this._isMobile() && wasOpen);
+            if (this._isMobile()) {
+                this._returnTo = this.view === 'notice' ? 'notice' : (this.view === 'friends' ? 'friends' : 'chat');
+                this._openChat();
+            }
             var self = this;
             var load = function () {
                 OwApi.post('history', { room_id: id, before: 0 }, function (r) {
@@ -4209,7 +4419,7 @@
 
         // 统一构建消息 DOM：头像一侧依次是「用户组标签、昵称」；
         // 时间不直接显示，悬停气泡满 2 秒才显示；操作（@/私信/收藏/撤回等）改为右键菜单
-        buildMessage: function (m) {
+        buildMessage: function (m, compact) {
             var cls = 'ow-msg';
             if (m.mine) cls += ' mine';
             if (m.type === 'mention') cls += ' mention';
@@ -4254,7 +4464,7 @@
             // meta 行：头像一侧依次是「用户组标签、昵称」；时间不直接显示，
             // 悬停满 2 秒才显示（见 ow-time-show 类与 hideMsgTime）
             var timeHtml = '<span class="ow-msg-time">' + esc(m.date + ' ' + m.time) + '</span>';
-            var tagHtml = roleTag(m.role, m.title, m.uid);
+            var tagHtml = essentialRoleTag(m.role, m.title, m.uid);
             // v1.5.15：游客昵称单独降一档（CSS .ow-msg-nick.ow-nick-guest，14 → 12px）。
             //   根因是**不对称**而非字号：roleTag() 只给 bot/群主/超管/VIP/会员/头衔出标签，
             //   游客一个标签都没有 —— 「游客0046c」孤零零杵着，旁边全是「标签 + 昵称」，
@@ -4277,7 +4487,7 @@
             // 私聊里的图片/文件消息 type 分别是 image/file，用 type 会漏判。
             // ⚠️ 悬停时间也一并去掉：meta 行整体不渲染，留个空 div 只会破坏
             // flex 布局与 .ow-msg-body 的基线对齐。
-            var meta = (isSys || m.dm) ? '' :
+            var meta = (isSys || m.dm || compact) ? '' :
                 '<div class="ow-msg-meta">' + mainPart + timeHtml + '</div>';
 
             return {
@@ -4286,9 +4496,11 @@
                 //（原先只有昵称带 onclick，头像是纯展示，两处行为不一致）。
                 // 游客（uid 为 0）传 0，userCard 内部会走 pmHint 提示不可查看。
                 // 加 .ow-msg-av 可点类供 CSS 给 cursor:pointer 与 hover 反馈。
-                html: (isSys ? '' : '<span class="ow-msg-av" onclick="OwChat.userCard(' + (m.uid || 0) + ',' + jsAttr(m.nickname) + ')">'
+                html: (isSys || compact ? '' : '<span class="ow-msg-av" onclick="OwChat.userCard(' + (m.uid || 0) + ',' + jsAttr(m.nickname) + ')">'
                     + avatarHtml(m.avatar, m.nickname, false, m.role) + '</span>')
                     + '<div class="ow-msg-body">' + meta + content + '</div>'
+                    + (isSys ? '' : '<button class="ow-msg-more" type="button" aria-label="消息操作" title="消息操作" onclick="OwChat.msgMore(this,event)">'
+                        + owIco('more-v', 16) + '</button>')
             };
         },
 
@@ -4494,6 +4706,7 @@
                 return (x < 10 ? '0' : '') + x;
             });
             var timeStr = hm(d.getHours()) + ':' + hm(d.getMinutes());
+            var en = !!(w.OwI18n && w.OwI18n.lang && w.OwI18n.lang() === 'en');
 
             // 归零到当天 00:00 再算天数差，避开时分秒带来的小数误差
             var d0 = new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -4501,10 +4714,18 @@
             var dayDiff = Math.round((n0 - d0) / 86400000);
 
             if (dayDiff === 0) return timeStr;                       // 今天
-            if (dayDiff === 1) return '昨天 ' + timeStr;              // 昨天
-            if (dayDiff < 7) return '周' + '日一二三四五六'[d.getDay()] + ' ' + timeStr;
-            var ymd = (d.getMonth() + 1) + '月' + d.getDate() + '日';
-            if (d.getFullYear() !== now.getFullYear()) ymd = d.getFullYear() + '年' + ymd;
+            if (dayDiff === 1) return (en ? 'Yesterday ' : '昨天 ') + timeStr;
+            if (dayDiff < 7) return (en
+                ? ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()]
+                : '周' + '日一二三四五六'[d.getDay()]) + ' ' + timeStr;
+            var monthsEn = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            var ymd = en
+                ? monthsEn[d.getMonth()] + ' ' + d.getDate()
+                : (d.getMonth() + 1) + '月' + d.getDate() + '日';
+            if (d.getFullYear() !== now.getFullYear()) {
+                ymd = en ? (monthsEn[d.getMonth()] + ' ' + d.getDate() + ', ' + d.getFullYear())
+                         : (d.getFullYear() + '年' + ymd);
+            }
             return ymd + ' ' + timeStr;
         },
 
@@ -4544,12 +4765,27 @@
                 return;
             }
             this.msgCache[m.id] = m;
-            var b = this.buildMessage(m);
+            var prev = null;
+            var prevKids = box.querySelectorAll('.ow-msg');
+            if (prevKids.length) {
+                var lastEl = prevKids[prevKids.length - 1];
+                var lastId = parseInt((lastEl.id || '').replace('owMsg', ''), 10);
+                prev = lastId ? this.msgCache[lastId] : null;
+            }
+            var isSysMsg = function (x) { return !!(x && x.type === 'system'); };
+            var mTs = parseInt(m.ts, 10) || 0;
+            var prevTs = prev ? (parseInt(prev.ts, 10) || 0) : 0;
+            var sameSender = !!(prev && !isSysMsg(prev) && !isSysMsg(m)
+                && (prev.mine ? 1 : 0) === (m.mine ? 1 : 0)
+                && String(prev.uid || 0) === String(m.uid || 0)
+                && (prev.uid ? true : String(prev.nickname || '') === String(m.nickname || '')));
+            var compact = !!(sameSender && mTs && prevTs && Math.abs(mTs - prevTs) <= this.TIME_DIVIDER_GAP);
+            var b = this.buildMessage(m, compact);
             var div = document.createElement('div');
             // v1.5.33：只有「新到达 / 回显」才播入场动画。batch=true 是历史批量渲染
             // （首屏 30 条、向上翻页），那批一起动就成了抽搐，所以不带这个类。
             // ⚠️ addMessageBefore（往上翻历史）与 refreshBotTags（原地替换）都不加。
-            div.className = b.cls + (batch ? '' : ' is-in');
+            div.className = b.cls + (compact ? ' group-continue' : ' group-start') + (batch ? '' : ' is-in');
             div.id = 'owMsg' + m.id;
             div.innerHTML = b.html;
 
@@ -4609,9 +4845,12 @@
         /** 自研确认弹窗（替代原生 confirm） */
         confirmModal: function (text, onOk) {
             var self = this;
+            var parts = String(text || '').split('\n');
+            var title = parts.shift() || '确认';
+            var body = parts.join('\n');
             this.openModal(
-                '<h3>确认操作</h3>'
-                + '<p class="ow-modal-desc">' + esc(text) + '</p>'
+                '<h3>' + esc(title) + '</h3>'
+                + (body ? '<p class="ow-modal-desc">' + esc(body) + '</p>' : '')
                 + '<div class="ow-modal-actions">'
                 + '<button class="ow-btn ow-btn-ghost" id="owCfmNo">取消</button>'
                 + '<button class="ow-btn ow-btn-danger" id="owCfmOk">确定</button></div>'
@@ -4954,6 +5193,17 @@
         /** 插件扩展点：构造引用内容时可改写（服务端另有 message.quote 钩子做最终校验） */
         onQuote: function (fn) { if (typeof fn === 'function') this._quoteExt.push(fn); },
         showCtxMenu: function (x, y, m) { this.showUserMenu(x, y, m); },
+        /** 桌面消息气泡的「更多」按钮 → 内容操作菜单 */
+        msgMore: function (btn, ev) {
+            if (ev) { if (ev.preventDefault) ev.preventDefault(); if (ev.stopPropagation) ev.stopPropagation(); }
+            var node = btn;
+            while (node && !(node.id && /^owMsg\d+$/.test(node.id))) node = node.parentNode;
+            if (!node) return;
+            var m = this.msgCache[parseInt(node.id.replace('owMsg', ''), 10)];
+            if (!m) return;
+            var r = btn.getBoundingClientRect();
+            this.showContentMenu(r.left, r.bottom + 4, m);
+        },
         hideCtxMenu: function () {
             var menu = $('owCtxMenu');
             if (menu) { menu.style.display = 'none'; menu._from = ''; }
@@ -5049,9 +5299,9 @@
             //            中间是空白的，用户可能以为还在跟刚才那个人聊天
             //   'conv'   没选中任何会话
             if (this._inputGate === 'join') { toast('请先加入该群聊后再发言'); return; }
-            if (this._inputGate === 'friend') { toast('请先选择一个联系人'); return; }
-            if (this._inputGate === 'conv') { toast('请先选择一个会话'); return; }
-            if (this._inputGate === 'room') { toast('请先从左侧选择一个群聊'); return; }
+            if (this._inputGate === 'friend') { toast('先选择一个联系人'); return; }
+            if (this._inputGate === 'conv') { toast('先选择一个会话'); return; }
+            if (this._inputGate === 'room') { toast('先选择一个群聊'); return; }
             /* 待发区（图片/视频）非空时，「发送」= 文字 + 媒体合成一条 rich 消息。
                必须放在下面「文字为空就直接 return」**之前**：只发图不打字是完全正常的操作。 */
             if (opt.content == null && !opt.type) {
@@ -5096,6 +5346,7 @@
             // 输入区同时释放，用户可以继续打字（评审定的轻量非阻塞交互；失败留「重试」入口）。
             this.addPending(cid, payload);
             if (!opt.type || opt.type === 'text') input.value = '';
+            if (self.syncSend) self.syncSend();
             this.clearQuote();   // 发送即清引用条（内容已装进 payload；失败重试用的也是它）
             this.autoGrow();
             this.afterSendClearJump();
@@ -5411,7 +5662,7 @@
                     // → 静默 return，签名从此不再显示。给个稳定 id 让插件不再猜结构。
                     + '<div id="owCardExtras"></div>'
                     + (acts ? '<div class="ow-modal-actions">' + acts + '</div>' : '')
-                );
+                , 420, 'ow-modal-profile');
                 // v1.5.17：资料卡渲染完成 —— 让插件装饰卡片（如顶部横幅背景图）。
                 // onCardMetaTop / #owCardExtras 都动不了头部结构，故在 openModal 之后
                 // 把渲染结果与卡片数据交给插件做增量 DOM（详见 onCardRendered 注释）。
@@ -5442,7 +5693,7 @@
                       + (canStatus ? '<span class="ow-online-dot"></span>' : '')
                       + avatarHtml(o.avatar, o.nickname, true, o.role)
                       + '<span class="ow-online-name" onclick="OwChat.userCard(' + (o.uid || 0) + ',' + jsAttr(o.nickname) + ')">' + esc(o.nickname) + '</span>'
-                      + roleTag(o.role, '', o.uid) + '</li>';
+                      + essentialRoleTag(o.role, '', o.uid) + '</li>';
             }
             box.innerHTML = html;
         },
@@ -5486,7 +5737,7 @@
                 + dot
                 + avatarHtml(o.avatar, o.nickname, true, o.role)
                 + '<span class="ow-online-name"' + nameAttr + '>' + esc(o.nickname) + '</span>'
-                + roleTag(o.role, '', o.uid) + '</li>';
+                + essentialRoleTag(o.role, '', o.uid) + '</li>';
         },
 
         /* ---------- 右侧栏「所有成员」按需加载（v1.5.29） ----------
@@ -5656,6 +5907,10 @@
         /** 进入通知模式：先停掉群聊/私聊长轮询，再把主区换成通知流 */
         openNotices: function () {
             var self = this;
+            if (this._isMobile()) {
+                var layN = d.querySelector('.ow-layout');
+                if (layN) { layN.classList.remove('is-chat-open'); layN.classList.add('is-notice-open'); }
+            }
             if (!this.noticeMode) {
                 this._titleBefore = ($('owRoomName') || {}).textContent || '';
                 this.noticeMode = true;
@@ -5690,6 +5945,10 @@
         /** 离开通知标签：还回顶栏那几样与房间绑定的控件，并清掉通知态 */
         exitNotices: function () {
             if (!this.noticeMode) return;
+            if (this._isMobile()) {
+                var layN = d.querySelector('.ow-layout');
+                if (layN) layN.classList.remove('is-notice-open');
+            }
             this.noticeMode = false;
             this.paintNoticeChrome(false);
             var n = $('owRoomName');
@@ -5780,6 +6039,8 @@
             var input = $('owInput');
             this._inputGate = kind || '';
             if (!input) return;
+            // 输入框的 disabled 会在下面各分支里改，统一延后一帧同步发送按钮。
+            if (this.syncSend) setTimeout(this.syncSend, 0);
             // 工具栏一并禁用：选图/选文件会直接走 send 发出消息，
             // 只禁输入框的话，用户还能从工具栏把消息发到「已经关掉的会话」里。
             var tbIds = ['owBtnEmoji', 'owBtnImage', 'owBtnFile'], i, tb;
@@ -5793,7 +6054,7 @@
             if (!kind) {
                 if (box) { box.style.display = 'none'; box.innerHTML = ''; }
                 input.disabled = false;
-                input.placeholder = '输入消息，按 Enter 发送，Ctrl+V 粘贴图片';
+                input.placeholder = owTr('输入消息');
                 return;
             }
             input.disabled = true;
@@ -5801,23 +6062,23 @@
             // 这里只禁用不隐藏：保留输入区高度，切回普通会话时布局不跳。
             if (kind === 'notice') {
                 if (box) { box.style.display = 'none'; box.innerHTML = ''; }
-                input.placeholder = '系统通知不能回复';
+                input.placeholder = owTr('系统通知不支持回复');
                 return;
             }
             if (kind === 'join') {
                 if (box) {
-                    box.innerHTML = '<span>你还没有加入该群聊，加入后即可发言</span>'
+                    box.innerHTML = '<span>加入群聊后可发言</span>'
                         + '<button class="ow-btn ow-btn-primary ow-btn-mini" onclick="OwChat.joinCurrentRoom()">加入群聊</button>';
                     box.style.display = '';
                 }
-                input.placeholder = '加入群聊后即可发言';
+                input.placeholder = owTr('加入群聊后可发言');
                 return;
             }
             // 'friend' / 'conv' / 'room'：没有具体对话对象，只禁用并给一句话提示
             if (box) { box.style.display = 'none'; box.innerHTML = ''; }
-            input.placeholder = (kind === 'friend') ? '请先选择一个联系人'
-                : (kind === 'room') ? '请先从左侧选择一个群聊'
-                : '请先选择一个会话';
+            input.placeholder = (kind === 'friend') ? owTr('先选择一个联系人')
+                : (kind === 'room') ? owTr('先选择一个群聊')
+                : owTr('先选择一个会话');
         },
 
         /**
@@ -5881,7 +6142,7 @@
             // 不属于私聊也不属于群聊，给一个中性空态，别误用私聊那套入口。
             var noTarget = !this.dm && !this.room;
             if (noTarget) {
-                box.innerHTML = '<div class="ow-panel-hint">请先选择一个会话</div>';
+                box.innerHTML = '<div class="ow-panel-hint">先选择一个会话</div>';
                 var memSec0 = document.querySelector('.ow-panel-members');
                 if (memSec0) memSec0.style.display = 'none';
                 return;
@@ -5914,8 +6175,13 @@
             var meId = me.id || 0;
             var isOwner = !!meId && meId === (r.owner_id || 0);
 
-            // 图标位放**群头像**：这一行代表的就是这个会话，头像比一枚通用齿轮更能说明「我在看哪个群」
-            box.innerHTML = entryRow('群聊信息', 'gear', 'OwChat.openRoomEdit()', r.avatar)
+            // 群卡片 + 「群聊设置」入口；插件公告等入口继续走 #owREExtras。
+            var roomAv = roomAvatarHtml(r.avatar, 'lg', 'ow-avatar ow-avatar-lg ow-avatar-group');
+            var memberText = r.member_count ? (r.member_count + ' 位成员') : '';
+            box.innerHTML = '<div class="ow-room-card">' + roomAv
+                + '<div class="ow-room-card-id"><b>' + esc(r.name) + '</b>'
+                + (memberText ? '<span>' + esc(memberText) + '</span>' : '') + '</div></div>'
+                + entryRow('群聊设置', 'gear', 'OwChat.openRoomEdit()')
                 + '<div class="ow-panel-entry-row" id="owREExtras"></div>';
 
             // 插件扩展钩子（v0.0.102 起）：群公告等入口往 #owREExtras 追加
@@ -6345,7 +6611,7 @@
             var self = this;
             // v1.2.32：游客不能搜索（没有会话体系，搜什么都是空的）
             if (!this.cfg.actor || this.cfg.actor.kind !== 'user') {
-                toast('游客暂不支持搜索');
+                toast('登录后可搜索');
                 return;
             }
             this._srScope = scope || 'current';
@@ -6354,7 +6620,7 @@
             this._srData = [];
             var cur = this.searchContext();
             var hint = this._srScope === 'current'
-                ? (cur ? ('在「' + cur.name + '」里搜索') : '当前没有打开的会话')
+                ? (cur ? owTr('在「{room}」里搜索', { room: cur.name }) : '先打开一个会话')
                 : '输入关键词';
             var defs = this.searchScopes(), i;
             var scopeHtml = '';
@@ -6368,7 +6634,7 @@
                 // v1.2.32：maxlength=50（与服务端 cleanSearchKey 一致）
                 + '<input class="ow-input" id="owSrQ" maxlength="50" placeholder="' + esc(hint) + '" autocomplete="off">'
                 + '<div class="ow-sr-list" id="owSrList"></div>'
-            , 460);
+            , 460, 'ow-modal-search');
             var q = $('owSrQ');
             this.renderSearchResults([]);
             if (!q) return;
@@ -6411,7 +6677,7 @@
                 if (qi) {
                     if (sc === 'current') {
                         var c2 = self.searchContext();
-                        qi.placeholder = c2 ? ('在「' + c2.name + '」里搜索') : '当前没有打开的会话';
+                        qi.placeholder = c2 ? owTr('在「{room}」里搜索', { room: c2.name }) : '先打开一个会话';
                     } else {
                         qi.placeholder = '输入关键词';
                     }
@@ -6797,17 +7063,43 @@
                     run: function () { self.userCard(me.id, me.nickname); }
                 });
                 items.push({ sep: true });
-                items.push({ t: '创建群聊', run: function () { self.roomCreateModal(); } });
-                items.push({ t: '设置', run: function () { self.openSettings(); } });
+                items.push({ t: '新建群聊', icon: 'plus', run: function () { self.roomCreateModal(); } });
+                items.push({ t: '个人设置', icon: 'gear', run: function () { self.openSettings(); } });
                 if (this.cfg.actor.role === 'admin') items.push({ t: '管理后台', run: function () { location.href = '?page=admin'; } });
                 items.push({ t: '退出登录', run: function () {
-                    self.confirmModal('确定退出登录吗？', function () {
+                    self.confirmModal('退出登录？\n退出后需要重新登录。', function () {
                         OwApi.secure('logout', {}, function () { location.href = '?page=login'; });
                     });
                 } });
             } else {
                 items.push({ t: '登录', icon: 'user', run: function () { location.href = '?page=login'; } });
                 items.push({ t: '注册', icon: 'plus', run: function () { location.href = '?page=register'; } });
+            }
+            // 移动端：插件 rail 入口收进「我的」抽屉，不挤底部导航。
+            if (this._isMobile()) {
+                var extBtns = d.querySelectorAll('.ow-rail > .ow-rail-btn[data-tab]'), k, eb, etab, extras = [];
+                for (k = 0; k < extBtns.length; k++) {
+                    eb = extBtns[k];
+                    etab = eb.getAttribute('data-tab');
+                    if (etab !== 'chat' && etab !== 'friends' && etab !== 'notice') extras.push(eb);
+                }
+                if (extras.length) {
+                    items.push({ sep: true });
+                    items.push({ label: true, t: '更多功能' });
+                    for (k = 0; k < extras.length; k++) {
+                        (function (btn) {
+                            var lb = btn.querySelector('.ow-rail-lb');
+                            var label = (lb ? lb.textContent : '').trim() || btn.getAttribute('aria-label') || btn.getAttribute('title') || '插件';
+                            items.push({
+                                t: label, icon: 'puzzle',
+                                run: function () {
+                                    self.hideCtxMenu();
+                                    setTimeout(function () { btn.click(); }, 0);
+                                }
+                            });
+                        })(extras[k]);
+                    }
+                }
             }
             this._ctxOpenAt(items, 'account', $('owRailMenu'), 'bottom');
         },
@@ -6918,10 +7210,9 @@
            混进保存按钮会让「改个字号还要点保存」显得莫名其妙。 */
         fontKey: 'owl_fontsize',
         FONTS: [
-            { v: 'site', b: 'A', t: '站点原始字号' },
-            { v: 'compact', b: 'A', t: '紧凑' },
-            { v: 'standard', b: 'A', t: '标准' },
-            { v: 'comfortable', b: 'A', t: '舒适' }
+            { v: 'compact', b: 'A', t: '小' },
+            { v: 'site', b: 'A', t: '标准' },
+            { v: 'comfortable', b: 'A', t: '大' }
         ],
         getFont: function () {
             var v = '';
@@ -6979,7 +7270,7 @@
                 var mm = /(?:^|; )ow_lang=([^;]*)/.exec(document.cookie);
                 cur = mm ? decodeURIComponent(mm[1]) : '';
             } catch (e) {}
-            var opts = [{ v: 'site', t: '跟随站点默认' }, { v: 'zh', t: '简体中文' }];
+            var opts = [{ v: 'site', t: '站点默认' }, { v: 'zh', t: '简体中文' }];
             for (var i = 0; i < packs.length; i++) opts.push({ v: packs[i].code, t: packs[i].label });
             return '<div class="ow-form-item"><label>语言</label>'
                 + this.optGridHtml(opts, cur, 'OwChat.langPick')
@@ -7022,7 +7313,7 @@
                 + '<input type="file" id="owSetAvatarFile" accept="image/*" style="display:none">'
                 + '</div>'
                 + '<div class="ow-form-item"><label>昵称</label><input class="ow-input" id="owSetNick" value="' + esc(me.nickname) + '">'
-                + '<p style="font-size:12px;color:var(--ow-text-sub);margin-top:4px">2-20 个字符，支持中英文、数字、下划线与短横线，不含空格或 @；允许重名。</p></div>'
+                + '<p style="font-size:12px;color:var(--ow-text-sub);margin-top:4px">2-20 个字符，允许重名。</p></div>'
                 + '</div>'
                 + '<div class="ow-pagetab-panel" data-pane="look" style="display:none">'
                 // v1.2.37：第三方应用授权已剥离为插件 oauth-core，**按需加载**。
@@ -7033,14 +7324,12 @@
                 // 混进保存会让「改个主题还要点保存」显得莫名其妙。
                 // 这一页是「本机外观偏好」的落点：色系插件按 #owThemeSeg 锚点插到日夜模式后面，
                 // 聊天背景插件把自己的区块 append 到这一页（两个都是插件侧的接缝）。
-                + '<div class="ow-form-item"><label>日夜模式</label>'
+                + '<div class="ow-form-item"><label>外观模式</label>'
                 + this.themeSegHtml()
-                + '<p class="ow-form-hint">跟随系统会随操作系统的深浅色设置自动切换。</p>'
                 + '</div>'
                 + '<div class="ow-form-item"><label>字体大小</label>'
                 + this.optGridHtml(this.FONTS, this.getFont(), 'OwChat.fontPick')
-                + '<p class="ow-form-hint">只调消息正文、输入框和两侧列表这几处；'
-                + '「站点原始字号」= 不启用本偏好。只影响这台浏览器，不随「保存」提交。</p>'
+                + '<p class="ow-form-hint">只影响这台浏览器。</p>'
                 + '</div>'
                 + this.langGridHtml()
                 + '</div>'
@@ -7048,7 +7337,7 @@
                 + ((w.OwOauth) ? '<div class="ow-form-item"><label>第三方授权</label>'
                     + '<button class="ow-btn ow-btn-ghost ow-btn-block" onclick="OwOauth.open()">管理应用授权</button>'
                     + '<p style="font-size:12px;color:var(--ow-text-sub);margin-top:4px">'
-                    + '把资料、聊天记录等权限授予你安装的插件应用；随时可在此取消。</p></div>' : '')
+                    + '管理已授权的插件应用。</p></div>' : '')
                 // v1.3.55：改密码入口。单独一个弹窗而不是塞进这个表单 ——
                 // 「保存资料」和「改密码」是两回事，混在一个提交按钮里迟早出现
                 // 「改了昵称顺手把密码框当空值提交」这类事故。
@@ -7058,14 +7347,14 @@
                 + '<div class="ow-form-item"><label>账号安全</label>'
                 + '<button class="ow-btn ow-btn-ghost ow-btn-block" onclick="OwChat.openPwdDialog()">修改登录密码</button>'
                 + '<p class="ow-form-hint">' + (me.email
-                        ? '需要当前密码与邮箱验证码；改完当前设备不会掉线。'
-                        : '账号还没有可用邮箱，本次只验证当前密码。') + '</p>'
+                        ? '需要当前密码与邮箱验证码。'
+                        : '当前账号没有可用邮箱，只需验证当前密码。') + '</p>'
                 + (me.email ? '<div class="ow-set-mail"><span>账号邮箱</span><b>' + esc(owMaskEmail(me.email)) + '</b></div>' : '')
                 // v1.3.132：改登录邮箱的能力在「邮箱验证」插件里（它才有发码通道与限流）。
                 // 插件停用/没装时它的 chat.js 不加载，这里自然什么都不显示 —— 核心不需要开关判断。
                 + (w.OwEvEmail ? '<button class="ow-btn ow-btn-ghost ow-btn-block" style="margin-top:8px"'
                     + ' onclick="OwEvEmail.open()">修改登录邮箱</button>'
-                    + '<p class="ow-form-hint">改完要用新邮箱收一次验证码；下次登录起用新邮箱或用户 ID 都可以。</p>' : '')
+                    + '<p class="ow-form-hint">需要新邮箱验证码。</p>' : '')
                 + '</div>'
                 + '</div>'
                 + '</div>'
@@ -7811,10 +8100,36 @@
             m.className = 'ow-modal' + (cls ? ' ' + cls : '') + ' is-in';
             m.style.maxWidth = width ? (parseInt(width, 10) + 'px') : '';
             m.innerHTML = '<button class="ow-modal-close" onclick="OwChat.closeModal()">✕</button>' + html;
-            $('owModalMask').style.display = '-webkit-flex';
-            $('owModalMask').style.display = 'flex';
+            m.setAttribute('role', 'dialog');
+            m.setAttribute('aria-modal', 'true');
+            var heading = m.querySelector('h3');
+            if (heading) {
+                if (!heading.id) heading.id = 'owModalTitle';
+                m.setAttribute('aria-labelledby', heading.id);
+            }
+            var mask = $('owModalMask');
+            var maskCls = 'ow-modal-mask';
+            if (cls === 'ow-modal-search') maskCls += ' is-search';
+            else if (cls === 'ow-modal-profile' || (cls && cls.indexOf('ow-modal-fixed') >= 0)) maskCls += ' is-fullscreen';
+            mask.className = maskCls;
+            mask.style.display = '-webkit-flex';
+            mask.style.display = 'flex';
+            this._focusBefore = d.activeElement;
+            d.body.style.overflow = 'hidden';
+            var focusables = m.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+            if (focusables.length) {
+                var firstFocus = focusables[0];
+                setTimeout(function () { try { firstFocus.focus(); } catch (e) {} }, 0);
+            }
         },
-        closeModal: function () { $('owModalMask').style.display = 'none'; },
+        closeModal: function () {
+            var mask = $('owModalMask');
+            if (mask) mask.style.display = 'none';
+            d.body.style.overflow = '';
+            var prev = this._focusBefore;
+            this._focusBefore = null;
+            if (prev && prev.focus) { try { prev.focus(); } catch (e) {} }
+        },
 
         /** 自研确认弹窗（v1.0.112 前台版）：替代原生 confirm——全站禁止浏览器原生弹窗 */
         confirm: function (text, onOk) {
@@ -7822,10 +8137,13 @@
             mask.className = 'ow-modal-mask';
             mask.style.display = 'flex';
             mask.style.zIndex = 200;   // 叠在普通弹窗（z-index 100）之上
+            var parts = String(text || '').split('\n');
+            var title = parts.shift() || '确认';
+            var body = parts.join('\n');
             mask.innerHTML = '<div class="ow-modal is-in" style="width:340px;max-width:92%">'
                 + '<button class="ow-modal-close">✕</button>'
-                + '<h3>确认操作</h3>'
-                + '<p class="ow-modal-desc">' + esc(text).replace(/\n/g, '<br>') + '</p>'
+                + '<h3>' + esc(title) + '</h3>'
+                + (body ? '<p class="ow-modal-desc">' + esc(body) + '</p>' : '')
                 + '<div class="ow-modal-actions">'
                 + '<button class="ow-btn ow-btn-ghost">取消</button>'
                 + '<button class="ow-btn ow-btn-danger">确定</button></div></div>';
@@ -8398,10 +8716,13 @@
             var mask = document.createElement('div');
             mask.className = 'ow-modal-mask';
             mask.style.display = 'flex';
+            var parts = String(text || '').split('\n');
+            var title = parts.shift() || '确认';
+            var body = parts.join('\n');
             mask.innerHTML = '<div class="ow-modal is-in" style="width:340px;max-width:92%">'
                 + '<button class="ow-modal-close">✕</button>'
-                + '<h3>确认操作</h3>'
-                + '<p class="ow-modal-desc">' + esc(text).replace(/\n/g, '<br>') + '</p>'
+                + '<h3>' + esc(title) + '</h3>'
+                + (body ? '<p class="ow-modal-desc">' + esc(body) + '</p>' : '')
                 + '<div class="ow-modal-actions">'
                 + '<button class="ow-btn ow-btn-ghost">取消</button>'
                 + '<button class="ow-btn ow-btn-danger">确定</button></div></div>';

@@ -6,128 +6,130 @@
    ========================================================================== */
 
 :root {
-    /* 色系按 WCAG AA 校准（v1.0.56）：品牌色保留用于装饰/边框，
-       承载文字或白字的场景一律使用加深后的 *-strong / 深色调，确保对比度 ≥4.5:1 */
-    --ow-primary: #00A0E9;          /* 品牌蓝：仅用于描边、图标底、焦点态，不承载文字 */
-    --ow-primary-strong: #0099FF;   /* 主色蓝（v1.0.122 调整）；实心按钮白字建议配合 hover 深蓝 #00558F 保证对比 */
-    --ow-primary-dark: #00558F;     /* 悬停、选中态（白 7.79:1、浅蓝底 7.09:1） */
+    /* ===== Swiss Blue tokens (DESIGN.md §3) =====
+       语义拆分：brand 装饰 / action 实心底 / link 文字与图标 / focus-ring 焦点。
+       旧名在文件后半段保留为别名，供尚未迁移的插件 CSS 使用。 */
+    --ow-brand: #0652D9;
+    --ow-action: #1D4ED8;
+    --ow-action-hover: #1E40AF;
+    --ow-link: #1D4ED8;
+    --ow-focus-ring: #1D4ED8;
+    --ow-control-border: #8C8C8C;
+    --ow-danger-action: #B42318;
+    --ow-danger-action-hover: #991B1B;
+    --ow-primary-soft: #EEF2FF;
+    --ow-primary-soft-fg: #1E3A8A;
     --ow-bg: #FFFFFF;
-    --ow-bg-sub: #F5F5F5;           /* 次级底色：白卡片内的小块（表头/提示条/禁用输入框） */
-    /* v1.2.55：--ow-bg-sub 由 #F5F7FA 改为 #F5F5F5（用户定版），与聊天区底色
-       --ow-bg-chat 对齐 —— 全站只留这一档浅灰，白色卡片（「内容岛」）浮在它上面，
-       不再出现两种灰。
-       ⚠️ 副作用：本变量同时被若干 hover 复用，落在**灰底区域**（两侧栏 / 顶栏）上的
-       hover 会与底色同色而失效 —— 那些点已改用 --ow-bg-chat-hover(#EBEBEB)，见下方各处注释。 */
-    --ow-bg-chat: #F5F5F5;
-    --ow-bg-chat-grad: none;             /* 纯色，不需要渐变 */
-    --ow-bg-chat-hover: #EBEBEB;         /* hover 反馈：略深一档的同色系灰 */
-    --ow-border: #E0E4E8;            /* 装饰性分隔线（卡片/表格），非交互组件 */
-    --ow-border-control: #8C8C8C;    /* 输入控件边框：对白底 3.36:1，满足 UI 组件 3:1 */
-    /* v1.3.125：**可输入字段**自己的描边（.ow-input / 侧栏搜索框 / 分页跳转框）。
-       站方连着两轮说边框太深：这些控件本身已经有 --ow-bg-sub 的灰底把轮廓撑出来了，
-       再套一圈 3.36:1 的深灰就成了「灰药丸描黑边」。字段走这一档淡的，
-       透明底的按钮/分段控件（.ow-btn-ghost / .ow-seg-btn）继续用上面那档深描边，
-       否则它们没有底色、淡下去就找不着边界。深色侧不动（站方没反馈，且深底上边框本就更难看见）。 */
+    --ow-bg-sub: #F6F7F9;
+    --ow-bg-chat: #F7F8FA;
+    --ow-bg-chat-grad: none;
+    --ow-bg-hover: #EDF0F4;
+    --ow-bg-active: #E8EDF5;
+    --ow-surface: #FFFFFF;
+    --ow-surface-2: #FFFFFF;
+    --ow-panel-bg: #FFFFFF;
+    --ow-field: #F1F3F5;
     --ow-field-border: #BFC4CB;
-    --ow-text: #333333;
-    --ow-text-sub: #5C5C5C;         /* 副文本：白底 6.69、浅灰底 6.23、徽章底 5.23 */
-    --ow-text-title: #1A1A1A;
-    /* v1.5.12：消息区的用户昵称（.ow-msg-nick）。原先写死 #8E8EA0，深色下能用
-       （对聊天底 5.40:1）纯属那个色恰好两边都过线，不是有意设计 —— 收成变量后
-       深浅各自显式给值，换配色时不必再靠巧合。
-       浅色这一档比原值深，是**字号放大后重算对比度的结果**。
-       原色 #8E8EA0 对聊天底 #F5F5F5 只有 2.95:1；12px 时代它就不达标，
-       站方把昵称放大后，这个色继续用就是明知故犯。
-       取 #6E6E80（聊天底 4.58、白底 4.99），色相与原值同族
-       （R=G、B 略高的蓝紫灰），观感仍是「退后但不隐形」。 */
-    --ow-nick: #6E6E80;
-    --ow-toast-bg: #1A1A1A;         /* 提示条：深色底白字（深色模式整体翻转，见 dark 块） */
+    --ow-border: #E5E7EB;
+    --ow-border-strong: #D1D5DB;
+    --ow-text: #111827;
+    --ow-text-2: #5B6472;
+    --ow-text-muted: #667085;
+    --ow-placeholder: #5F6B7A;
+    --ow-text-title: #0F172A;
+    --ow-nick: #5B6472;
+    --ow-on-accent: #FFFFFF;
+    --ow-success: #067647;
+    --ow-success-soft: #ECFDF3;
+    --ow-warning: #B54708;
+    --ow-warning-soft: #FFFAEB;
+    --ow-danger: #B42318;
+    --ow-danger-soft: #FEF3F2;
+    --ow-info-soft: #EEF2FF;
+    --ow-dot: #E5484D;
+    --ow-toast-bg: #111827;
     --ow-toast-fg: #FFFFFF;
-    --ow-green: #237804;            /* 成功 / 可发言：白底 5.59、浅绿标签底 5.44 */
-    --ow-yellow: #874D00;           /* 称号标签等：浅黄底 6.53 */
-    --ow-red: #C41D1F;              /* 危险 / 管理员标签：白底 5.93、浅红底 5.39，白字 5.93 */
-    /* v1.3.53：小红点专用色（.ow-dot）。不复用 --ow-red —— 那个是为「浅底上的危险文字」
-       调的深红，画成实心小点会偏暗、像脏污；这里要的是提示性的亮红。 */
-    --ow-dot-bg: #E5484D;
-    --ow-orange: #A05000;           /* VIP 标签：浅橙底 5.41、白底 5.77 */
-    --ow-blue-light: #E6F7FF;
-    /* v1.1.22：悬浮底色独立成变量。原先 hover 直接复用 --ow-blue-light(#E6F7FF)，
-       导致「改悬浮色」会连带动到 3 处非悬浮：.ow-room-item/.ow-cl-item/.ow-admin-menu
-       的 .active 选中态，以及 .ow-msg.mine 自己消息气泡底色。
-       用户只要求改悬浮，故这里另开一个变量，两类语义彻底分开。 */
-    /* v1.1.23：#E4E4E4 → #E8E8E8（悬浮稍亮一点，与选中态 #E4E4E4 拉开层次）。 */
-    --ow-hover-bg: #E8E8E8;
-    /* v1.1.23：选中态独立成变量。原先 3 处 .active 都复用 --ow-blue-light(#E6F7FF 浅蓝)，
-       本轮按要求改成中性灰 #E4E4E4。新增独立变量而不是改 --ow-blue-light，
-       因为后者还被 .ow-msg.mine（自己消息气泡底色）共用 —— 那是**非选中**场景，
-       跟「当前选中行」语义无关，不能一起改。 */
-    --ow-active-bg: #E4E4E4;
-    /* v1.5.16：设置弹窗左侧导航栏底色恢复成**白**（站方要求）。
-       此前是 v1.3.120 定的 #F7F7F7，比弹窗面深一档。现在改回与弹窗同面 ——
-       值直接指向 --ow-bg（.ow-modal 的底色），不再单写颜色：
-         · 浅色 #FFFFFF = 白，与弹窗一致 ✅
-         · 深色 #1C1C1E = 与弹窗同面，不用再单独给一档灰
-       「恢复」二字是真的恢复：v1.3.121 之前 .ow-navset-nav **压根没有 background**，
-       看到的就是弹窗的白底；v1.3.120 才加的这层 #F7F7F7。
-       ⚠️ 保留这个变量而不是删掉 background 声明：将来若又要区分，
-         改这一处即可，不必回头翻历史。 */
+    --ow-brand-bg: #F1F3F5;
+    --ow-brand-hover: #E9EDF2;
     --ow-navset-bg: var(--ow-bg);
+    --ow-input-bg-focus: #FFFFFF;
+    --ow-scrollbar: #D1D5DB;
+    --ow-scrollbar-hover: #9CA3AF;
+    --ow-switch-off: #C3C8D0;
+    --ow-warn-bg: #FFFAEB;
+    --ow-warn-border: #FEDF89;
+    --ow-plug-on-bg: #ECFDF3;
+
+    /* Legacy aliases: keep for plugins until the Phase 4 audit is done. */
+    --ow-primary: var(--ow-brand);
+    --ow-primary-strong: var(--ow-action);
+    --ow-primary-dark: var(--ow-action-hover);
+    --ow-border-control: var(--ow-control-border);
+    --ow-blue-light: var(--ow-primary-soft);
+    --ow-green: var(--ow-success);
+    --ow-yellow: var(--ow-warning);
+    --ow-red: var(--ow-danger);
+    --ow-orange: #B45309;
+    --ow-dot-bg: var(--ow-dot);
+    --ow-hover-bg: var(--ow-bg-hover);
+    --ow-active-bg: var(--ow-bg-active);
+    --ow-bg-chat-hover: var(--ow-bg-hover);
+
+    /* Typography */
     --ow-font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
     --ow-mono: Consolas, Monaco, "Courier New", monospace;
-    /* v1.1.17：顶栏高度带。实测 = padding 10+10 + 图标钮 36 + 下边框 1 = 57px。
-       抽成变量的唯一目的：**让右侧栏「群聊设置」下方的分隔线与顶栏下边框
-       落在同一水平线上**（见文件末尾 v1.1.17 的桌面端对齐块）。
-       改这个值只需改这一处，两侧同时跟随，不会各自漂移。 */
+    --ow-text-xs: 11px;
+    --ow-text-sm: 12px;
+    --ow-text-base: 15px;
+    --ow-text-md: 16px;
+    --ow-text-lg: 18px;
+    --ow-text-xl: 20px;
+    --ow-text-2xl: 24px;
+    --ow-text-3xl: 28px;
+
+    /* Spacing (4pt) */
+    --ow-space-1: 4px;
+    --ow-space-2: 8px;
+    --ow-space-3: 12px;
+    --ow-space-4: 16px;
+    --ow-space-5: 20px;
+    --ow-space-6: 24px;
+    --ow-space-8: 32px;
+    --ow-space-10: 40px;
+    --ow-space-12: 48px;
+    --ow-space-16: 64px;
+
+    /* Radius */
+    --ow-radius-xs: 4px;
+    --ow-radius-sm: 8px;
+    --ow-radius-md: 12px;
+    --ow-radius-lg: 16px;
+    --ow-radius-xl: 20px;
+    --ow-radius-full: 999px;
+
+    /* Shadow */
+    --ow-shadow-sm: 0 1px 2px rgba(16, 24, 40, .05);
+    --ow-shadow-md: 0 8px 24px rgba(16, 24, 40, .12);
+    --ow-shadow-lg: 0 20px 48px rgba(16, 24, 40, .18);
+
+    /* Layout (current values; desktop values are updated in Task 4) */
     --ow-topbar-h: 57px;
-    /* 顶部品牌条 .ow-brand 的高度带（**不是** .ow-topbar 那条 57）：
-       实测 = padding 9+9 + 头像胶囊 28 + 下边框 1 = 47px。
-       抽成变量是因为窄屏有三处 fixed 浮层要「让开品牌条」（.ow-mask / .ow-online /
-       .ow-sidebar 的 top），原先各写各的 57px，改高度必漏一处。
-       v1.5.0：品牌条右侧的胶囊已挪进账号菜单，这个值现在只在窄屏（≤720px，
-       品牌条独占一行）还可能比 --ow-head-h 小；宽屏下品牌条被 flex stretch 拉到整带高。 */
     --ow-brand-h: 47px;
-    /* v1.5.0：顶部「一条带」的高度（品牌条 + 消息顶栏并排的那一行）。
-       宽屏 = 顶栏高 57（品牌条被 stretch 拉平，两条下边框才能落在同一像素行）；
-       窄屏（≤720px）两者上下堆叠，这条变量在文末响应式块里重定义为 品牌条 + 顶栏。
-       用途只有一个：三处 fixed 浮层（.ow-mask / .ow-online / .ow-sidebar）的 top
-       —— 它们必须让开整条带子，而不是只让开品牌条。 */
     --ow-head-h: var(--ow-topbar-h);
-    /* v1.5.0：左侧两列的宽度真源。品牌条要精确等于「rail + 会话列表」的宽度
-       （右沿与侧栏右边框同一条竖线），所以这三次宽度只能有一处定义。 */
     --ow-rail-w: 56px;
     --ow-sidebar-w: 240px;
-    /* v1.3.25：以下是**为了深/浅色切换**补的语义变量。
-       原先这些位置写死 #FFFFFF / #F5F5F5，深色模式无法覆盖 —— 只能靠逐个
-       选择器重写，既啰嗦又容易漏。收进变量后，深色只需在 [data-theme="dark"]
-       里重定义一次，与其余变量同一套机制。 */
-    --ow-surface: #FFFFFF;          /* 浮层/卡片/气泡的"面"：白卡片、消息气泡、折叠块 */
-    --ow-surface-2: #FFFFFF;        /* 顶栏、页头这类"通栏条"的底色 */
-    --ow-panel-bg: #FFFFFF;         /* 面板底色（.ow-fold 等带边框的内容块） */
-    /* 徽标类（未读红点、置顶标记、标签）上的文字色 —— 与 --ow-surface 无关，
-       深色下仍是白字，但单独成变量便于将来调。 */
-    --ow-on-accent: #FFFFFF;
-    /* v1.3.37：以下三组是「深色下必须换色」的控件/通栏，此前写死在选择器里，
-       深色模式点了输入框会整块变白、顶部品牌条永远浅灰（用户实测反馈）。
-       收进变量后与其余主题色同一套机制，深色只在 [data-theme="dark"] 里重定义一次。
-       · --ow-input-bg-focus   聚焦态底色（浅色下提亮为纯白，与 --ow-bg-sub 拉开层次）
-       · --ow-brand-bg         顶部品牌条底色（比 --ow-bg-chat 深一档，把品牌区拎出来）
-       · --ow-brand-hover      品牌条内按钮 hover（必须比品牌条本身再深/再亮一档） */
-    --ow-input-bg-focus: #FFFFFF;
-    --ow-brand-bg: #E4E4E4;
-    --ow-brand-hover: #D2D2D2;
-    /* 滚动条滑块：浅灰底上取中灰、悬停再深一档；深色下反过来要更亮才看得见 */
-    --ow-scrollbar: #D8D8D8;
-    --ow-scrollbar-hover: #C4C4C4;
-    /* 开关「关」态轨道（中性灰，深浅都要能看出「这是个可点的轨道」） */
-    --ow-switch-off: #B8BCC2;
-    /* 提示/警示块底色（.ow-notice-warn 与各插件里的「待处理」高亮行） */
-    --ow-warn-bg: #FFF7E6;
-    --ow-warn-border: #FFE1B0;
-    /* v1.5.11：后台「插件列表」中**已启用**卡片的底色（站方定版 #F6FFED）。
-       原先靠标题右侧的「启用 / 未启用」徽标表达状态，徽标只有 10px 字，
-       扫一列插件时几乎读不出来 —— 改由整张卡片的底色承担，扫视即可分辨。
-       极浅的绿（对白底仅高 1 档），故未启用卡片保持原白底，两者仍分得开。 */
-    --ow-plug-on-bg: #F6FFED;
+
+    /* Interaction */
+    --ow-touch: 44px;
+    --ow-safe-bottom: env(safe-area-inset-bottom, 0px);
+    --ow-z-base: 0;
+    --ow-z-sticky: 10;
+    --ow-z-nav: 20;
+    --ow-z-drawer: 40;
+    --ow-z-modal: 100;
+    --ow-z-modal-2: 110;
+    --ow-z-toast: 200;
+    --ow-z-tooltip: 300;
 }
 
 /* ---------- 分段控件（v1.3.25：日夜模式三选一） ----------
@@ -399,50 +401,55 @@ html[data-fontsize="comfortable"] .ow-card-name { font-size: 19px; }
    ⚠️ 新增颜色变量时，**这里也要补一份**，否则深色下会露出浅色。
 */
 [data-theme="dark"] {
-    --ow-primary: #3DB3FF;          /* 品牌蓝在深底上提亮，保持可辨 */
-    --ow-primary-strong: #1E90FF;   /* 实心按钮：白字对比 3.6:1，配合 hover 更深的蓝 */
-    --ow-primary-dark: #6FC5FF;     /* 深色下"悬停/选中"要**更亮**才看得出来（与浅色相反） */
-    --ow-bg: #1C1C1E;               /* 主背景 */
-    --ow-bg-sub: #242427;           /* 次级底：卡片内小块 */
-    --ow-bg-chat: #1A1A1C;          /* 聊天区：比主背景再暗一档，拉开层次 */
-    --ow-bg-chat-hover: #303035;    /* hover 反馈：深底上要**更亮** */
-    --ow-border: #35353A;           /* 装饰分隔线 */
-    --ow-border-control: #6B6B72;   /* 输入控件边框：深底 3.2:1，满足 UI 组件 3:1 */
-    --ow-field-border: #6B6B72;     /* 字段描边：深色下维持原档（见 :root 那条注释） */
-    --ow-text: #DCDCE0;             /* 正文：对主背景 10.6:1 */
-    --ow-text-sub: #A2A2AA;         /* 副文本：对主背景 5.9:1 */
-    --ow-text-title: #F2F2F5;       /* 标题：对主背景 15.3:1 */
-    /* 昵称：深色下沿用原 #8E8EA0（对聊天底 #1A1A1C 5.40:1），10px 小字已过 AA */
-    --ow-nick: #8E8EA0;
-    --ow-toast-bg: #F2F2F5;         /* 提示条整体翻转：浅底深字。原写法 color:#fff 配 */
-    --ow-toast-fg: #1A1A1A;         /*   var(--ow-text-title)（深色模式下是浅色）= 白字白底看不见 */
-    --ow-green: #52C41A;            /* 成功/可发言 */
-    --ow-yellow: #FFC53D;           /* 称号标签等 */
-    --ow-red: #FF7875;              /* 危险/管理员标签（深底上要提亮才够对比） */
-    --ow-dot-bg: #FF6B6E;           /* 小红点：深色底上同样取亮档，与 --ow-red 同向 */
-    --ow-orange: #FFA940;           /* VIP 标签 */
-    --ow-blue-light: #14323F;       /* 浅蓝底 → 深青底 */
-    --ow-hover-bg: #303035;         /* hover（同上，深底更亮） */
-    --ow-active-bg: #35353B;        /* 选中态：比 hover 再亮一档 */
-    /* v1.5.16：--ow-navset-bg 改为 var(--ow-bg)，深浅自动跟随，深色下这条已多余 ——
-       弹窗面本身就是 #1C1C1E，导航栏与它同面才是「恢复成白」的语义。原先的
-       #242427（比主背景亮一档）随灰底一起去掉了。 */
-    --ow-surface: #2A2A2E;          /* 卡片/气泡的"面" */
-    --ow-surface-2: #232326;        /* 通栏条（顶栏/页头） */
-    --ow-panel-bg: #242428;         /* 带边框内容块 */
-    --ow-on-accent: #FFFFFF;        /* 徽标/实心按钮上的文字，深浅都是白 */
-    /* v1.3.37：深底上「提亮 = 聚焦」—— 输入框聚焦态要比常态(--ow-bg-sub #242427)更亮一档，
-       否则聚焦反而变暗、看着像被禁用。品牌条比聊天区再亮一档，与浅色下「比底色深一档」同构。 */
-    --ow-input-bg-focus: #2E2E33;
-    --ow-brand-bg: #232326;
-    --ow-brand-hover: #313136;
-    --ow-scrollbar: #4A4A50;
-    --ow-scrollbar-hover: #5C5C64;
+    --ow-brand: #6D9BFF;
+    --ow-action: #2F5FE0;
+    --ow-action-hover: #3B6FE0;
+    --ow-link: #8AB4FF;
+    --ow-focus-ring: #8AB4FF;
+    --ow-control-border: #6B7280;
+    --ow-danger-action: #B42318;
+    --ow-danger-action-hover: #991B1B;
+    --ow-primary-soft: #1B2A4A;
+    --ow-primary-soft-fg: #BFD3FF;
+    --ow-bg: #0F1115;
+    --ow-bg-sub: #171A1F;
+    --ow-bg-chat: #12151A;
+    --ow-bg-hover: #222831;
+    --ow-bg-active: #1B2A4A;
+    --ow-surface: #171A1F;
+    --ow-surface-2: #1D2229;
+    --ow-panel-bg: #1D2229;
+    --ow-field: #232830;
+    --ow-field-border: #3A424D;
+    --ow-border: #2B313A;
+    --ow-border-strong: #3A424D;
+    --ow-text: #F3F4F6;
+    --ow-text-2: #B6BEC9;
+    --ow-text-muted: #98A2B3;
+    --ow-placeholder: #8B95A5;
+    --ow-text-title: #F3F4F6;
+    --ow-nick: #B6BEC9;
+    --ow-on-accent: #FFFFFF;
+    --ow-success: #75E0A7;
+    --ow-success-soft: #12261C;
+    --ow-warning: #FEC84B;
+    --ow-warning-soft: #2E2410;
+    --ow-danger: #F97066;
+    --ow-danger-soft: #3A1D1D;
+    --ow-info-soft: #1B2A4A;
+    --ow-dot: #FB7185;
+    --ow-toast-bg: #F3F4F6;
+    --ow-toast-fg: #111827;
+    --ow-brand-bg: #232830;
+    --ow-brand-hover: #2A3038;
+    --ow-input-bg-focus: #2A3038;
+    --ow-scrollbar: #3A424D;
+    --ow-scrollbar-hover: #4B5563;
     --ow-switch-off: #4A4A50;
-    --ow-warn-bg: #3A2E12;          /* 浅黄底 → 深琥珀底，配 --ow-yellow 文字 */
-    --ow-warn-border: #8A6D1A;
-    /* 深绿底：与浅色的 #F6FFED 同一语义（已启用），深底上取比主背景略亮一档的墨绿 */
-    --ow-plug-on-bg: #1E2A20;
+    --ow-warn-bg: #2E2410;
+    --ow-warn-border: #6B5424;
+    --ow-plug-on-bg: #12261C;
+    --ow-orange: #FFB27A;
 }
 /* 深色下少数**写死的浅色**需要反向调整。
    这些是当初按浅底设计的小块（@提及高亮、管理员/VIP 标签底、禁言底色等），
@@ -3128,3 +3135,974 @@ span.ow-panel-entry-ico.ow-avatar { width: 24px; height: 24px; line-height: 24px
         animation: none !important;
     }
 }
+
+/* ==========================================================================
+   Swiss Blue · component layer (2026-10-26)
+   令牌驱动；保留旧类名，覆盖旧组件几何。后续页面布局在本段之后继续追加。
+   ========================================================================== */
+
+/* 品牌 Logo：用 mask 着色，随主题自动变亮，不再需要第二份位图 */
+.ow-logo {
+    display: inline-block;
+    width: 34px;
+    height: 34px;
+    flex: none;
+    background: var(--ow-brand);
+    -webkit-mask: url("assets/img/logo.svg") center / contain no-repeat;
+    mask: url("assets/img/logo.svg") center / contain no-repeat;
+    vertical-align: middle;
+}
+
+/* 按钮 */
+.ow-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    box-sizing: border-box;
+    height: 40px;
+    padding: 0 16px;
+    border: 1px solid transparent;
+    border-radius: var(--ow-radius-sm);
+    background: var(--ow-field);
+    color: var(--ow-text);
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background .12s ease-out, border-color .12s ease-out, color .12s ease-out;
+}
+.ow-btn:hover { background: var(--ow-bg-hover); }
+.ow-btn:focus-visible { outline: 2px solid var(--ow-focus-ring); outline-offset: 2px; }
+.ow-btn-primary { background: var(--ow-action); border-color: var(--ow-action); color: var(--ow-on-accent); }
+.ow-btn-primary:hover, .ow-btn-primary:active { background: var(--ow-action-hover); border-color: var(--ow-action-hover); color: var(--ow-on-accent); }
+.ow-btn-ghost { background: transparent; border-color: var(--ow-control-border); color: var(--ow-text-2); }
+.ow-btn-ghost:hover { background: var(--ow-bg-hover); color: var(--ow-text); }
+.ow-btn-danger { background: var(--ow-danger-action); border-color: var(--ow-danger-action); color: var(--ow-on-accent); }
+.ow-btn-danger:hover, .ow-btn-danger:active { background: var(--ow-danger-action-hover); border-color: var(--ow-danger-action-hover); color: var(--ow-on-accent); }
+.ow-btn-lg { height: 48px; padding: 0 20px; font-size: 15px; font-weight: 600; }
+.ow-btn-mini { height: 32px; padding: 0 10px; border-radius: var(--ow-radius-xs); font-size: 12px; font-weight: 500; }
+.ow-btn-block { display: flex; width: 100%; }
+.ow-btn[disabled], .ow-busy { opacity: .5; cursor: not-allowed; }
+.ow-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--ow-radius-sm);
+    background: transparent;
+    color: var(--ow-text-2);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+}
+.ow-icon-btn:hover { background: var(--ow-bg-hover); color: var(--ow-text); }
+.ow-icon-btn:focus-visible { outline: 2px solid var(--ow-focus-ring); outline-offset: 2px; }
+.ow-only-mobile { display: none; }
+
+/* 表单 */
+.ow-form-item { margin-bottom: var(--ow-space-4); }
+.ow-form-item label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 500; color: var(--ow-text); }
+.ow-input {
+    box-sizing: border-box;
+    width: 100%;
+    height: 40px;
+    padding: 0 12px;
+    border: 1px solid var(--ow-field-border);
+    border-radius: var(--ow-radius-sm);
+    background: var(--ow-field);
+    color: var(--ow-text);
+    font-family: inherit;
+    font-size: 15px;
+    line-height: 1.4;
+    transition: border-color .12s ease-out, box-shadow .12s ease-out, background .12s ease-out;
+}
+.ow-input::placeholder { color: var(--ow-placeholder); opacity: 1; }
+.ow-input:focus {
+    outline: none;
+    border-color: var(--ow-focus-ring);
+    background: var(--ow-input-bg-focus);
+    box-shadow: 0 0 0 3px rgba(29, 78, 216, .18);
+}
+.ow-input[disabled], .ow-input:disabled { background: var(--ow-bg-sub); color: var(--ow-text-muted); cursor: not-allowed; }
+.ow-input.is-error, .ow-input[aria-invalid="true"] { border-color: var(--ow-danger); }
+.ow-form-hint { margin-top: 6px; font-size: 12px; line-height: 1.5; color: var(--ow-text-muted); }
+.ow-form-error { margin-top: 6px; font-size: 12px; line-height: 1.5; color: var(--ow-danger); }
+.ow-form-msg { margin-top: 10px; min-height: 20px; font-size: 13px; }
+
+/* 开关 */
+.ow-switch-row, .ow-switch-row.ow-switch-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: var(--ow-touch);
+    margin-bottom: var(--ow-space-3);
+    font-size: 14px;
+    color: var(--ow-text);
+}
+.ow-switch-label { font-size: 14px; color: var(--ow-text); }
+.ow-switch {
+    position: relative;
+    display: inline-block;
+    box-sizing: border-box;
+    width: 36px;
+    height: 20px;
+    flex: none;
+    border-radius: var(--ow-radius-full);
+    background: var(--ow-switch-off);
+    cursor: pointer;
+    transition: background .12s ease-out;
+}
+.ow-switch::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--ow-on-accent);
+    box-shadow: var(--ow-shadow-sm);
+    transition: transform .12s ease-out;
+}
+.ow-switch.is-on { background: var(--ow-action); }
+.ow-switch.is-on::after { transform: translateX(16px); -webkit-transform: translateX(16px); }
+.ow-switch-input:focus-visible + .ow-switch { outline: 2px solid var(--ow-focus-ring); outline-offset: 2px; }
+.ow-switch-row.is-disabled { opacity: .5; cursor: not-allowed; }
+.ow-switch-row.is-disabled .ow-switch { cursor: not-allowed; }
+
+/* 分段 / 设置导航 */
+.ow-seg { display: flex; gap: 6px; }
+.ow-seg-btn {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    height: 36px;
+    padding: 0 10px;
+    border: 1px solid var(--ow-control-border);
+    border-radius: var(--ow-radius-sm);
+    background: transparent;
+    color: var(--ow-text-2);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.ow-seg-btn:hover { background: var(--ow-bg-hover); }
+.ow-seg-btn.is-active { background: var(--ow-action); border-color: var(--ow-action); color: var(--ow-on-accent); }
+.ow-navset-nav { display: flex; flex-direction: column; gap: 4px; flex: 0 0 132px; }
+.ow-navset-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    box-sizing: border-box;
+    min-height: 40px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: var(--ow-radius-sm);
+    background: transparent;
+    color: var(--ow-text-2);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    text-align: left;
+    cursor: pointer;
+}
+.ow-navset-item:hover { background: var(--ow-bg-hover); color: var(--ow-text); }
+.ow-navset-item.is-active { background: var(--ow-bg-active); color: var(--ow-link); }
+
+/* 标签 */
+.ow-tag {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    height: 18px;
+    padding: 0 6px;
+    border: 1px solid transparent;
+    border-radius: var(--ow-radius-xs);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    vertical-align: middle;
+}
+.ow-tag-green { background: var(--ow-success-soft); color: var(--ow-success); }
+.ow-tag-red { background: var(--ow-danger-soft); color: var(--ow-danger); }
+.ow-tag-owner { background: var(--ow-warning-soft); color: var(--ow-orange); }
+.ow-tag-vip { background: var(--ow-warning-soft); color: var(--ow-warning); }
+.ow-tag-member { background: var(--ow-field); color: var(--ow-text-2); }
+.ow-tag-admin { background: var(--ow-primary-soft); color: var(--ow-primary-soft-fg); }
+.ow-tag-guest { background: var(--ow-field); color: var(--ow-text-2); }
+.ow-tag-bot { background: var(--ow-primary-soft); color: var(--ow-primary-soft-fg); }
+.ow-tag-title { background: var(--ow-warning-soft); color: var(--ow-warning); }
+.ow-badge-num { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: var(--ow-radius-full); background: var(--ow-action); color: var(--ow-on-accent); font-size: 10px; font-weight: 700; line-height: 1; }
+
+/* 头像 */
+.ow-avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    overflow: hidden;
+    border-radius: 50%;
+    background: var(--ow-field);
+    color: var(--ow-text);
+    font-size: 14px;
+    font-weight: 650;
+    line-height: 1;
+    user-select: none;
+}
+.ow-avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
+.ow-avatar-xs { width: 20px; height: 20px; font-size: 10px; }
+.ow-avatar-sm { width: 28px; height: 28px; font-size: 12px; }
+.ow-avatar-md { width: 32px; height: 32px; font-size: 14px; }
+.ow-avatar-lg { width: 64px; height: 64px; font-size: 26px; }
+.ow-avatar-group { border-radius: 14px; }
+
+/* 卡片 */
+.ow-card { background: var(--ow-surface); border: 1px solid var(--ow-border); border-radius: var(--ow-radius-md); padding: var(--ow-space-4); box-shadow: none; }
+
+/* 弹窗 / 浮层 */
+.ow-modal-mask {
+    position: fixed;
+    inset: 0;
+    z-index: var(--ow-z-modal);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--ow-space-4);
+    background: rgba(15, 23, 42, .45);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+}
+.ow-modal {
+    position: relative;
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 560px;
+    max-height: 86vh;
+    overflow: auto;
+    padding: var(--ow-space-6);
+    border: 1px solid var(--ow-border);
+    border-radius: var(--ow-radius-lg);
+    background: var(--ow-surface);
+    color: var(--ow-text);
+    box-shadow: var(--ow-shadow-lg);
+}
+.ow-modal h3 { margin: 0 0 var(--ow-space-4); font-size: 18px; font-weight: 650; color: var(--ow-text-title); }
+.ow-modal-desc { margin: 0 0 var(--ow-space-4); font-size: 13px; line-height: 1.6; color: var(--ow-text-2); }
+.ow-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: var(--ow-space-4); }
+.ow-modal-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    float: right;
+    width: 36px;
+    height: 36px;
+    margin: -6px -6px 0 8px;
+    border: 0;
+    border-radius: var(--ow-radius-sm);
+    background: transparent;
+    color: var(--ow-text-2);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+}
+.ow-modal-close:hover { background: var(--ow-bg-hover); color: var(--ow-text); }
+.ow-modal-close:focus-visible { outline: 2px solid var(--ow-focus-ring); outline-offset: 2px; }
+
+/* Toast / 提示 / 警示 */
+.ow-toast {
+    border-radius: var(--ow-radius-sm);
+    padding: 10px 14px;
+    background: var(--ow-toast-bg);
+    color: var(--ow-toast-fg);
+    font-size: 13px;
+    line-height: 1.5;
+    max-width: 320px;
+    box-shadow: var(--ow-shadow-md);
+    z-index: var(--ow-z-toast);
+}
+.ow-tip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--ow-field);
+    color: var(--ow-text-2);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    cursor: help;
+    user-select: none;
+}
+.ow-tip:focus-visible { outline: 2px solid var(--ow-focus-ring); outline-offset: 2px; }
+.ow-alert {
+    padding: 10px 12px;
+    border: 1px solid transparent;
+    border-radius: var(--ow-radius-sm);
+    font-size: 13px;
+    line-height: 1.6;
+}
+.ow-alert-error { background: var(--ow-danger-soft); color: var(--ow-danger); }
+
+/* 链接：正文/图标用 link，不用 action 实心底 */
+a { color: var(--ow-link); }
+a:hover { color: var(--ow-action-hover); }
+
+/* 登录 / 注册 / 找回密码 */
+.ow-auth-body {
+    min-height: 100dvh;
+    padding: var(--ow-space-8);
+    background: var(--ow-bg-sub);
+}
+.ow-auth-card {
+    width: 100%;
+    max-width: 400px;
+    padding: var(--ow-space-8);
+    border: 1px solid var(--ow-border);
+    border-radius: var(--ow-radius-lg);
+    background: var(--ow-surface);
+    box-shadow: none;
+}
+.ow-auth-logo { margin-bottom: var(--ow-space-6); text-align: center; }
+.ow-auth-logo .ow-logo-auth {
+    display: block;
+    width: 56px;
+    height: 56px;
+    margin: 0 auto 12px;
+}
+.ow-auth-logo h1 { margin: 0 0 4px; font-size: var(--ow-text-2xl); font-weight: 700; line-height: 1.3; color: var(--ow-text-title); }
+.ow-auth-logo p { margin: 0; font-size: 13px; line-height: 1.5; color: var(--ow-text-2); }
+.ow-auth-form .ow-form-item { margin-bottom: var(--ow-space-4); }
+.ow-auth-form .ow-input { font-size: 15px; }
+.ow-auth-card .ow-btn { height: 48px; font-size: 15px; font-weight: 600; }
+.ow-auth-links { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 14px; margin-top: var(--ow-space-5); font-size: 13px; }
+.ow-auth-links a { color: var(--ow-link); font-weight: 500; }
+.ow-auth-links a:hover { color: var(--ow-action-hover); }
+.ow-lang-box { position: absolute; top: 12px; right: 12px; z-index: 5; }
+.ow-lang-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    box-sizing: border-box;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--ow-radius-sm);
+    background: transparent;
+    color: var(--ow-text-2);
+    line-height: 0;
+    cursor: pointer;
+}
+.ow-lang-btn:hover { background: var(--ow-bg-hover); color: var(--ow-text); }
+.ow-lang-caret { font-size: 10px; line-height: 1; }
+.ow-lang-menu {
+    position: absolute;
+    top: 40px;
+    right: 0;
+    display: none;
+    min-width: 140px;
+    max-height: 280px;
+    overflow: auto;
+    padding: 4px;
+    border: 1px solid var(--ow-border);
+    border-radius: var(--ow-radius-md);
+    background: var(--ow-surface);
+    box-shadow: var(--ow-shadow-md);
+}
+.ow-lang-item { display: flex; align-items: center; min-height: 36px; padding: 0 10px; border-radius: var(--ow-radius-sm); color: var(--ow-text); font-size: 13px; white-space: nowrap; cursor: pointer; }
+.ow-lang-item:hover { background: var(--ow-bg-hover); }
+.ow-lang-item.ow-lang-on { background: var(--ow-primary-soft); color: var(--ow-primary-soft-fg); font-weight: 600; }
+
+@media (max-width: 720px) {
+    .ow-auth-body { display: block; min-height: 100dvh; padding: 0; background: var(--ow-bg); }
+    .ow-auth-card {
+        max-width: none;
+        min-height: 100dvh;
+        padding: 68px 24px calc(32px + var(--ow-safe-bottom));
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+    }
+    .ow-auth-form .ow-input { height: 44px; font-size: 16px; }
+    .ow-auth-card .ow-btn { height: 48px; }
+    .ow-auth-links { gap: 12px 16px; }
+    .ow-lang-box { top: 14px; right: 16px; }
+}
+
+/* ==========================================================================
+   Swiss Blue · desktop shell
+   rail 全高（Logo 在顶） + 会话列表 300 + 主区 + 成员面板 300
+   ========================================================================== */
+.ow-layout { background: var(--ow-bg); }
+.ow-body { flex: 1; min-height: 0; width: 100%; }
+.ow-rail {
+    width: 64px;
+    padding: 14px 0 12px;
+    gap: 6px;
+    background: var(--ow-surface);
+    border-right: 1px solid var(--ow-border);
+}
+.ow-rail-brand { display: flex; align-items: center; justify-content: center; margin-bottom: 18px; }
+.ow-rail-btn { width: 44px; height: 44px; border-radius: var(--ow-radius-sm); color: var(--ow-text-2); }
+.ow-rail-btn:hover { background: var(--ow-bg-hover); color: var(--ow-text); }
+.ow-rail-btn.is-active { background: var(--ow-primary-soft); color: var(--ow-link); }
+.ow-rail-btn.is-active:hover { background: var(--ow-primary-soft); color: var(--ow-link); }
+.ow-rail-lb { display: none; }
+.ow-rail-foot { margin-top: auto; }
+.ow-sidebar {
+    width: 300px;
+    padding: 0;
+    background: var(--ow-bg-sub);
+    border-right: 1px solid var(--ow-border);
+}
+.ow-side-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 64px;
+    flex: none;
+    padding: 0 14px 0 18px;
+}
+.ow-side-brand { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 17px; font-weight: 700; color: var(--ow-text-title); }
+.ow-m-home-head { display: none; }
+.ow-side-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    box-sizing: border-box;
+    width: calc(100% - 28px);
+    height: 36px;
+    margin: 0 14px 12px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: var(--ow-radius-sm);
+    background: var(--ow-field);
+    color: var(--ow-placeholder);
+    font-size: 13px;
+    text-align: left;
+}
+.ow-side-search:hover { background: var(--ow-bg-hover); color: var(--ow-text); }
+.ow-side-search:focus-visible { outline: 2px solid var(--ow-focus-ring); outline-offset: 2px; }
+.ow-main { background: var(--ow-bg-chat); }
+.ow-main > .ow-topbar {
+    flex: 0 0 auto;
+    width: 100%;
+    height: 64px;
+    padding: 0 20px;
+    border-bottom: 1px solid var(--ow-border);
+    background: var(--ow-surface);
+    background-image: none;
+}
+.ow-room-name { font-size: 16px; font-weight: 650; color: var(--ow-text-title); }
+.ow-topbar .ow-icon-btn { width: 36px; height: 36px; }
+.ow-online {
+    width: 300px;
+    background: var(--ow-surface);
+    border-left: 1px solid var(--ow-border);
+}
+
+/* ==========================================================================
+   Swiss Blue · messages
+   ========================================================================== */
+.ow-messages {
+    padding: 20px max(24px, calc((100% - 840px) / 2));
+    background: var(--ow-bg-chat);
+}
+.ow-msg { position: relative; display: flex; align-items: flex-start; gap: 10px; margin: 0 0 16px; }
+.ow-msg-more {
+    position: absolute;
+    top: 2px;
+    right: -34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--ow-radius-sm);
+    background: var(--ow-surface);
+    color: var(--ow-text-muted);
+    box-shadow: var(--ow-shadow-sm);
+    opacity: 0;
+    pointer-events: none;
+    cursor: pointer;
+    transition: opacity .12s ease-out;
+}
+.ow-msg:hover .ow-msg-more,
+.ow-msg:focus-within .ow-msg-more,
+.ow-msg-more:focus { opacity: 1; pointer-events: auto; }
+.ow-msg-more:hover { background: var(--ow-bg-hover); color: var(--ow-text); }
+.ow-msg-more:focus-visible { outline: 2px solid var(--ow-focus-ring); outline-offset: 2px; }
+.ow-msg.mine .ow-msg-more { right: auto; left: -34px; }
+@media (max-width: 720px) {
+    .ow-msg-more { top: 0; right: 0; left: auto; }
+    .ow-msg.mine .ow-msg-more { right: auto; left: 0; }
+}
+.ow-msg.group-continue { margin-top: -8px; margin-bottom: 8px; padding-left: 42px; }
+.ow-msg.group-continue .ow-msg-av { display: none; }
+.ow-msg-av { flex: none; width: 32px; height: 32px; margin-top: 1px; cursor: pointer; }
+.ow-msg .ow-avatar { width: 32px; height: 32px; font-size: 12px; }
+.ow-msg-body { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: min(560px, 78%); }
+.ow-msg-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 0 0 4px 2px; font-size: 12px; color: var(--ow-text-muted); }
+.ow-msg-meta .ow-msg-nick { margin: 0; color: var(--ow-nick); font-size: 13px; font-weight: 600; line-height: 20px; cursor: pointer; }
+.ow-msg-meta .ow-msg-time { display: none; font-size: 10px; color: var(--ow-text-muted); }
+.ow-msg.ow-time-show .ow-msg-meta .ow-msg-time { display: inline; }
+.ow-msg-meta .ow-tag { height: 16px; padding: 0 5px; font-size: 10px; }
+.ow-msg-content {
+    display: block;
+    box-sizing: border-box;
+    max-width: 100%;
+    margin: 0;
+    padding: 9px 12px;
+    border: 1px solid var(--ow-border);
+    border-radius: var(--ow-radius-md);
+    border-top-left-radius: var(--ow-radius-xs);
+    background: var(--ow-surface);
+    color: var(--ow-text);
+    font-size: 15px;
+    line-height: 1.6;
+    text-align: left;
+    word-break: break-word;
+}
+.ow-msg.group-continue .ow-msg-content { margin-top: 4px; border-top-left-radius: var(--ow-radius-md); }
+.ow-msg.mine { flex-direction: row-reverse; }
+.ow-msg.mine .ow-msg-body { align-items: flex-end; }
+.ow-msg.mine .ow-msg-meta { flex-direction: row-reverse; }
+.ow-msg.mine .ow-msg-content { border-color: var(--ow-action); background: var(--ow-action); color: var(--ow-on-accent); border-top-left-radius: var(--ow-radius-md); border-top-right-radius: var(--ow-radius-xs); }
+.ow-msg.mine .ow-msg-nick { color: var(--ow-on-accent); }
+.ow-msg.mine.group-continue { padding-right: 42px; padding-left: 0; }
+.ow-msg.mine.group-continue .ow-msg-content { border-top-right-radius: var(--ow-radius-md); }
+.ow-msg.system { justify-content: center; margin: 8px 0 16px; }
+.ow-msg.system .ow-msg-body { align-items: center; max-width: 100%; }
+.ow-msg.system .ow-msg-content { padding: 2px 8px; border: 0; background: transparent; color: var(--ow-text-muted); font-size: 12px; }
+.ow-msg.recalled .ow-msg-content { border: 1px dashed var(--ow-border); background: transparent; color: var(--ow-text-muted); font-size: 12px; }
+.ow-msg.deleted .ow-msg-content { border: 1px dashed var(--ow-border); background: transparent; color: var(--ow-text-muted); font-size: 12px; }
+.ow-msg.mention .ow-msg-content { border-color: var(--ow-warning); background: var(--ow-warning-soft); }
+.ow-time-divider { margin: 20px 0 14px; text-align: center; color: var(--ow-text-muted); font-size: 11px; line-height: 16px; }
+.ow-time-divider span { display: inline; padding: 0; background: transparent; color: var(--ow-text-muted); font-size: 11px; }
+.ow-msg-img { max-width: 320px; max-height: 320px; border-radius: var(--ow-radius-sm); }
+.ow-msg-quote { display: block; margin-bottom: 4px; padding: 4px 8px; border-left: 2px solid var(--ow-action); border-radius: var(--ow-radius-xs); background: var(--ow-bg-sub); color: var(--ow-text-2); font-size: 12px; line-height: 1.5; }
+.ow-msg-link { color: var(--ow-link); text-decoration: none; }
+.ow-msg-link:hover { color: var(--ow-action-hover); text-decoration: underline; }
+
+/* ==========================================================================
+   Swiss Blue · composer + tools sheet
+   ========================================================================== */
+.ow-tools-mask { display: none; position: fixed; inset: 0; z-index: 110; background: rgba(15, 23, 42, .35); }
+.ow-tools-mask.show { display: block; }
+.ow-tools-sheet {
+    position: absolute;
+    left: 0;
+    bottom: calc(100% + 8px);
+    z-index: 120;
+    display: none;
+    width: 320px;
+    padding: 12px;
+    border: 1px solid var(--ow-border);
+    border-radius: var(--ow-radius-md);
+    background: var(--ow-surface);
+    box-shadow: var(--ow-shadow-md);
+}
+.ow-tools-sheet.show { display: block; }
+.ow-tools-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+#owToolFirst { display: contents; }
+.ow-tools-grid .ow-tool-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    width: 100%;
+    height: 64px;
+    padding: 6px 4px;
+    border: 0;
+    border-radius: var(--ow-radius-sm);
+    background: transparent;
+    color: var(--ow-text-2);
+    font-family: inherit;
+    font-size: 11px;
+    line-height: 1.2;
+    gap: 4px;
+    cursor: pointer;
+}
+.ow-tools-grid .ow-tool-cell:hover { background: var(--ow-bg-hover); color: var(--ow-text); }
+.ow-tools-grid .ow-tool-cell svg { display: block; width: 22px; height: 22px; }
+.ow-tool-label { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; color: var(--ow-text-2); }
+.ow-inputbar { padding: 8px 16px 10px; border-top: 1px solid var(--ow-border); background: var(--ow-surface); background-image: none; }
+.ow-input-row { gap: 6px; align-items: flex-end; }
+.ow-plus-btn, .ow-emoji-inline { width: 44px; height: 44px; flex: none; border-radius: var(--ow-radius-sm); color: var(--ow-text-2); }
+.ow-plus-btn:hover, .ow-emoji-inline:hover { background: var(--ow-bg-hover); color: var(--ow-text); }
+.ow-input-row .ow-input {
+    min-height: 42px;
+    padding: 9px 14px;
+    border: 1px solid var(--ow-field-border);
+    border-radius: var(--ow-radius-xl);
+    background: var(--ow-field);
+    font-size: 15px;
+    line-height: 1.4;
+    resize: none;
+}
+.ow-input-row .ow-input:focus { background: var(--ow-input-bg-focus); }
+.ow-send { width: 40px; height: 40px; min-width: 40px; padding: 0; border-radius: 50%; }
+.ow-input-resize { right: 96px; }
+.ow-emoji-panel { bottom: 72px; left: 16px; width: 320px; max-height: 320px; background: var(--ow-surface); border: 1px solid var(--ow-border); border-radius: var(--ow-radius-md); box-shadow: var(--ow-shadow-md); }
+.ow-toolbar { display: none; }
+
+@media (min-width: 721px) {
+    .ow-tools-mask { display: none !important; }
+}
+@media (max-width: 720px) {
+    .ow-tools-sheet {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        width: 100%;
+        max-height: 60dvh;
+        padding: 16px 16px calc(16px + var(--ow-safe-bottom));
+        border-left: 0;
+        border-right: 0;
+        border-bottom: 0;
+        border-radius: var(--ow-radius-lg) var(--ow-radius-lg) 0 0;
+        box-shadow: 0 -8px 24px rgba(16, 24, 40, .12);
+    }
+    .ow-tools-grid { grid-template-columns: repeat(4, 1fr); gap: 8px; }
+    .ow-tools-grid .ow-tool-cell { height: 68px; }
+    .ow-inputbar { padding: 8px 10px calc(8px + var(--ow-safe-bottom)); }
+    .ow-input-row .ow-input { height: 40px; min-height: 40px; padding: 8px 14px; font-size: 16px; }
+    .ow-emoji-panel { position: fixed; left: 0; right: 0; bottom: calc(64px + var(--ow-safe-bottom)); width: 100%; max-height: 50dvh; border-radius: var(--ow-radius-lg) var(--ow-radius-lg) 0 0; }
+    .ow-input-resize { display: none; }
+}
+
+/* ==========================================================================
+   Swiss Blue · right panel + overlays
+   ========================================================================== */
+.ow-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 56px;
+    flex: none;
+    padding: 0 10px 0 18px;
+    border-bottom: 1px solid var(--ow-border);
+}
+.ow-panel-head b { font-size: 14px; font-weight: 650; color: var(--ow-text-title); }
+.ow-panel-head .ow-online-close { display: inline-flex; width: 32px; height: 32px; color: var(--ow-text-2); }
+.ow-panel-room { max-height: none; border-bottom: 1px solid var(--ow-border); }
+.ow-panel-room-body { padding: 0 14px 12px; }
+.ow-room-card { display: flex; align-items: center; gap: 12px; padding: 16px 0; border-bottom: 1px solid var(--ow-border); }
+.ow-room-card .ow-avatar { width: 52px; height: 52px; font-size: 18px; }
+.ow-room-card-id { min-width: 0; }
+.ow-room-card-id b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 650; color: var(--ow-text-title); line-height: 1.3; }
+.ow-room-card-id span { display: block; margin-top: 2px; font-size: 11.5px; color: var(--ow-text-muted); }
+.ow-panel-entry { min-height: 40px; padding: 0; gap: 10px; border: 0; font-size: 13px; color: var(--ow-text); }
+.ow-panel-entry-ico { color: var(--ow-text-muted); }
+.ow-panel-entry-arrow { color: var(--ow-text-muted); }
+.ow-panel-entry:hover, .ow-panel-entry:focus { color: var(--ow-link); background: transparent; }
+.ow-panel-entry:hover .ow-panel-entry-ico, .ow-panel-entry:hover .ow-panel-entry-arrow { color: var(--ow-link); }
+.ow-side-title-members {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 44px;
+    flex: none;
+    padding: 0 14px 0 18px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--ow-text-2);
+}
+.ow-side-title-members .ow-badge-num { margin-left: 0; }
+.ow-side-title-members .ow-members-search-btn { margin-left: auto; width: 28px; height: 28px; }
+.ow-online-item { height: 46px; padding: 0 14px; gap: 10px; }
+.ow-online-item:hover { background: var(--ow-bg-hover); }
+.ow-online-name { font-size: 13px; color: var(--ow-text); }
+.ow-online-name:hover { color: var(--ow-link); }
+.ow-online-item .ow-tag { margin-left: auto; }
+.ow-online-empty { padding: 12px 18px; font-size: 12px; color: var(--ow-text-muted); }
+
+/* 账号/右键菜单 */
+.ow-ctx-menu {
+    min-width: 168px;
+    padding: 4px;
+    border: 1px solid var(--ow-border);
+    border-radius: var(--ow-radius-md);
+    background: var(--ow-surface);
+    box-shadow: var(--ow-shadow-md);
+    z-index: var(--ow-z-tooltip);
+}
+.ow-ctx-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    box-sizing: border-box;
+    min-height: 40px;
+    padding: 0 10px;
+    border-radius: var(--ow-radius-sm);
+    color: var(--ow-text);
+    font-size: 13px;
+    text-decoration: none;
+}
+.ow-ctx-item:hover { background: var(--ow-bg-hover); color: var(--ow-text); }
+.ow-ctx-head { min-height: 52px; }
+.ow-ctx-head:hover { background: transparent; }
+.ow-ctx-sep { height: 1px; margin: 4px 0; background: var(--ow-border); }
+
+/* 搜索弹窗 */
+.ow-modal-search { max-width: 460px; }
+.ow-modal-search .ow-input { margin-bottom: 10px; }
+.ow-sr-list { max-height: 56vh; overflow: auto; }
+.ow-sr-item { display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 8px 10px; border-radius: var(--ow-radius-sm); }
+.ow-sr-item:hover { background: var(--ow-bg-hover); }
+.ow-sr-nick { font-size: 14px; font-weight: 600; color: var(--ow-text); }
+.ow-sr-sub { font-size: 12px; color: var(--ow-text-muted); }
+.ow-sr-item .ow-sr-batch-mark { margin-left: auto; }
+
+/* 表情面板 */
+.ow-emoji-tabs { border-bottom: 1px solid var(--ow-border); }
+.ow-emoji-tab { padding: 10px 8px; border: 0; background: transparent; color: var(--ow-text-2); font-size: 13px; }
+.ow-emoji-tab.active { background: transparent; color: var(--ow-link); font-weight: 600; box-shadow: inset 0 -2px 0 var(--ow-link); }
+.ow-emoji-grid { padding: 8px; }
+.ow-emoji-item { width: 36px; height: 36px; line-height: 36px; border-radius: var(--ow-radius-sm); }
+
+@media (min-width: 721px) and (max-width: 960px) {
+    .ow-sidebar { width: 280px; }
+    .ow-online {
+        position: fixed;
+        top: 0;
+        right: -320px;
+        bottom: 0;
+        width: 300px;
+        z-index: 90;
+        background: var(--ow-surface);
+        border-left: 1px solid var(--ow-border);
+        transition: right .2s;
+    }
+    .ow-online.open { right: 0; }
+    .ow-mask { top: 0; }
+}
+
+@media (max-width: 720px) {
+    .ow-modal-mask.is-search { padding: 0; align-items: stretch; }
+    .ow-modal-mask.is-search .ow-modal-search {
+        width: 100%;
+        max-width: none;
+        height: 100dvh;
+        max-height: none;
+        padding: 16px 16px calc(16px + var(--ow-safe-bottom));
+        border: 0;
+        border-radius: 0;
+    }
+}
+
+/* ==========================================================================
+   Swiss Blue · mobile dual-screen
+   ========================================================================== */
+@media (max-width: 720px) {
+    .ow-body { display: block; height: 100%; width: 100%; }
+    .ow-layout:not(.is-chat-open) .ow-main { display: none; }
+    .ow-layout.is-chat-open .ow-sidebar,
+    .ow-layout.is-chat-open .ow-rail { display: none; }
+
+    .ow-sidebar {
+        position: static;
+        left: auto;
+        top: auto;
+        width: 100%;
+        height: 100%;
+        padding: 0 0 calc(56px + var(--ow-safe-bottom));
+        border-right: 0;
+        background: var(--ow-surface);
+        overflow: hidden;
+    }
+    .ow-sidebar.open { left: auto; background: var(--ow-surface); }
+    .ow-side-head { display: none; }
+    .ow-m-home-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 56px;
+        flex: none;
+        padding: 0 14px 0 18px;
+        background: var(--ow-surface);
+    }
+    .ow-m-home-head h1 { margin: 0; font-size: 22px; font-weight: 700; line-height: 1; color: var(--ow-text-title); }
+    .ow-m-home-actions { display: flex; align-items: center; gap: 2px; }
+    .ow-m-home-head .ow-icon-btn { width: 44px; height: 44px; }
+    .ow-m-home-me {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 44px;
+        height: 44px;
+        padding: 0;
+        border: 0;
+        border-radius: var(--ow-radius-sm);
+        background: transparent;
+        cursor: pointer;
+    }
+    .ow-m-home-me .ow-avatar { width: 32px; height: 32px; }
+    .ow-side-search { width: calc(100% - 32px); height: 40px; margin: 0 16px 8px; }
+    .ow-room-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 0 0 8px; }
+    .ow-room-list .ow-cl-item {
+        min-height: 72px;
+        padding: 8px 16px;
+        gap: 12px;
+        align-items: center;
+        border-radius: 0;
+        contain-intrinsic-size: auto 72px;
+    }
+    .ow-room-list .ow-cl-item.active { background: var(--ow-bg-active); }
+    .ow-room-list .ow-cl-icon { width: 46px; height: 46px; border-radius: 15px; font-size: 16px; }
+    .ow-room-list [data-dm] .ow-cl-icon { border-radius: 50%; }
+    .ow-room-list .ow-cl-title { font-size: 15px; line-height: 22px; min-height: 22px; padding-bottom: 2px; }
+    .ow-room-list .ow-cl-sub { font-size: 13px; line-height: 20px; }
+    .ow-room-list .ow-cl-time { font-size: 11px; }
+
+    .ow-rail {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: var(--ow-z-nav);
+        width: 100%;
+        height: calc(56px + var(--ow-safe-bottom));
+        padding: 0 4px var(--ow-safe-bottom);
+        flex-direction: row;
+        align-items: stretch;
+        gap: 0;
+        background: var(--ow-surface);
+        border-top: 1px solid var(--ow-border);
+        border-right: 0;
+    }
+    .ow-rail-brand { display: none; }
+    .ow-rail > .ow-rail-btn { display: none; }
+    .ow-rail > .ow-rail-btn[data-tab="chat"],
+    .ow-rail > .ow-rail-btn[data-tab="friends"],
+    .ow-rail > .ow-rail-btn[data-tab="notice"] {
+        display: flex;
+        flex: 1;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 2px;
+        width: auto;
+        height: 56px;
+        border-radius: 0;
+        color: var(--ow-text-muted);
+    }
+    .ow-rail > .ow-rail-btn.is-active { background: transparent; color: var(--ow-link); }
+    .ow-rail .ow-rail-lb { display: block; font-size: 10px; line-height: 12px; font-weight: 500; }
+    .ow-rail .ow-dot { top: 8px; right: calc(50% - 13px); }
+    .ow-rail-foot { display: flex; flex: 1; margin: 0; flex-direction: row; }
+    .ow-rail-foot .ow-rail-menu {
+        display: flex;
+        flex: 1;
+        width: 100%;
+        height: 56px;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 2px;
+        border-radius: 0;
+        color: var(--ow-text-muted);
+    }
+
+    .ow-main { width: 100%; height: 100%; background: var(--ow-bg-chat); }
+    .ow-main > .ow-topbar { height: 56px; padding: 0 8px; background: var(--ow-surface); }
+    .ow-main > .ow-topbar .ow-only-mobile { display: inline-flex; }
+    .ow-main > .ow-topbar .ow-tag,
+    .ow-main > .ow-topbar .ow-latency { display: none; }
+    .ow-topbar .ow-icon-btn { width: 44px; height: 44px; }
+    .ow-messages { padding: 12px 12px 4px; }
+    .ow-msg-body, .ow-msg.mine .ow-msg-body { max-width: 85%; }
+
+    .ow-online {
+        position: fixed;
+        top: 0;
+        right: -320px;
+        bottom: 0;
+        width: min(320px, 88vw);
+        z-index: 90;
+        background: var(--ow-surface);
+        border-left: 1px solid var(--ow-border);
+        transition: right .2s;
+    }
+    .ow-online.open { right: 0; background: var(--ow-surface); }
+    .ow-mask { top: 0; }
+
+    .ow-layout.is-notice-open .ow-main { display: flex; }
+    .ow-layout.is-notice-open .ow-sidebar { display: none; }
+    .ow-layout.is-notice-open .ow-inputbar { display: none; }
+    .ow-layout.is-notice-open .ow-messages { padding-bottom: calc(72px + var(--ow-safe-bottom)); }
+    .ow-layout.is-notice-open .ow-topbar .ow-only-mobile { display: none; }
+
+    .ow-modal-mask.is-fullscreen { padding: 0; align-items: stretch; }
+    .ow-modal.ow-modal-fixed,
+    .ow-modal.ow-modal-profile {
+        width: 100%;
+        max-width: none;
+        height: 100dvh;
+        max-height: none;
+        border: 0;
+        border-radius: 0;
+        padding: 16px 16px calc(16px + var(--ow-safe-bottom));
+    }
+    .ow-modal.ow-modal-profile.owpc-card { border-radius: 0; }
+    .ow-modal-fixed .ow-modal-close,
+    .ow-modal-profile .ow-modal-close { top: 14px; right: 14px; }
+    .ow-modal-fixed .ow-navset { flex-direction: column; flex: 1 1 auto; min-height: 0; width: 100%; }
+    .ow-modal-fixed .ow-navset-nav { flex: 0 0 auto; flex-direction: row; gap: 4px; width: 100%; }
+    .ow-modal-fixed .ow-navset-item { flex: 1; justify-content: center; min-height: 40px; padding: 0 8px; }
+    .ow-modal-fixed .ow-pagetab-panel { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+    .ow-modal-fixed > .ow-btn-block { flex: none; margin-top: 8px; }
+    .ow-modal-fixed h3 { margin-bottom: 12px; }
+    .ow-modal-profile .ow-card-head { margin-bottom: 16px; }
+
+    .ow-ctx-menu {
+        position: fixed !important;
+        left: 0 !important;
+        right: 0 !important;
+        top: auto !important;
+        bottom: 0 !important;
+        width: 100% !important;
+        max-height: 80dvh;
+        overflow: auto;
+        padding: 8px 8px calc(8px + var(--ow-safe-bottom));
+        border-left: 0;
+        border-right: 0;
+        border-bottom: 0;
+        border-radius: var(--ow-radius-lg) var(--ow-radius-lg) 0 0;
+        box-shadow: 0 -8px 24px rgba(16, 24, 40, .16);
+    }
+    .ow-ctx-item { min-height: 48px; font-size: 14px; border-radius: var(--ow-radius-sm); }
+    .ow-ctx-head { min-height: 64px; }
+    .ow-ctx-label { padding: 8px 10px 4px; font-size: 11px; color: var(--ow-text-muted); }
+}
+
+
+
+
+
+
+
+
+/* 设置弹窗底部保存按钮不参与 flex 收缩：外观页插件内容变高时会被压扁（实测 40 → 22.39px） */
+.ow-modal-fixed > .ow-btn-block { flex: 0 0 auto; min-height: 40px; margin-top: 8px; }

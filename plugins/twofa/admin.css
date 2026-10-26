@@ -19,7 +19,7 @@
 .ow-twofa-stat-num {
     font-size: 24px;
     font-weight: bold;
-    color: var(--ow-primary, #00558f);
+    color: var(--ow-link, #00558f);
     line-height: 1.2;
 }
 .ow-twofa-stat-label {

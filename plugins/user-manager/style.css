@@ -117,7 +117,7 @@
     white-space: nowrap;
 }
 .owum-pill-red { background: var(--ow-warn-bg); color: var(--ow-red); }
-.owum-pill-green { background: var(--ow-blue-light); color: var(--ow-primary-dark); }
+.owum-pill-green { background: var(--ow-blue-light); color: var(--ow-link); }
 /* 归属地等中性信息用描边胶囊：比实心块轻，长地名也不会变成色块 */
 .owum-chip {
     display: inline-block;
@@ -340,7 +340,7 @@
     color: var(--ow-text);
     cursor: pointer;
 }
-.owum-shared-item:hover { border-color: var(--ow-primary); color: var(--ow-primary-dark); }
+.owum-shared-item:hover { border-color: var(--ow-primary); color: var(--ow-link); }
 .owum-shared-item i {
     font-style: normal;
     font-size: 11px;

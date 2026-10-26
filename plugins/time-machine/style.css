@@ -101,7 +101,7 @@
     white-space: nowrap;
     max-width: 62%;
 }
-.ow-tm-nick:hover { color: var(--ow-primary-dark); }
+.ow-tm-nick:hover { color: var(--ow-link); }
 .ow-tm-nick-s { font-size: 13px; }
 .ow-tm-time { font-size: 12px; color: var(--ow-text-sub); flex: 1 1 auto; -webkit-flex: 1 1 auto; }
 /* 顶部「···」的定位已并入下面的 .ow-tm-more 主规则（margin-left:auto 顶到右边） */
@@ -195,13 +195,13 @@
     display: flex; display: -webkit-flex;
     align-items: center; -webkit-align-items: center;
     flex-shrink: 0; -webkit-flex-shrink: 0;
-    color: var(--ow-primary-dark);
+    color: var(--ow-link);
 }
 .ow-tm-like-avs .ow-tm-ava { margin-right: -8px; }        /* 头像叠放，最后一个也叠（不收回） */
 .ow-tm-like-avs .ow-tm-ava:last-child { margin-right: 0; }
 .ow-tm-like-names { font-size: 12.5px; color: var(--ow-text-sub); line-height: 1.6; }
 .ow-tm-like-n { color: var(--ow-text); cursor: pointer; }
-.ow-tm-like-n:hover { color: var(--ow-primary-dark); }
+.ow-tm-like-n:hover { color: var(--ow-link); }
 
 /* ---------- 可见性徽标（好友可见 / 私密；公开是默认，不占位置） ----------
    与核心 .ow-tag 同一档：12px 字、6px 圆角、次级文字色；私密给一条边框强调 */
@@ -220,7 +220,7 @@
 .ow-tm-vis.is-edit:hover {
     border: 1px solid var(--ow-primary);
     background: var(--ow-blue-light);
-    color: var(--ow-primary-dark);
+    color: var(--ow-link);
 }
 
 /* ---------- 文件附件行：直接复用核心 .ow-file-card 那套（消息里的文件卡同款） ---------- */
@@ -266,8 +266,8 @@
 .ow-tm-act:disabled { opacity: .5; cursor: default; }
 /* 已选中（点赞 / 收藏）= 主色，与 .ow-tab.is-active / .ow-room-item.active 同一语言；
    红色只表达危险（删除），不拿来表达「喜欢」 */
-.ow-tm-act.is-on { color: var(--ow-primary-dark); }
-.ow-tm-act.is-on:hover { color: var(--ow-primary-dark); background: var(--ow-hover-bg); }
+.ow-tm-act.is-on { color: var(--ow-link); }
+.ow-tm-act.is-on:hover { color: var(--ow-link); background: var(--ow-hover-bg); }
 /* 纯展示项（浏览数）：没有点击行为，就不给手型和悬停反馈 */
 .ow-tm-plain { cursor: default; }
 .ow-tm-plain:hover { background: none; color: var(--ow-text-sub); }
@@ -328,7 +328,7 @@
     cursor: ns-resize;
     user-select: none; -webkit-user-select: none;
 }
-.ow-tm-resize:hover { opacity: .9; color: var(--ow-primary-strong); }
+.ow-tm-resize:hover { opacity: .9; color: var(--ow-link); }
 @media (max-width: 720px) { .ow-tm-resize { display: none; } }
 
 /* 工具条（表情 / 附件 / 字数）：与输入区同一档高度，图标钮 28px 方角，悬停灰底 */
@@ -460,7 +460,7 @@
     align-items: center; -webkit-align-items: center;
     justify-content: center; -webkit-justify-content: center;
 }
-.ow-tm-addimg:hover { border-color: var(--ow-primary); color: var(--ow-primary-dark); background: var(--ow-hover-bg); }
+.ow-tm-addimg:hover { border-color: var(--ow-primary); color: var(--ow-link); background: var(--ow-hover-bg); }
 .ow-tm-cmp-tip { font-size: 12px; color: var(--ow-text-sub); margin-top: 10px; }
 
 /* ---------- 移动端（≤720px，与核心断点一致）：岛保留，只收内边距、放大点击区 ---------- */

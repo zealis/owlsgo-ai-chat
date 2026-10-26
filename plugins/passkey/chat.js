@@ -114,7 +114,7 @@
         box.innerHTML = '<div class="owpk-or"><span>或</span></div>'
             + '<button type="button" class="owpk-pk-btn" id="owpkPkBtn">'
             + '<span class="owpk-pk-ico">' + ICO.finger + '</span>'
-            + '<span class="owpk-pk-t">使用通行密钥登录</span>'
+            + '<span class="owpk-pk-t">通行密钥登录</span>'
             + '<span class="owpk-spin" aria-hidden="true"></span>'
             + '</button>'
             + '<div class="owpk-tip" id="owpkPkTip"></div>'

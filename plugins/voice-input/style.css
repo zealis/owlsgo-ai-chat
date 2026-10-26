@@ -198,7 +198,7 @@
 
 /* ---------- 工具栏那颗按钮：录音中亮起（图标与底色都要变，只变一样在灰底上看不出来） ---------- */
 .ow-vi-entry.is-on {
-    color: var(--ow-primary-dark);
+    color: var(--ow-link);
     background: var(--ow-blue-light);
 }
 

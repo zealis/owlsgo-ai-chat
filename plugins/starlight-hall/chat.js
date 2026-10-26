@@ -208,10 +208,10 @@
      */
     function popBody(done, dd) {
         var amount = done ? dd.points : dd.next;
-        var h = '<div class="ow-sh-pop-ico">' + svgCalCheck(30, done ? 'var(--ow-green)' : 'var(--ow-primary-strong)') + '</div>'
+        var h = '<div class="ow-sh-pop-ico">' + svgCalCheck(30, done ? 'var(--ow-green)' : 'var(--ow-link)') + '</div>'
             + '<h3 class="ow-sh-pop-t">' + (done ? '签到成功！' : '每日签到') + '</h3>'
             + '<div class="ow-sh-pop-rewards">'
-            + '<span class="ow-sh-pop-r">' + svgCoin(22, 'var(--ow-primary-strong)')
+            + '<span class="ow-sh-pop-r">' + svgCoin(22, 'var(--ow-link)')
             + '<b>+' + amount + '</b><i>' + esc(pn()) + '</i></span>';
         if (dd.bonus > 0) {
             h += '<span class="ow-sh-pop-r">' + svgStar(22, 'var(--ow-orange)')
@@ -219,7 +219,7 @@
         }
         // v1.1.0：签到的等级天数奖励 —— 与积分/大奖并列，签到与等级不再「两张皮」
         if (dd.lvDays > 0) {
-            h += '<span class="ow-sh-pop-r">' + svgReward(22, 'var(--ow-primary-strong)')
+            h += '<span class="ow-sh-pop-r">' + svgReward(22, 'var(--ow-link)')
                 + '<b>+' + dd.lvDays + '</b><i>等级天数</i></span>';
         }
         h += '</div>'

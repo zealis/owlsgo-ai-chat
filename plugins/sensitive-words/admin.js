@@ -145,7 +145,7 @@
                     : (r.status == 1 ? '<span class="ow-tag ow-tag-green">已通过</span>' : '<span class="ow-tag">已拒绝</span>');
                 var who = esc(r.nick) + (r.kind == 'guest' ? '（游客）' : '');
                 // 待处理行高亮：一屏几十条里要能一眼挑出没处理的（与内容举报同法）
-                h += '<tr' + (r.status == 0 ? ' style="background:var(--ow-blue-light)"' : '') + '>'
+                h += '<tr' + (r.status == 0 ? ' style="background:var(--ow-primary-soft)"' : '') + '>'
                     + '<td><input type="checkbox" class="owAppealChk" value="' + r.id + '" onchange="OwSW.appealSyncBatch()"></td>'
                     + '<td>' + r.id + '</td><td>' + esc(r.domain) + '</td><td>' + who + '</td>'
                     + '<td>' + esc(r.note) + '</td><td>' + esc(r.ip) + '</td>'

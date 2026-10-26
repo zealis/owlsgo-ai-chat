@@ -72,9 +72,10 @@
         var self = this;
         // 临时接管 openModal：核心 userCard 渲染完资料卡后，注入个性签名
         var origOpenModal = OwChat.openModal;
-        OwChat.openModal = function (html, width) {
+        OwChat.openModal = function (html, width, cls) {
             OwChat.openModal = origOpenModal;   // 立即还原，避免影响其它弹窗
-            origOpenModal.call(this, html, width);
+            // 必须透传第三个参数：核心用 cls 给资料卡加移动端全屏类。
+            origOpenModal.call(this, html, width, cls);
             injectSignatureIntoCard(uid);
         };
         origUserCard.call(self, uid, nick);

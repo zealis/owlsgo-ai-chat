@@ -91,7 +91,7 @@
 }
 /* hover 必须比底色更深一档：#EBEBEB 压在 #F5F5F5 上会「越悬停越浅」 */
 .ow-pick-card:hover { background: var(--ow-active-bg); border-color: var(--ow-primary-strong); }
-.ow-pick-card > .ow-ico { flex-shrink: 0; -webkit-flex-shrink: 0; color: var(--ow-primary); }
+.ow-pick-card > .ow-ico { flex-shrink: 0; -webkit-flex-shrink: 0; color: var(--ow-link); }
 /* 标题与说明竖排成一列（.ow-pick-txt），图标在左 ——
    两个都当卡片的直接子项时，说明会把标题挤成两行（实测「以视频方式 / 发送」）。 */
 .ow-pick-txt { flex: 1; -webkit-flex: 1; min-width: 0; }

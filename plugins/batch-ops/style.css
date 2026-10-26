@@ -194,7 +194,7 @@
     color: var(--ow-text-sub);
 }
 /* 记录里再嵌记录（弹窗里的小卡）：一行占位，点击继续下钻 */
-.owb-rec-mini { color: var(--ow-primary-dark); cursor: pointer; }
+.owb-rec-mini { color: var(--ow-link); cursor: pointer; }
 
 /* 弹窗里的记录流：灰底消息区，条目复用全站消息样式 */
 .owb-rec-view {

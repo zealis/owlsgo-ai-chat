@@ -46,7 +46,9 @@
         ink:     { name: '雅酷黑', brand: '#24292f', hover: '#111418', deep: '#111418', soft: '#f0f2f5' }
     };
 
-    var VARS = ['--ow-primary', '--ow-primary-strong', '--ow-primary-dark', '--ow-blue-light'];
+    var VARS = ['--ow-primary', '--ow-primary-strong', '--ow-primary-dark', '--ow-blue-light',
+        '--ow-brand', '--ow-action', '--ow-action-hover', '--ow-link', '--ow-focus-ring',
+        '--ow-primary-soft', '--ow-primary-soft-fg'];
 
     function isColor(v) { return typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v); }
     function toRgb(hex) {
@@ -184,6 +186,7 @@
         if (cur === 'classic' || !s) { reset(); return; }
         if (theme === 'dark') {
             var brand = darkify(s.brand);
+            var soft = mix(DARK_BASE, brand, 22);
             style.setProperty('--ow-primary', brand);
             // ⚠️ --ow-primary-strong **不**提亮：它是「白字坐在上面」的实心按钮底/开关轨道，
             //    与 --ow-primary（画在深底上的描边、图标、焦点环）方向正好相反。
@@ -191,15 +194,27 @@
             //    用原值 #047857 则是 6.7:1。需要提亮的是描边那一族，实心那一族要压得住白字。
             style.setProperty('--ow-primary-strong', s.brand);
             style.setProperty('--ow-primary-dark', darkify(s.hover));
-            // 掺色方向：以深色底为基、往里掺 22% 品牌色 —— 反过来写会得到
-            // 一条 78% 亮度的荧光底（--ow-blue-light 是给气泡/浅底用的，必须仍是暗色）。
-            style.setProperty('--ow-blue-light', mix(DARK_BASE, brand, 22));
+            style.setProperty('--ow-blue-light', soft);
+            style.setProperty('--ow-brand', brand);
+            style.setProperty('--ow-action', s.brand);
+            style.setProperty('--ow-action-hover', s.hover);
+            style.setProperty('--ow-link', brand);
+            style.setProperty('--ow-focus-ring', brand);
+            style.setProperty('--ow-primary-soft', soft);
+            style.setProperty('--ow-primary-soft-fg', brand);
             return;
         }
         style.setProperty('--ow-primary', s.brand);
         style.setProperty('--ow-primary-strong', s.brand);
         style.setProperty('--ow-primary-dark', s.hover);
         style.setProperty('--ow-blue-light', s.soft);
+        style.setProperty('--ow-brand', s.brand);
+        style.setProperty('--ow-action', s.brand);
+        style.setProperty('--ow-action-hover', s.hover);
+        style.setProperty('--ow-link', s.brand);
+        style.setProperty('--ow-focus-ring', s.brand);
+        style.setProperty('--ow-primary-soft', s.soft);
+        style.setProperty('--ow-primary-soft-fg', s.deep || s.brand);
     }
 
     function apply() {

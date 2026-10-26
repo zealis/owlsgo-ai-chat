@@ -48,8 +48,8 @@
 .lc-card-side { display: flex; display: -webkit-flex; flex-direction: column; -webkit-flex-direction: column; align-items: flex-end; -webkit-align-items: flex-end; gap: 6px; flex: none; -webkit-flex: none; }
 .lc-card-side .ow-switch-row { margin-bottom: 0; min-height: 26px; }
 .lc-card-ops { display: flex; display: -webkit-flex; gap: 12px; }
-.lc-card-ops a { font-size: 12px; color: var(--ow-primary); cursor: pointer; white-space: nowrap; }
-.lc-card-ops a:hover { color: var(--ow-primary-dark); }
+.lc-card-ops a { font-size: 12px; color: var(--ow-link); cursor: pointer; white-space: nowrap; }
+.lc-card-ops a:hover { color: var(--ow-link); }
 .lc-card-ops a.lc-del { color: var(--ow-red); }
 .lc-card-ops a.lc-del:hover { opacity: .8; }
 

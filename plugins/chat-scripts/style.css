@@ -193,7 +193,7 @@
 .ow-cs-send {
     border: 1px solid var(--ow-primary);
     background: transparent;
-    color: var(--ow-primary);
+    color: var(--ow-link);
     font-size: 12px;
     font-family: inherit;
     padding: 4px 10px;

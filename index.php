@@ -1485,6 +1485,7 @@ function ow_icon(string $name, int $size = 18): string
         // 拖拽手柄：两条斜线
         'resize'  => '<path d="M5 13l7-7"/><path d="M10 15l7-7"/>',
         'plus'    => '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+        'back'    => '<polyline points="15 18 9 12 15 6"/>',
         'puzzle' => '<path d="M9 4h6v3.5a2 2 0 1 0 4 .5V4h1v6h-3.5a2 2 0 1 0 .5 4H20v6h-6v-3.5a2 2 0 1 0-4 .5V20H4v-6h3.5a2 2 0 1 0-.5-4H4V4h5z" transform="scale(0.9) translate(1 1)"/>',
         'shield' => '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
         // v1.3.84：齿轮原本画成「小圆 + 八根散开的短线」—— 那是公认的**太阳/亮度**符号，
@@ -1697,7 +1698,7 @@ function renderInstall(string $err): void
        . owThemeBootstrap()
        . '<link rel="stylesheet" href="index.css?v=' . OWLSGO_ASSET_VERSION . '"></head>'
        . '<body class="ow-auth-body"><div class="ow-auth-card" style="max-width:520px">'
-       . '<div class="ow-auth-logo"><img src="assets/img/logo.svg" alt="Owlsgo-Chat" loading="eager"><h1>安装 Owlsgo-Chat</h1><p>纯原生 PHP · 零依赖 · v' . OWLSGO_VERSION . '</p></div>'
+       . '<div class="ow-auth-logo"><span class="ow-logo ow-logo-auth" aria-hidden="true"></span><h1>安装 Owlsgo-Chat</h1><p>纯原生 PHP · 零依赖 · v' . OWLSGO_VERSION . '</p></div>'
        . ($err ? '<div class="ow-alert ow-alert-error">数据库连接失败：' . Sec::e($err) . '（SQLite 模式无需配置，可直接继续）</div>' : '')
        . '<form id="owInstallForm">'
        . '<div class="ow-form-item"><label>数据库类型</label><select name="driver" class="ow-input" onchange="document.getElementById(\'owDbMore\').style.display=this.value===\'sqlite\'?\'none\':\'block\'">'
@@ -1735,12 +1736,12 @@ function renderAuth(string $mode): void
     pageHead(['login' => '登录', 'register' => '注册', 'forgot' => '找回密码'][$mode]);
     $titles = ['login' => '欢迎回来', 'register' => '创建账号', 'forgot' => '找回密码'];
     echo '<body class="ow-auth-body" data-lang="' . ow_lang() . '"><div class="ow-auth-card">'
-       . '<div class="ow-auth-logo"><img src="assets/img/logo.svg" alt="Owlsgo-Chat" loading="eager"><h1>' . $titles[$mode] . '</h1>'
+       . '<div class="ow-auth-logo"><span class="ow-logo ow-logo-auth" aria-hidden="true"></span><h1>' . $titles[$mode] . '</h1>'
        . '<p>' . Sec::e(DB::setting('site_name', 'Owlsgo-Chat')) . '</p></div>';
     if ($mode === 'login') {
         // 从注册页跳转而来：提示注册成功、需手动登录（注册不自动登录）
         $regTip = isset($_GET['registered'])
-            ? '<p style="color:var(--ow-green);font-size:13px;margin:0 0 10px">注册成功，请使用注册邮箱或用户 ID 登录。</p>'
+            ? '<p style="color:var(--ow-green);font-size:13px;margin:0 0 10px">注册成功，请登录。</p>'
             : '';
         // v1.3.54：人机验证插件（captcha-verify）接管时，SVG 图形码那一行**整块不输出**
         // —— 不是 display:none。留着它会让前端仍有机会提交 captcha 字段，
@@ -1750,12 +1751,12 @@ function renderAuth(string $mode): void
         echo '<form class="ow-auth-form" data-mode="login">'
            . $regTip
            . Sec::signField(Sec::anonKey(), 'login')
-           . '<div class="ow-form-item"><label>邮箱或用户 ID</label><input class="ow-input" name="identity" required autocomplete="username" placeholder="注册邮箱或用户 ID"></div>'
+           . '<div class="ow-form-item"><label>邮箱或用户 ID</label><input class="ow-input" name="identity" required autocomplete="username" placeholder="name@example.com 或 123"></div>'
            . '<div class="ow-form-item"><label>密码</label><input class="ow-input" type="password" name="password" required autocomplete="current-password"></div>'
            . ($cvHtml !== '' ? $cvHtml
                : '<div class="ow-form-item" id="owCaptchaRow" style="display:none"><label>图形验证码</label>'
                  . '<div class="ow-captcha-row"><input class="ow-input" name="captcha"><img src="?action=captcha" id="owCaptchaImg" alt="验证码" title="点击刷新" loading="eager"></div></div>')
-           . '<button class="ow-btn ow-btn-primary ow-btn-block" type="submit">登 录</button><div class="ow-form-msg"></div></form>'
+           . '<button class="ow-btn ow-btn-primary ow-btn-block" type="submit">登录</button><div class="ow-form-msg"></div></form>'
            . '<div class="ow-auth-links"><a href="?page=register">注册账号</a><a href="?page=forgot">忘记密码</a><a href="?page=chat">游客登录</a></div>';
     } elseif ($mode === 'register') {
         // 是否要求邮箱验证由后台设置决定：关闭时不再显示验证码输入框与发码按钮
@@ -1767,14 +1768,14 @@ function renderAuth(string $mode): void
         $cvHtml = Plugin::collect('captcha.form', [['scene' => 'register']]);
         echo '<form class="ow-auth-form" data-mode="register">'
            . Sec::signField(Sec::anonKey(), 'register')
-           . '<div class="ow-form-item"><label>昵称</label><input class="ow-input" name="nickname" required placeholder="2-20 个字符，支持中英文"></div>'
+           . '<div class="ow-form-item"><label>昵称</label><input class="ow-input" name="nickname" required placeholder="2-20 个字符"></div>'
            . '<div class="ow-form-item"><label>邮箱</label>'
            . ($needMail
                ? '<div class="ow-captcha-row"><input class="ow-input" type="email" name="email" required>'
-                 . '<button type="button" class="ow-btn ow-btn-ghost" data-sendcode="register">发验证码</button></div>'
+                 . '<button type="button" class="ow-btn ow-btn-ghost" data-sendcode="register">获取验证码</button></div>'
                : '<input class="ow-input" type="email" name="email" required>')
            . '<p style="font-size:12px;color:var(--ow-text-sub);margin-top:4px">'
-           . ($needMail ? '注册需要邮箱验证码。' : '当前未开启邮箱验证，邮箱仅用于找回密码。')
+           . ($needMail ? '注册需要邮箱验证码' : '邮箱仅用于找回密码')
            . ow_mail_suffix_tip()
            . '</p></div>'
            . ($needMail ? '<div class="ow-form-item"><label>邮箱验证码</label><input class="ow-input" name="code" required></div>' : '')
@@ -1785,7 +1786,7 @@ function renderAuth(string $mode): void
            // 上线后表现为「我没改过密码却登不进去」。找回密码/改密码仍保持掩码。
            . '<div class="ow-form-item"><label>密码</label><input class="ow-input" type="text" name="password" required spellcheck="false" autocomplete="new-password" placeholder="至少 6 位"></div>'
            . $cvHtml
-           . '<button class="ow-btn ow-btn-primary ow-btn-block" type="submit">注 册</button><div class="ow-form-msg"></div></form>'
+           . '<button class="ow-btn ow-btn-primary ow-btn-block" type="submit">注册</button><div class="ow-form-msg"></div></form>'
            . '<div class="ow-auth-links"><a href="?page=login">已有账号，去登录</a><a href="?page=chat">游客登录</a></div>';
     } else {
         // 找回密码的唯一凭证就是邮箱验证码：开关关掉、或根本没装/没配邮件插件时，
@@ -1796,7 +1797,7 @@ function renderAuth(string $mode): void
         // 复制两份迟早跟登录页不同步。
         if (!Mailer::deliverable()) {
             $form = '<p style="color:var(--ow-text-sub);font-size:13px;line-height:1.7;margin:0 0 14px">'
-                . '站点当前不可用邮箱验证码（未开启，或未配置能发信的邮件插件），无法自助找回密码。请联系管理员在后台处理。</p>';
+                . '当前无法发送验证码，请联系管理员重置密码。</p>';
         } else {
             // v1.3.63：找回密码页也放组件 —— 但闸门只挂在「发验证码」上，不挂在这里。
             // 因为 token 是**一次性**的：一次 solve 只能被服务端核销一次，
@@ -1807,7 +1808,7 @@ function renderAuth(string $mode): void
             $form = '<form class="ow-auth-form" data-mode="reset">'
                . Sec::signField(Sec::anonKey(), 'reset')
                . '<div class="ow-form-item"><label>注册邮箱</label><div class="ow-captcha-row"><input class="ow-input" type="email" name="email" required>'
-               . '<button type="button" class="ow-btn ow-btn-ghost" data-sendcode="reset">发验证码</button></div>'
+               . '<button type="button" class="ow-btn ow-btn-ghost" data-sendcode="reset">获取验证码</button></div>'
                . '<p style="font-size:12px;color:var(--ow-text-sub);margin-top:4px">' . ow_mail_suffix_tip() . '</p></div>'
                . '<div class="ow-form-item"><label>邮箱验证码</label><input class="ow-input" name="code" required></div>'
                . '<div class="ow-form-item"><label>新密码</label><input class="ow-input" type="password" name="password" required autocomplete="new-password"></div>'
@@ -1865,35 +1866,22 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
     ];
     // v1.5.35：首屏要建十几条头像 <img>，先把这个域名连上（第三方时才有输出）
     pageHead('群聊', ow_preconnect_origin((string)($actor['avatar'] ?? '')));
+    $isUser = (($actor['kind'] ?? '') === 'user');
+    $siteName = (string)DB::setting('site_name', 'Owlsgo-Chat');
+    $homeAv = (string)($actor['avatar'] ?? '');
+    $homeNick = (string)($actor['nickname'] ?? '我');
+    $homeInitial = function_exists('mb_substr') ? mb_substr($homeNick, 0, 1, 'UTF-8') : substr($homeNick, 0, 1);
+    $newRoomBtn = $isUser
+        ? '<button class="ow-icon-btn" type="button" aria-label="新建群聊" title="新建群聊" onclick="OwChat.roomCreateModal()">' . ow_icon('plus', 20) . '</button>'
+        : '';
+    $homeMe = '<button class="ow-m-home-me" type="button" aria-label="账号菜单" onclick="document.getElementById(\'owRailMenu\').click()">'
+        . '<span class="ow-avatar ow-avatar-md">'
+        . ($homeAv !== '' ? '<img src="' . Sec::e($homeAv) . '" alt="" loading="lazy">' : Sec::e($homeInitial))
+        . '</span></button>';
+
     echo '<body class="ow-chat-body" data-lang="' . ow_lang() . '">';
     echo '<div class="ow-layout">';
-
-    // ---------- 顶部一条带（v1.5.0）：品牌条 + 消息顶栏并排 ----------
-    // 站方要求：品牌条只占「rail + 会话列表」那一列宽（到 .ow-sidebar 结束），
-    // 右侧整条让给消息顶栏 .ow-topbar（群名那一行）—— 顶栏因此从 .ow-main 里提出来，
-    // 两者并成一条带子，rail 与会话列表都从带子下方开始。
-    // ⚠️ 两端必须等高：品牌条 47 + 顶栏 57 并排会在下边框上留 10px 台阶。
-    //   这里不给 .ow-brand 定高，交给 .ow-head 的 flex stretch 拉平（见 CSS）。
-    // v1.3.48：搜索入口在 .ow-sidebar 顶部；
-    // v1.5.0：用户胶囊（原 #owBrandMe）已挪进账号菜单首行，品牌条只剩 logo + 站点名。
-    echo '<div class="ow-head">';
-    echo '<header class="ow-brand">'
-       . '<img src="assets/img/logo.svg" alt="logo" loading="eager"><span class="ow-brand-name">' . Sec::e(DB::setting('site_name', 'Owlsgo-Chat')) . '</span>'
-       . '</header>';
-
-    // 消息顶栏：v1.5.0 从 .ow-main 内提到顶部带子右侧（DOM 位置变了，id 一个没动）
-    echo '<header class="ow-topbar">'
-       . '<button class="ow-icon-btn ow-only-mobile" id="owToggleSide" aria-label="菜单">' . ow_icon('menu') . '</button>'
-       // v1.3.1：游客未进入任何群时标题给占位，避免顶着一个其实没进去的群名
-       . '<h2 class="ow-room-name" id="owRoomName">' . ($entered ? Sec::e($first['name']) : '请选择一个群聊') . '</h2>'
-       . '<span class="ow-tag ow-tag-green" id="owSpeakTag">可发言</span>'
-       . '<span class="ow-latency" id="owLatency"></span>'
-       // 右侧「竖三点」：打开群聊信息侧栏（v1.1.1 替代原在线成员人形图标）
-       . '<button class="ow-icon-btn" id="owTogglePanel" aria-label="群聊信息" title="群聊信息">' . ow_icon('more-v') . '</button>'
-       . '</header>';
-    echo '</div>';
-
-    // 三栏主体：rail + 侧栏 + 主区 + 右侧栏（整条都在顶部带子之下）
+    // 桌面三栏 + 移动双屏共用同一棵 DOM：rail / 侧栏 / 主区 / 成员面板都在 .ow-body 里。
     echo '<div class="ow-body">';
 
     // ---------- 左侧一级导航条 rail（v1.3.4） ----------
@@ -1911,6 +1899,7 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
     // v1.3.71：联系人栏的同一个小红点 —— 有待处理好友请求时亮起来（与通知同一轮子 .ow-dot）。
     $friendPending = ($actor['kind'] ?? '') === 'user' ? Chat::friendReqPending((int)($actor['id'] ?? 0)) : 0;
     echo '<nav class="ow-rail" id="owRail">'
+       . '<div class="ow-rail-brand"><span class="ow-logo" aria-hidden="true"></span></div>'
        // v1.3.142：这里原本有一颗「当前用户头像」（v1.3.134 从侧栏底部搬上来的）。
        // v1.5.0：它现在在 rail 底部那颗账号按钮的菜单首行（头像 + 昵称胶囊），
        //         rail 顶部与品牌条都不再放头像。
@@ -1938,11 +1927,13 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
        . (($actor['kind'] ?? '') === 'user'
            ? ' title="账号菜单" aria-label="账号菜单">' . ow_icon('menu', 20)
            : ' title="登录 / 注册" aria-label="登录 / 注册">' . ow_icon('user', 20))
-       . '</button></div>'
+       . '<span class="ow-rail-lb">我的</span></button></div>'
        . '</nav>';
 
     // 左侧栏
     echo '<aside class="ow-sidebar" id="owSidebar">'
+       . '<div class="ow-side-head"><span class="ow-side-brand">' . Sec::e($siteName) . '</span>' . $newRoomBtn . '</div>'
+       . '<div class="ow-m-home-head"><h1>消息</h1><div class="ow-m-home-actions">' . $newRoomBtn . $homeMe . '</div></div>'
        // v1.3.6：品牌条已上移到整个布局顶部（见 .ow-topbrand 注释），侧栏从列表直接开始。
        // v1.1.0：列表已是「群聊 + 私聊」聚合，标题改为「聊天」；
        // 徽标数字含义同步改为「会话总数」，由 conversations 接口返回的 total 在前端回填
@@ -1954,7 +1945,7 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
        //   它是 <button> 不是 <input>：本身不接受输入，点一下开搜索弹窗（OwChat.openSearch），
        //   输入与结果都在弹窗里 —— 避免「光标在闪却打不进字」的死输入框观感。
        . '<button class="ow-side-search" id="owSideSearch" type="button" aria-label="搜索" title="搜索">'
-       . ow_icon('search', 15) . '<span>搜索</span></button>'
+       . ow_icon('search', 15) . '<span>搜索会话或用户</span></button>'
        // 聊天面板（核心两个面板之一是「消息」，另一个是「联系人」）
        . '<ul class="ow-room-list ow-tab-panel is-active" id="owRoomList" data-panel="chat"></ul>'
        // v1.3.52：系统通知面板。与 #owRoomList 共用 .ow-room-list / .ow-tab-panel 样式，
@@ -1969,9 +1960,18 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
        // 游客原先放在这里的「注册 / 登录」两个按钮一并撤掉，入口改走 rail 顶部头像。
        . '</aside>';
 
+    $topbarHtml = '<header class="ow-topbar">'
+       . '<button class="ow-icon-btn ow-only-mobile" id="owToggleSide" aria-label="返回会话列表" title="返回会话列表">' . ow_icon('back') . '</button>'
+       // v1.3.1：游客未进入任何群时标题给占位，避免顶着一个其实没进去的群名
+       . '<h2 class="ow-room-name" id="owRoomName">' . ($entered ? Sec::e($first['name']) : '选择一个群聊') . '</h2>'
+       . '<span class="ow-tag ow-tag-green" id="owSpeakTag">可发言</span>'
+       . '<span class="ow-latency" id="owLatency"></span>'
+       // 右侧「竖三点」：打开群聊信息侧栏（v1.1.1 替代原在线成员人形图标）
+       . '<button class="ow-icon-btn" id="owTogglePanel" aria-label="群聊信息" title="群聊信息">' . ow_icon('more-v') . '</button>'
+       . '</header>';
+
     // 主聊天区
-    echo '<main class="ow-main">'
-       // 顶栏（群名那一行）v1.5.0 已上移到 .ow-head，这里从消息区直接开始
+    echo '<main class="ow-main">' . $topbarHtml
        // v1.2.6：消息区初始为空，更早的消息靠向上滚动懒加载（不再有「加载更早消息…」入口）
        . '<div class="ow-messages" id="owMessages"></div>'
        // v1.3.22：「N 条未读 ↓」跳转按钮改为**放在输入栏内部**（.ow-inputbar 的第一个子元素）。
@@ -1991,24 +1991,23 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
        // 正常流程下点击公开群聊会先弹「是否加入」，取消则不进入；这里是 URL 直达 /
        // 已被移出成员 / 服务端拒绝发言等异常态的兜底入口。
        . '<div class="ow-join-gate" id="owJoinGate" style="display:none"></div>'
-       . '<div class="ow-toolbar">'
-       // 工具栏首位锚点（v1.3.142 起改成**收集式**）：插件注册 chat.toolbar 钩子返回按钮 HTML，
-       //   核心一次 Plugin::collect 拼好，与 sidebar.rail 同一机制。
-       //   原先是核心留空 span、插件各自 appendChild：全靠插件自觉，谁写 box.innerHTML = …
-       //   就把同锚点上别的插件按钮整个冲掉（表情包被冲掉过），规范见 PLUGIN.md「输入工具栏扩展」。
+       // 工具栏收进「+」菜单：插件按钮仍在 DOM 中（事件绑定不变），只是不再常驻一排。
+       . '<div class="ow-tools-mask" id="owToolsMask"></div>'
+       . '<div class="ow-tools-sheet" id="owToolsSheet" role="dialog" aria-label="更多功能">'
+       . '<div class="ow-tools-grid">'
+       // 插件注册 chat.toolbar 钩子；#owToolFirst 只做收集锚点，不参与布局。
        . '<span id="owToolFirst">' . Plugin::collect('chat.toolbar') . '</span>'
-       // 工具栏图标统一 16px（比消息区图标小一号，避免抢视觉重心）
-       . '<button class="ow-icon-btn" id="owBtnEmoji" title="表情">' . ow_icon('smile', 16) . '</button>'
-       // v1.2.41：图片/文件两个按钮移入附件上传插件；v1.3.142 起那个专用空锚点 #owAttachTools
-       //   一并取消 —— 插件改走 chat.toolbar，按钮统一出现在上面的收集位里。
-       . '<button class="ow-icon-btn" id="owBtnSound" title="提示音" data-on="' . Sec::e(ow_icon('sound', 16)) . '" data-off="' . Sec::e(ow_icon('sound-off', 16)) . '">' . ow_icon('sound', 16) . '</button>'
-       . '</div>'
+       . '<button class="ow-icon-btn ow-tool-cell" id="owBtnEmoji" title="表情" type="button">' . ow_icon('smile', 22) . '</button>'
+       . '<button class="ow-icon-btn ow-tool-cell" id="owBtnSound" title="提示音" type="button" data-on="' . Sec::e(ow_icon('sound', 22)) . '" data-off="' . Sec::e(ow_icon('sound-off', 22)) . '">' . ow_icon('sound', 22) . '</button>'
+       . '</div></div>'
        . '<div class="ow-input-row">'
        // 引用条（v1.0.69）：出现在输入框上方，点 ✕ 取消；默认隐藏，由 OwChat.renderQuote 填充
+       . '<button class="ow-icon-btn ow-plus-btn" id="owPlusBtn" type="button" aria-label="更多功能" aria-expanded="false" title="更多功能">' . ow_icon('plus', 22) . '</button>'
        . '<div class="ow-quote-bar" id="owQuoteBar" style="display:none"></div>'
-       . '<textarea class="ow-input" id="owInput" rows="1" placeholder="输入消息，按 Enter 发送，Ctrl+V 粘贴图片"></textarea>'
+       . '<textarea class="ow-input" id="owInput" rows="1" placeholder="输入消息"></textarea>'
        // 拖拽手柄：手动拉高输入框（自动增高之外的人工控制方式）
        . '<span class="ow-input-resize" id="owInputResize" title="拖动调整输入框高度">' . ow_icon('resize', 14) . '</span>'
+       . '<button class="ow-icon-btn ow-emoji-inline" id="owBtnEmojiInline" type="button" aria-label="表情" title="表情" onclick="document.getElementById(\'owBtnEmoji\').click()">' . ow_icon('smile', 22) . '</button>'
        . '<button class="ow-btn ow-btn-primary ow-send ow-send-round" id="owBtnSend" aria-label="发送" title="发送">' . ow_icon('send', 18) . '</button>'
        . '</div></div>'
        . '<div class="ow-emoji-panel" id="owEmojiPanel" style="display:none"></div>'
@@ -2026,17 +2025,15 @@ function renderChat(array $actor, ?array $user, ?array $guest): void
     //   · 私聊（room_id=0）时两者都不适用，renderRoomPanel 置空并给出提示。
     echo '<aside class="ow-online" id="owOnline">'
        . '<div class="ow-panel-sec ow-panel-room">'
-       // v1.1.16：删掉「群聊信息」标题文字。区块本身已有群头像/名称/入口行
-       // 自带语义，标题纯属冗余；只留一个供 JS 定位的空标题容器（收起按钮仍要挂这里）。
-       . '<div class="ow-side-title" id="owPanelTitle" aria-hidden="true">'
-       . '<button class="ow-online-close" id="owOnlineClose" aria-label="收起侧栏" title="收起">×</button></div>'
+       . '<div class="ow-panel-head"><b>群聊信息</b>'
+       . '<button class="ow-icon-btn ow-online-close" id="owOnlineClose" aria-label="收起侧栏" title="收起">' . ow_icon('close', 18) . '</button></div>'
        . '<div class="ow-panel-room-body" id="owRoomPanel"></div>'
        . '</div>'
        . '<div class="ow-panel-sec ow-panel-members">'
        // v1.3.24：「所有成员」标题右侧的搜索按钮（点开按昵称 / ID 搜群成员）。
        // 按钮**静态输出**但由 JS 控制显隐（游客不显示 —— 搜索接口对游客一律拒绝，
        // 给一个必然报错的入口是反模式）。空标题容器不复用，这里另起一行保持语义清晰。
-       . '<div class="ow-side-title ow-side-title-members">所有成员'
+       . '<div class="ow-side-title ow-side-title-members">成员'
        . '<span class="ow-badge-num" id="owOnlineCount">0</span>'
        . '<button class="ow-icon-btn ow-members-search-btn" id="owMembersSearch"'
        . ' aria-label="搜索成员" title="搜索成员" style="display:none">'

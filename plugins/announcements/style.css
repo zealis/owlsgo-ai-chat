@@ -21,27 +21,27 @@
    深色主题：核心语义色会提亮（#52C41A / #FFA940 / #FF7875），白字对比掉到 2:1 左右，
      故三档切「深底 + 亮字」（与参考站深色公告条同语言），值沿用 v1.2.0 实测 7+ 的配对；
      蓝档不切 —— 深色 --ow-primary-strong(#1E90FF) + 白字即全站 .ow-btn-primary 的既有表现。 */
+/* Swiss Blue：四档都走核心浅底 + 深字，条高 36、单行、8px 圆角。
+   不再使用实底通栏 + 白蒙层；语义色只由底色和文字承担。 */
 :root {
-    --oa-bg-blue: var(--ow-primary-strong);
-    --oa-fg-blue: var(--ow-on-accent);
-    --oa-bg-green: var(--ow-green);
-    --oa-fg-green: var(--ow-on-accent);
-    --oa-bg-orange: var(--ow-orange);
-    --oa-fg-orange: var(--ow-on-accent);
-    --oa-bg-red: var(--ow-red);
-    --oa-fg-red: var(--ow-on-accent);
-    /* 实底公告条上的白色蒙层（关闭按钮 / 置顶徽章的底，以及它们的 hover 提亮）。
-       为什么可以写死 rgba：它只出现在「实心底 + 白字」的公告条上 —— 浅色下四档底
-       均为中深色（白字对比 3.6~5.9:1），深色下三档语义色切为深底、蓝档为主色按钮蓝，
-       白色蒙层在两套主题下与底色保持同一对比关系，不随主题翻转，故不引用 --ow-* 变量
-       （核心没有「实底上的白蒙层」这一档语义色）。 */
-    --oa-veil: rgba(255, 255, 255, .22);
-    --oa-veil-hover: rgba(255, 255, 255, .34);
+    --oa-bg-blue: var(--ow-primary-soft);
+    --oa-fg-blue: var(--ow-primary-soft-fg);
+    --oa-bg-green: var(--ow-success-soft);
+    --oa-fg-green: var(--ow-success);
+    --oa-bg-orange: var(--ow-warning-soft);
+    --oa-fg-orange: var(--ow-warning);
+    --oa-bg-red: var(--ow-danger-soft);
+    --oa-fg-red: var(--ow-danger);
 }
 [data-theme="dark"] {
-    --oa-bg-green: #17301A;  --oa-fg-green: #7BE07B;
-    --oa-bg-orange: #3A2A18; --oa-fg-orange: #FFB27A;
-    --oa-bg-red: #3A2020;    --oa-fg-red: #FF9C9A;
+    --oa-bg-blue: var(--ow-primary-soft);
+    --oa-fg-blue: var(--ow-primary-soft-fg);
+    --oa-bg-green: var(--ow-success-soft);
+    --oa-fg-green: var(--ow-success);
+    --oa-bg-orange: var(--ow-warning-soft);
+    --oa-fg-orange: var(--ow-warning);
+    --oa-bg-red: var(--ow-danger-soft);
+    --oa-fg-red: var(--ow-danger);
 }
 
 /* ---------- 聊天室上方公告条（v1.3.0 重设计） ----------
@@ -51,24 +51,22 @@
     display: flex; display: -webkit-flex;
     align-items: center; -webkit-align-items: center;
     gap: 8px;
-    flex-shrink: 0; -webkit-flex-shrink: 0;   /* 通栏条不参与压缩，消息区自行让位 */
-    padding: 8px 14px;
+    box-sizing: border-box;
+    height: 36px;
+    min-height: 36px;
+    flex-shrink: 0; -webkit-flex-shrink: 0;
+    margin: 0 12px 4px;
+    padding: 0 8px 0 12px;
+    border: 1px solid transparent;
+    border-radius: var(--ow-radius-sm);
     background: var(--oa-bg-blue);
     color: var(--oa-fg-blue);
     cursor: pointer;
-    /* 换公告 / 切群时底色平滑过渡（四档之间也是同一条过渡） */
-    transition: background .2s ease;
-    -webkit-transition: background .2s ease;
-    /* 用户-select:none：这是一条「点击进入详情」的条，连点容易误选中文字 */
+    transition: opacity .15s ease;
+    -webkit-transition: opacity .15s ease;
     -webkit-user-select: none; -moz-user-select: none; user-select: none;
 }
-/* hover：主色档换成 --ow-primary-dark（浅色更深、深色更亮，与 .ow-btn-primary:hover 同源）；
-   三档语义色用提亮滤镜 —— 两套主题下都是「变亮」的有效反馈（核心深色 hover 同为变亮）。 */
-.oa-bar:hover { background: var(--ow-primary-dark); }
-.oa-bar-green:hover, .oa-bar-orange:hover, .oa-bar-red:hover {
-    background: var(--oa-bg);
-    filter: brightness(1.1);
-}
+.oa-bar:hover { opacity: .9; }
 /* 四档各自把「底色 / 强调色」收进两个局部变量，规则只写一遍 */
 .oa-bar-blue  { --oa-bg: var(--oa-bg-blue);  --oa-fg: var(--oa-fg-blue); }
 .oa-bar-green { --oa-bg: var(--oa-bg-green); --oa-fg: var(--oa-fg-green); }
@@ -89,12 +87,14 @@
 /* 「置顶」徽章：实底上的半透明白胶囊（与关闭按钮同一蒙层语言） */
 .oa-bar-pin {
     flex-shrink: 0; -webkit-flex-shrink: 0;
-    font-size: 11px;
+    font-size: 10px;
     line-height: 1;
-    padding: 3px 8px;
-    border-radius: 999px;
-    background: var(--oa-veil);
+    padding: 2px 6px;
+    border: 1px solid currentColor;
+    border-radius: var(--ow-radius-full);
+    background: transparent;
     color: currentColor;
+    opacity: .8;
     white-space: nowrap;
 }
 
@@ -104,7 +104,7 @@
     flex: 1; -webkit-flex: 1;
     min-width: 0; -webkit-min-width: 0;
     overflow: hidden;
-    font-size: 13px;
+    font-size: 12.5px;
     line-height: 1.4;
     opacity: 1;
     transition: opacity .3s ease;
@@ -129,13 +129,13 @@
     display: flex; display: -webkit-flex;
     align-items: center; -webkit-align-items: center;
     justify-content: center; -webkit-justify-content: center;
-    background: var(--oa-veil);
+    background: transparent;
     color: currentColor;
     cursor: pointer;
-    transition: background .2s ease;
-    -webkit-transition: background .2s ease;
+    transition: background .15s ease;
+    -webkit-transition: background .15s ease;
 }
-.oa-bar-close:hover { background: var(--oa-veil-hover); }
+.oa-bar-close:hover { background: var(--ow-bg-hover); }
 .oa-bar-close:focus { outline: 2px solid currentColor; outline-offset: 1px; }
 
 /* ---------- 移动端（≤960px，与参考站同一断点）：文字溢出匀速横滚 ----------
@@ -143,7 +143,7 @@
    （--oa-scroll-distance / --oa-scroll-duration 由 JS 写入内联样式），
    长公告滚得慢、短公告滚得快，不会一律 5 秒晕车。两端各留 8% 停顿。 */
 @media (max-width: 960px) {
-    .oa-bar { padding: 8px 12px; }
+    .oa-bar { padding: 0 8px 0 10px; margin: 0 8px 4px; }
     .oa-bar-text.is-overflow .oa-bar-tc {
         display: inline-block;
         text-overflow: clip;
@@ -161,8 +161,8 @@
 }
 /* 窄屏（≤640px）：条内元素再收一档，触摸目标不小于 28px */
 @media (max-width: 640px) {
-    .oa-bar { gap: 7px; padding: 7px 10px; }
-    .oa-bar-text { font-size: 12.5px; }
+    .oa-bar { gap: 7px; height: 36px; padding: 0 8px 0 10px; }
+    .oa-bar-text { font-size: 12px; }
     .oa-bar-close { width: 28px; height: 28px; }
 }
 
@@ -195,9 +195,9 @@
     font-size: 10px;
     padding: 1px 8px;
     border-radius: 3px;
-    background: var(--ow-blue-light);
-    color: var(--ow-primary-dark);
-    border: 1px solid var(--ow-primary);
+    background: var(--ow-primary-soft);
+    color: var(--ow-primary-soft-fg);
+    border: 1px solid transparent;
     vertical-align: middle;
 }
 
@@ -230,7 +230,7 @@
     overflow: hidden;
 }
 .oa-card-text.open { max-height: none; }
-.oa-card-toggle { display: inline-block; font-size: 12px; color: var(--ow-primary-dark); margin-top: 4px; }
+.oa-card-toggle { display: inline-block; font-size: 12px; color: var(--ow-link); margin-top: 4px; }
 
 .oa-popup-meta { font-size: 12px; color: var(--ow-text-sub); margin-bottom: 8px; }
 .oa-popup-meta b { color: var(--ow-text-title); }

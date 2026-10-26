@@ -57,12 +57,12 @@
 .owpk-pk-btn:hover:not([disabled]) {
     background: var(--ow-blue-light);
     border-color: var(--ow-primary);
-    color: var(--ow-primary-dark);
+    color: var(--ow-link);
 }
 .owpk-pk-btn:active:not([disabled]) { background: var(--ow-hover-bg); }
 .owpk-pk-btn[disabled] { opacity: .72; cursor: default; }
-.owpk-pk-ico { display: inline-flex; line-height: 0; color: var(--ow-primary); }
-.owpk-pk-btn:hover:not([disabled]) .owpk-pk-ico { color: var(--ow-primary-dark); }
+.owpk-pk-ico { display: inline-flex; line-height: 0; color: var(--ow-link); }
+.owpk-pk-btn:hover:not([disabled]) .owpk-pk-ico { color: var(--ow-link); }
 .owpk-pk-t { line-height: 1.2; }
 
 /* 忙碌态转圈：只转这一枚，按钮布局不跳动 */
@@ -169,7 +169,7 @@
     border: 1px solid var(--ow-border);
     border-radius: 8px;
     background: var(--ow-bg);
-    color: var(--ow-primary);
+    color: var(--ow-link);
     line-height: 0;
 }
 
@@ -241,7 +241,7 @@
     margin: 6px auto 14px;
     border-radius: 50%;
     background: var(--ow-blue-light);
-    color: var(--ow-primary-strong);
+    color: var(--ow-link);
     line-height: 0;
 }
 .owpk-hero-tip {

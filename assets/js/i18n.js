@@ -230,7 +230,16 @@
             for (var i = 0; i < packs.length; i++) out.push({ code: packs[i].code, label: packs[i].label });
             return out;
         },
-        t: function (s) { var v = lookup(trim(s)); return v !== null ? v : s; },
+        t: function (s, vars) {
+            var v = lookup(trim(s));
+            if (v === null) v = s;
+            if (vars) {
+                v = String(v).replace(/\{([a-z_]+)\}/gi, function (m, key) {
+                    return (vars[key] === undefined || vars[key] === null) ? '' : String(vars[key]);
+                });
+            }
+            return v;
+        },
         lang: function () { return current || 'zh'; },
         apply: apply
     };
